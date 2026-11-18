@@ -5,7 +5,7 @@ import time
 from types import SimpleNamespace
 
 import pytest
-from textual.widgets import Button, Input, Static, Switch
+from textual.widgets import Button, Input, Select, Static, Switch
 
 from novacode_cli import ui_events as ev
 from novacode_cli.core.oracle import OracleRun, OracleSettings, Review, Reviewer
@@ -128,6 +128,8 @@ async def test_settings_validate_cancel_and_save_without_sending(monkeypatch):
         await pilot.click("#oracle-settings")
         await pilot.pause()
         assert isinstance(app.screen, OracleSettingsScreen)
+        scope = app.screen.query_one("#oracle-scope", Select)
+        assert scope.value == "task"
         app.screen.query_one("#oracle-target", Input).value = "11"
         save = app.screen.query_one("#oracle-settings-save", Button)
         save.scroll_visible(immediate=True)
@@ -140,6 +142,7 @@ async def test_settings_validate_cancel_and_save_without_sending(monkeypatch):
         app.screen.query_one("#oracle-rounds", Input).value = "4"
         app.screen.query_one("#oracle-reviewers", Input).value = "3"
         app.screen.query_one("#oracle-default", Switch).value = True
+        scope.value = "workspace"
         save.scroll_visible(immediate=True)
         await pilot.pause(0.25)
         await pilot.click(save)
@@ -151,9 +154,11 @@ async def test_settings_validate_cancel_and_save_without_sending(monkeypatch):
                 "max_rounds": 4,
                 "reviewers": 3,
                 "default_enabled": True,
+                "scope": "workspace",
             },
         )
         assert app.session_state.oracle_settings.target == 9
+        assert app.session_state.oracle_settings.scope == "workspace"
         assert app.query_one("#prompt").text == "draft"
         await pilot.click("#oracle-settings")
         await pilot.pause()

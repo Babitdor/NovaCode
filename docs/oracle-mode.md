@@ -22,9 +22,9 @@ model's private reasoning. You can collapse the panel while reviews continue.
 
 ## Review and fix rounds
 
-After the lead finishes, Oracle sends fresh, independent reviewer contexts the
-request, lead response, Git diff, changed text-file contents and captured test
-tool results. Reviewers use the current session model with structured scores
+After the lead finishes, Oracle gives independent reviewers the request, lead
+response, diff for the selected scope and captured test tool results. Reviewers
+use the current session model with structured scores
 from 0 to 10. Reviewers cannot edit files, approve tool calls, or see peer scores.
 The lowest score controls the result: every reviewer must meet the target.
 
@@ -37,7 +37,7 @@ assignment.
 
 Oracle sends evidence inline up to 64,000 characters. Larger reviews
 automatically use independent read-only reviewer agents. Each agent requests
-pages of the captured request, response, text diffs, changed files, and test
+pages of the captured request, response, file evidence and test
 output. The agent carries review notes between calls. Oracle accepts a score
 only after that reviewer has received every page.
 
@@ -60,6 +60,13 @@ Choose **Settings** beside the Oracle toggle, or run `/oracle-mode settings`, to
 - Target score: greater than 0 and at most 10; default **8**.
 - Automatic round limit: **1–20**; default **3**.
 - Reviewer count ranges from **1–5** and defaults to **3**.
+- **Review scope** defaults to **This task**, which compares file contents and
+  modes from the start of the turn through the latest review round. It includes
+  edits to already-dirty files and edits committed during the turn. Choose
+  **Workspace changes** to review the current workspace against the Git commit
+  at the start of the turn, including existing edits and nonignored untracked
+  files. Before the first commit, workspace scope starts from an empty tree.
+  Older settings without a scope use **This task**.
 - Whether new threads start enabled; default **off**. `/clear` uses this default.
 
 Each saved conversation remembers its toggle. Resuming it does not restore old
@@ -90,8 +97,8 @@ attributes reviewer calls to `oracle/reviewer-N` in usage tracking.
 Independent contexts avoid manual agent-to-agent coordination, but speed and
 token savings have not been benchmarked.
 
-Oracle currently requires a readable local Git workspace with an existing commit
-and a model supporting structured output. The paged path accepts up to 512,000
+Oracle requires a readable local Git workspace and a model supporting
+structured output. The paged path accepts up to 512,000
 characters of evidence in 16,000-character pages. Evidence beyond that limit,
 changed binaries, unreadable files, submodules, and incomplete page coverage
 pause review. Sandbox files that are
@@ -101,14 +108,13 @@ Noninteractive consumers cannot grant an Oracle owner decision; they pause at
 decision points. Scores are advisory model judgments, not a replacement for
 tests or your review.
 
-Binary edits already present when a task starts do not block unrelated code
-reviews if their contents stay unchanged. They are listed as pre-existing and
-unreviewed in the reviewer evidence. Text diffs already present in the workspace
-remain available for requests to review existing changes. Binary files added,
-modified or deleted during the task still block approval, with their paths in
-the panel. **Retry review** retries without an extra lead edit; **Accept and
-finish** ends without claiming Oracle passed. A blocked review offers Retry,
-Accept and Pause; score-based controls return when review evidence is available.
+**This task** skips existing binary edits whose contents stay unchanged.
+Binary changes in the selected scope pause review and show the affected paths
+in the panel. Task scope keeps a bounded baseline for dirty files and pauses if
+it cannot reconstruct a changed file's original contents or compare a file
+within its size and line limits. **Workspace changes** uses the same overall
+evidence budget. **Retry review** retries without an extra lead edit.
+**Accept and finish** records your acceptance separately from reviewer scores.
 
 Snapshots retain binary-file information, including for untracked files. Deleting
 a binary or replacing it with text during a task still requires manual review.

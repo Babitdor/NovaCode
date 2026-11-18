@@ -11,12 +11,13 @@ from textual.containers import Grid, Horizontal, Vertical, VerticalScroll
 from textual.events import Resize
 from textual.message import Message
 from textual.screen import ModalScreen
-from textual.widgets import Button, Collapsible, Input, Static, Switch
+from textual.widgets import Button, Collapsible, Input, Select, Static, Switch
 
 from novacode_cli.core.oracle import (
     AGENT_REVIEW_TIMEOUT,
     MAX_ROUNDS,
     REVIEW_TIMEOUT,
+    SCOPE_LABELS,
     OracleRun,
     OracleSettings,
 )
@@ -61,6 +62,11 @@ class OracleSettingsScreen(ModalScreen[OracleSettings | None]):
             yield Input(str(self.settings.max_rounds), id="oracle-rounds")
             yield Static("Independent reviewers (1–5)")
             yield Input(str(self.settings.reviewers), id="oracle-reviewers")
+            yield Static("Review scope")
+            yield Select(
+                [(label, key) for key, label in SCOPE_LABELS.items()],
+                value=self.settings.scope, allow_blank=False, id="oracle-scope",
+            )
             yield Static("Start new threads with Oracle enabled")
             yield Switch(self.settings.default_enabled, id="oracle-default")
             yield Static("", id="oracle-settings-error", markup=False)
@@ -83,6 +89,7 @@ class OracleSettingsScreen(ModalScreen[OracleSettings | None]):
                     max_rounds=int(self.query_one("#oracle-rounds", Input).value),
                     reviewers=int(self.query_one("#oracle-reviewers", Input).value),
                     default_enabled=self.query_one("#oracle-default", Switch).value,
+                    scope=self.query_one("#oracle-scope", Select).value,
                 )
             except ValueError:
                 self.query_one("#oracle-settings-error", Static).update(
@@ -279,7 +286,7 @@ class OraclePanel(Vertical):
                 timeout = AGENT_REVIEW_TIMEOUT if rows[0].page_count else REVIEW_TIMEOUT
                 progress += f" · timeout {format_elapsed(timeout)} per reviewer"
         elif reviewing:
-            progress = "Preparing review evidence…"
+            progress = f"Preparing review · {SCOPE_LABELS[run.settings.scope]}…"
         indicator = self.query_one("#oracle-progress", Static)
         indicator.display = enabled and bool(progress)
         if self._shown.get("progress") != progress:

@@ -4,17 +4,20 @@ from __future__ import annotations
 
 import asyncio
 import codecs
+import difflib
 import hashlib
 import json
 import math
 import os
+import stat
 import subprocess
 import tempfile
 import time
 import uuid
+import zlib
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from pydantic import BaseModel, ConfigDict, Field
@@ -41,6 +44,10 @@ REVIEW_TIMEOUT = 120
 AGENT_REVIEW_TIMEOUT = 600
 EVIDENCE_PAGE_CHARS = 16_000
 MAX_AGENT_EVIDENCE_CHARS = 512_000
+MAX_BASELINE_BYTES = 32 * 1024 * 1024
+MAX_BASELINE_FILE_BYTES = MAX_AGENT_EVIDENCE_CHARS * 4
+MAX_TASK_DIFF_LINES = 20_000
+SCOPE_LABELS = {"task": "This task", "workspace": "Workspace changes"}
 # Leave headroom below Windows' 32,767 UTF-16-unit process command limit.
 MAX_GIT_COMMAND_UNITS = 30_000
 GIT_TIMEOUT = 20
@@ -69,6 +76,7 @@ class OracleSettings(BaseModel):
     max_rounds: int = Field(default=3, ge=1, le=MAX_ROUNDS)
     reviewers: int = Field(default=3, ge=1, le=len(REVIEW_ASSIGNMENTS))
     default_enabled: bool = False
+    scope: Literal["task", "workspace"] = "task"
 
 
 class Review(BaseModel):
@@ -203,27 +211,72 @@ class Snapshot:
     files: dict[str, str]
     head: str
     binary_files: set[str] = field(default_factory=set)
+    modes: dict[str, int] = field(default_factory=dict)
+    starting_bodies: dict[str, bytes] = field(default_factory=dict)
+
+    def changed_paths(self, after: Snapshot) -> set[str]:
+        return {
+            name
+            for name in self.files.keys() | after.files.keys()
+            if self.files.get(name) != after.files.get(name)
+            or self.modes.get(name) != after.modes.get(name)
+        }
 
 
-def snapshot(directory: str) -> Snapshot:
+def snapshot(directory: str, *, capture_start: bool = False) -> Snapshot:
     """Hash nonignored tracked/untracked inputs without touching the Git index."""
     root = Path(_git(Path(directory), "rev-parse", "--show-toplevel").decode().strip())
-    names = _git(root, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
+    names = set(_git(root, "ls-files", "-z", "--cached", "--others", "--exclude-standard").split(b"\0"))
+    names.discard(b"")
+    root = root.resolve()
     files = {}
     binary_files = set()
-    head = _git(root, "rev-parse", "HEAD").decode().strip()
+    try:
+        head = _git(root, "rev-parse", "--verify", "--quiet", "HEAD").decode().strip()
+    except subprocess.CalledProcessError as exc:
+        if exc.returncode != 1:
+            raise
+        head = ""
+    starting_bodies = {}
+    modes = {}
+    capture_paths = set()
+    if capture_start and not head:
+        capture_paths = names
+    elif capture_start:
+        capture_paths.update(_git(
+            root, "diff", "--name-only", "-z", "--no-ext-diff", "--no-textconv",
+            "--no-renames", head, "--",
+        ).split(b"\0"))
+        capture_paths.update(_git(root, "ls-files", "-z", "--others", "--exclude-standard").split(b"\0"))
+    remaining = MAX_BASELINE_BYTES
+    checked_parents = set()
     digest = hashlib.sha256(head.encode())
-    for raw in sorted(set(names.split(b"\0")) - {b""}):
+    for raw in sorted(names):
         name = raw.decode("utf-8", errors="surrogateescape")
         path = root / name
+        if path.parent not in checked_parents:
+            if not path.parent.resolve().is_relative_to(root):
+                raise ValueError(f"Oracle path escaped the workspace: {name}. Review it manually.")
+            checked_parents.add(path.parent)
         value = hashlib.sha256()
-        if path.is_symlink():
+        try:
+            mode = path.lstat().st_mode
+        except (FileNotFoundError, NotADirectoryError):
+            continue
+        modes[name] = mode
+        if stat.S_ISLNK(mode):
             value.update(str(path.readlink()).encode())
-        elif path.is_file():
+        elif stat.S_ISREG(mode):
             decoder = codecs.getincrementaldecoder("utf-8")()
+            body = bytearray() if raw in capture_paths and remaining else None
             with path.open("rb") as stream:
                 for block in iter(lambda: stream.read(1024 * 1024), b""):
                     value.update(block)
+                    if body is not None:
+                        if len(body) + len(block) <= MAX_BASELINE_FILE_BYTES:
+                            body.extend(block)
+                        else:
+                            body = None
                     if name not in binary_files:
                         try:
                             if b"\0" in block:
@@ -237,20 +290,22 @@ def snapshot(directory: str) -> Snapshot:
                     decoder.decode(b"", final=True)
                 except UnicodeDecodeError:
                     binary_files.add(name)
-        elif path.is_dir():
+            if body is not None and name not in binary_files:
+                compressed = zlib.compress(body, level=1)
+                if len(compressed) <= remaining:
+                    starting_bodies[name] = compressed
+                    remaining -= len(compressed)
+        elif stat.S_ISDIR(mode):
             # A superproject diff cannot establish the state of nested worktrees.
             raise ValueError("Oracle cannot certify submodules; review that workspace separately")
-        elif path.exists():
-            raise ValueError(f"Oracle cannot fingerprint {name}")
         else:
-            value.update(b"<deleted>")
+            raise ValueError(f"Oracle cannot fingerprint {name}")
         files[name] = value.hexdigest()
-        mode = str(path.lstat().st_mode).encode() if path.exists() else b"deleted"
-        digest.update(raw + b"\0" + files[name].encode() + b"\0" + mode)
-    return Snapshot(root, digest.hexdigest(), files, head, binary_files)
+        digest.update(raw + b"\0" + files[name].encode() + b"\0" + str(mode).encode())
+    return Snapshot(root, digest.hexdigest(), files, head, binary_files, modes, starting_bodies)
 
 
-def review_input(
+def _workspace_review_input(
     before: Snapshot,
     after: Snapshot,
     request: str,
@@ -259,34 +314,35 @@ def review_input(
     *,
     paged: bool = False,
 ) -> str:
-    """Include changed file bodies as well as diffs; never silently truncate evidence."""
-    changed = {
-        name
-        for name in before.files.keys() | after.files.keys()
-        if before.files.get(name) != after.files.get(name)
-    }
+    """Collect the workspace diff against the starting commit and untracked files."""
+    changed = before.changed_paths(after)
+    names = _git(after.root, "ls-files", "-z", "--others", "--exclude-standard")
+    changed.update(name.decode("utf-8", "surrogateescape") for name in names.split(b"\0") if name)
+    base = before.head
+    if not base:
+        # Git recognizes the empty tree without writing an object to the repo.
+        object_format = _git(after.root, "rev-parse", "--show-object-format").decode().strip()
+        base = hashlib.new(object_format, b"tree 0\0").hexdigest()
     stats = _git(
         after.root, "diff", "--numstat", "-z", "--no-ext-diff", "--no-textconv",
-        "--no-renames", before.head, "--",
+        "--no-renames", base, "--",
     )
-    text_paths, baseline_binaries = [], []
-    task_binaries = changed & (before.binary_files | after.binary_files)
+    text_paths = []
+    binaries = changed & (before.binary_files | after.binary_files)
     for record in stats.split(b"\0"):
         if not record:
             continue
         added, removed, raw_name = record.split(b"\t", 2)
         name = raw_name.decode("utf-8", errors="surrogateescape")
         if added == removed == b"-":
-            if name in changed:
-                task_binaries.add(name)
-            else:
-                baseline_binaries.append(name)
+            binaries.add(name)
         else:
             text_paths.append(name)
-    if task_binaries:
+    binaries.update(set(text_paths) & after.binary_files)
+    if binaries:
         raise ValueError(
-            "Oracle cannot inspect binary changes made during this task: "
-            + ", ".join(sorted(task_binaries))
+            "Oracle cannot inspect binary changes in this workspace: "
+            + ", ".join(sorted(binaries))
             + ". Review them manually."
         )
     budget = MAX_AGENT_EVIDENCE_CHARS if paged else MAX_REVIEW_CHARS
@@ -295,19 +351,15 @@ def review_input(
         path = after.root / name
         if not path.is_symlink() and path.is_file() and path.stat().st_size > file_byte_limit:
             raise ReviewEvidenceTooLarge(f"Changed file too large for an Oracle review: {name}")
-    diff = _text_diff(after.root, before.head, text_paths, limit=budget)
+    diff = _text_diff(after.root, base, text_paths, limit=budget)
     blocks = [
+        f"Review scope: Workspace changes ({len(set(text_paths) | changed)} changed paths)",
         f"Request:\n{request}",
         f"Lead response:\n{answer}",
         f"Git diff (text files):\n{diff}",
         "Observed test tool results:\n"
         + ("\n\n".join(test_evidence) if test_evidence else "No test output was observed."),
     ]
-    if baseline_binaries:
-        blocks.append(
-            "Pre-existing binary changes unchanged during this task (not reviewed):\n"
-            + "\n".join(baseline_binaries)
-        )
     text_size = sum(map(len, blocks)) + 2 * (len(blocks) - 1)
     if text_size > budget:
         raise ReviewEvidenceTooLarge(REVIEW_SIZE_ERROR)
@@ -316,10 +368,14 @@ def review_input(
         if not path.is_file() or path.is_symlink():
             block = f"{name}: deleted or symbolic link"
         else:
+            if not path.resolve().is_relative_to(after.root):
+                raise ValueError(f"Oracle path escaped the workspace: {name}. Review it manually.")
             with path.open("rb") as stream:
                 raw = stream.read(file_byte_limit + 1)
             if len(raw) > file_byte_limit:
                 raise ReviewEvidenceTooLarge(f"Changed file too large for an Oracle review: {name}")
+            if hashlib.sha256(raw).hexdigest() != after.files.get(name):
+                raise ValueError(f"Workspace changed while Oracle collected {name}. Retry the review.")
             try:
                 body = raw.decode("utf-8")
             except UnicodeDecodeError as exc:
@@ -337,16 +393,114 @@ def review_input(
     return text
 
 
+def _starting_body(before: Snapshot, name: str) -> bytes:
+    if name not in before.modes:
+        return b""
+    if name in before.starting_bodies:
+        return zlib.decompress(before.starting_bodies[name])
+    blob = None
+    if before.head:
+        try:
+            blob = _git(
+                before.root, "cat-file", "blob", f"{before.head}:{name}",
+                max_output_chars=MAX_AGENT_EVIDENCE_CHARS,
+            )
+        except subprocess.CalledProcessError:
+            pass
+    if blob is not None:
+        # Match the exact captured bytes. Git may have converted clean text to CRLF.
+        lf = blob.replace(b"\r\n", b"\n")
+        for candidate in (blob, lf, lf.replace(b"\n", b"\r\n")):
+            if hashlib.sha256(candidate).hexdigest() == before.files[name]:
+                return candidate
+    raise ValueError(f"Oracle could not recover the starting contents of {name}. Review it manually.")
+
+
+def _task_review_input(
+    before: Snapshot, after: Snapshot, request: str, answer: str,
+    test_evidence: list[str] | None, *, paged: bool,
+) -> str:
+    """Review only the actual delta from the start-of-task working tree."""
+    budget = MAX_AGENT_EVIDENCE_CHARS if paged else MAX_REVIEW_CHARS
+    paths = sorted(before.changed_paths(after))
+    binaries = set(paths) & (before.binary_files | after.binary_files)
+    if binaries:
+        raise ValueError(
+            "Oracle cannot inspect binary changes made during this task: "
+            + ", ".join(sorted(binaries)) + ". Review them manually."
+        )
+    blocks = [
+        f"Review scope: This task · changed paths: {len(paths)}\n\n"
+        f"Request:\n{request}\n\nLead response:\n{answer}\n\nObserved test tool results:\n"
+        + ("\n\n".join(test_evidence) if test_evidence else "No test output was observed.")
+        + "\n\nTask diff (text files):\n"
+    ]
+    size = len(blocks[0])
+    root = after.root.resolve()
+    for name in paths:
+        old_mode, new_mode = before.modes.get(name), after.modes.get(name)
+        if any(mode is not None and stat.S_ISLNK(mode) for mode in (old_mode, new_mode)):
+            raise ValueError(f"Oracle cannot inspect a changed symbolic link: {name}. Review it manually.")
+        path = root / name
+        if not path.resolve().is_relative_to(root):
+            raise ValueError(f"Oracle path escaped the workspace: {name}. Review it manually.")
+        current = b""
+        if new_mode is not None:
+            with path.open("rb") as stream:
+                current = stream.read(MAX_BASELINE_FILE_BYTES + 1)
+            if len(current) > MAX_BASELINE_FILE_BYTES:
+                raise ReviewEvidenceTooLarge(f"Changed file too large for an Oracle review: {name}")
+            if hashlib.sha256(current).hexdigest() != after.files[name]:
+                raise ValueError(f"Workspace changed while Oracle collected {name}. Retry the review.")
+        elif path.exists() or path.is_symlink():
+            raise ValueError(f"Oracle cannot verify the missing path {name}. Review it manually.")
+        old = _starting_body(before, name)
+        labels = (json.dumps(name, ensure_ascii=True), "/dev/null")
+        header = f"\nFile {labels[0]}:\n"
+        if old_mode != new_mode:
+            header += f"Mode: {old_mode if old_mode is not None else 'absent'} → "
+            header += f"{new_mode if new_mode is not None else 'absent'}\n"
+        blocks.append(header)
+        size += len(header)
+        if size > budget:
+            raise ReviewEvidenceTooLarge(REVIEW_SIZE_ERROR)
+        if old == current:
+            continue
+        old_lines = old.decode("utf-8").splitlines(keepends=True)
+        new_lines = current.decode("utf-8").splitlines(keepends=True)
+        # shortcut: bound difflib work on long files until a bounded diff engine is needed.
+        if max(len(old_lines), len(new_lines)) > MAX_TASK_DIFF_LINES:
+            raise ValueError(f"Too many lines to compare in {name}. Review it manually.")
+        for line in difflib.unified_diff(
+            old_lines,
+            new_lines,
+            fromfile=labels[0] if old_mode is not None else labels[1],
+            tofile=labels[0] if new_mode is not None else labels[1],
+        ):
+            if not line.endswith("\n"):
+                line += "\n\\ No newline at end of file\n"
+            size += len(line)
+            if size > budget:
+                raise ReviewEvidenceTooLarge(REVIEW_SIZE_ERROR)
+            blocks.append(line)
+    text = redact(_redact("".join(blocks), _credential_values()))
+    if len(text) > budget:
+        raise ReviewEvidenceTooLarge(REVIEW_SIZE_ERROR)
+    return text
+
+
 def prepare_review(
-    before: Snapshot, after: Snapshot, request: str, answer: str, test_evidence: list[str]
+    before: Snapshot, after: Snapshot, request: str, answer: str, test_evidence: list[str],
+    *, scope: Literal["task", "workspace"] = "task",
 ) -> str | tuple[str, ...]:
     """Keep inline reviews cheap. Capture and redact the large packet before serving any pages."""
+    collect = _task_review_input if scope == "task" else _workspace_review_input
     try:
-        return review_input(before, after, request, answer, test_evidence)
+        return collect(before, after, request, answer, test_evidence, paged=False)
     except ReviewEvidenceTooLarge:
         pass
     try:
-        evidence = review_input(before, after, request, answer, test_evidence, paged=True)
+        evidence = collect(before, after, request, answer, test_evidence, paged=True)
     except ReviewEvidenceTooLarge as exc:
         raise ValueError(
             "Oracle evidence exceeds the reviewer agent limit. Split the task or review it manually."
@@ -619,10 +773,12 @@ async def run_with_oracle(
         try:
             if getattr(session_state, "_sandbox_type", None) not in {None, "none", "os"}:
                 raise ValueError("Oracle needs local files; this session uses a remote sandbox")
-            original = await asyncio.to_thread(snapshot, run.directory)
+            original = await asyncio.to_thread(
+                snapshot, run.directory, capture_start=run.settings.scope == "task"
+            )
         except (OSError, ValueError, subprocess.SubprocessError) as exc:
             snapshot_error = (
-                "Oracle needs a readable Git workspace with an existing commit"
+                "Oracle needs a readable local Git workspace"
                 if isinstance(exc, subprocess.CalledProcessError)
                 else str(exc)[:500]
             )
@@ -670,13 +826,14 @@ async def run_with_oracle(
             try:
                 if original is None:
                     raise ValueError(
-                        snapshot_error or "Oracle needs a Git workspace with an existing commit"
+                        snapshot_error or "Oracle needs a readable local Git workspace"
                     )
                 if await team_busy(agent, session_state):
                     raise ValueError("Teammates are still active; wait for them before reviewing")
                 before = await asyncio.to_thread(snapshot, run.directory)
                 evidence = await asyncio.to_thread(
-                    prepare_review, original, before, user_input, answer, test_evidence
+                    prepare_review, original, before, user_input, answer, test_evidence,
+                    scope=run.settings.scope,
                 )
                 run.revision = before.revision
                 model = getattr(session_state, "_model", None)

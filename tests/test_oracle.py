@@ -260,10 +260,10 @@ def test_incomplete_evidence_fails_closed_and_keeps_assignments(workspace):
     path = workspace / "code.py"
     path.write_text("value = 2\n")
     after = oracle.snapshot(str(workspace))
-    assert "value = 2" in oracle.review_input(before, after, "task", "answer")
+    assert "value = 2" in oracle._workspace_review_input(before, after, "task", "answer")
     path.write_text("x" * (oracle.MAX_REVIEW_CHARS + 1))
     with pytest.raises(ValueError, match="too large"):
-        oracle.review_input(before, oracle.snapshot(str(workspace)), "task", "answer")
+        oracle._workspace_review_input(before, oracle.snapshot(str(workspace)), "task", "answer")
 
 
 def test_unchanged_preexisting_binary_edits_do_not_block_code_review(workspace):
@@ -278,10 +278,12 @@ def test_unchanged_preexisting_binary_edits_do_not_block_code_review(workspace):
     image.write_bytes(b"\x89PNG\0preexisting edit")
     before = oracle.snapshot(str(workspace))
     (workspace / "code.py").write_text("value = 2\n")
-    evidence = oracle.review_input(before, oracle.snapshot(str(workspace)), "task", "answer")
+    after = oracle.snapshot(str(workspace))
+    evidence = oracle.prepare_review(before, after, "task", "answer", [])
     assert "value = 2" in evidence
-    assert "Binary files" not in evidence
-    assert "not reviewed):\nimage.png" in evidence
+    assert "image.png" not in evidence
+    with pytest.raises(ValueError, match=r"binary.*image\.png"):
+        oracle.prepare_review(before, after, "task", "answer", [], scope="workspace")
 
 
 @pytest.mark.parametrize("action", ["modify", "delete", "committed_delete", "untracked", "non_utf8"])
@@ -307,14 +309,19 @@ def test_task_binary_changes_name_the_file_and_block_review(workspace, action):
     else:
         image.write_bytes(b"\xff\xfe" if action == "non_utf8" else b"\x89PNG\0changed")
     with pytest.raises(ValueError, match=r"binary.*image\.png"):
-        oracle.review_input(before, oracle.snapshot(str(workspace)), "task", "answer")
+        oracle.prepare_review(before, oracle.snapshot(str(workspace)), "task", "answer", [])
 
 
 def test_review_of_existing_text_changes_keeps_the_diff(workspace):
     (workspace / "code.py").write_text("value = 2\n")
+    (workspace / "draft.py").write_text("draft = True\n")
     before = oracle.snapshot(str(workspace))
-    evidence = oracle.review_input(before, before, "Review my existing changes", "Reviewed")
+    evidence = oracle.prepare_review(
+        before, before, "Review my existing changes", "Reviewed", [], scope="workspace"
+    )
+    assert "Workspace changes (2 changed paths)" in evidence
     assert "+value = 2" in evidence
+    assert "draft = True" in evidence
 
 
 def test_large_git_path_list_never_exceeds_windows_command_limit(monkeypatch, tmp_path):
@@ -326,6 +333,8 @@ def test_large_git_path_list_never_exceeds_windows_command_limit(monkeypatch, tm
         units = len(subprocess.list2cmdline(command).encode("utf-16-le")) // 2
         if units >= 32767:
             raise OSError(206, "The filename or extension is too long")
+        if args[0] == "ls-files":
+            return b""
         if "--numstat" in args:
             return b"".join(f"1\t1\t{name}\0".encode() for name in paths)
         selected = list(args[args.index("--") + 1:])
@@ -336,7 +345,7 @@ def test_large_git_path_list_never_exceeds_windows_command_limit(monkeypatch, tm
     unchanged = oracle.Snapshot(tmp_path, "revision", {}, "a" * 40)
     # Complete evidence remains too large; the platform must not reject the process first.
     with pytest.raises(ValueError, match="64,000"):
-        oracle.review_input(unchanged, unchanged, "review existing changes", "done")
+        oracle._workspace_review_input(unchanged, unchanged, "review existing changes", "done")
     seen = [name for batch in calls for name in batch]
     assert seen == paths[:len(seen)]
     assert 0 < len(seen) < len(paths)
@@ -362,7 +371,7 @@ def test_batched_git_diff_preserves_literal_unicode_paths(workspace, monkeypatch
               "--no-textconv", "--no-renames", before.head, "--"]
     units = lambda args: len(subprocess.list2cmdline(args).encode("utf-16-le")) // 2
     monkeypatch.setattr(oracle, "MAX_GIT_COMMAND_UNITS", max(units([*prefix, name]) for name in contents))
-    evidence = oracle.review_input(before, oracle.snapshot(str(workspace)), "task", "done")
+    evidence = oracle._workspace_review_input(before, oracle.snapshot(str(workspace)), "task", "done")
     assert len(calls) == len(contents)
     assert sorted(name for batch in calls for name in batch) == sorted(contents)
     for body in contents.values():
@@ -387,7 +396,7 @@ def test_committing_during_task_does_not_hide_code_from_review(workspace):
          "user.email=test@example.test", "commit", "-am", "change code"],
         check=True, capture_output=True,
     )
-    evidence = oracle.review_input(before, oracle.snapshot(str(workspace)), "task", "answer")
+    evidence = oracle.prepare_review(before, oracle.snapshot(str(workspace)), "task", "answer", [])
     assert "+value = 2" in evidence
 
 
@@ -448,7 +457,7 @@ def test_large_existing_patch_is_rejected_with_bounded_memory(workspace):
     tracemalloc.start()
     try:
         with pytest.raises(ValueError, match="64,000"):
-            oracle.review_input(before, before, "Review existing changes", "done")
+            oracle._workspace_review_input(before, before, "Review existing changes", "done")
         _, peak = tracemalloc.get_traced_memory()
     finally:
         tracemalloc.stop()
@@ -512,7 +521,7 @@ async def test_oversized_existing_diff_never_requests_a_grade(workspace, monkeyp
         yield ev.Done(had_response=True)
 
     monkeypatch.setattr(oracle, "run_with_goal", stream)
-    session = state(workspace, [9.0], reviewers=1)
+    session = state(workspace, [9.0], reviewers=1, scope="workspace")
     await collect(session)
     assert session.oracle_run.status == "paused"
     assert "reviewer agent limit" in session.oracle_run.error
@@ -520,8 +529,59 @@ async def test_oversized_existing_diff_never_requests_a_grade(workspace, monkeyp
     assert not session._model.messages
 
 
+async def test_task_review_isolates_and_keeps_committed_edits_in_a_dirty_workspace(workspace, monkeypatch):
+    path = workspace / "code.py"
+    large_path = workspace / "migration.txt"
+
+    def git(*args):
+        subprocess.run(["git", "-C", str(workspace), *args], check=True, capture_output=True)
+
+    large_path.write_text("previous migration content\n")
+    git("add", "migration.txt")
+    git("-c", "user.name=Test", "-c", "user.email=test@example.test", "commit", "-m", "fixture")
+    large_path.write_text("unrelated migration\n" * 30_000)
+    (workspace / "draft.py").write_text("existing draft\n")
+    path.write_text("value = 42\n")
+
+    async def stream(*args, **kwargs):
+        path.write_text("value = 43\n")
+        git("add", "code.py")
+        git("-c", "user.name=Test", "-c", "user.email=test@example.test", "commit", "-m", "task")
+        yield ev.Done(had_response=True)
+
+    monkeypatch.setattr(oracle, "run_with_goal", stream)
+    session = state(workspace, [9.0], reviewers=1)
+    await collect(session)
+    assert session.oracle_run.status == "passed"
+    evidence = session._model.messages[0][1].content
+    assert "This task · changed paths: 1" in evidence
+    assert "-value = 42" in evidence and "+value = 43" in evidence
+    assert "value = 1\n" not in evidence
+    assert "migration.txt" not in evidence and "draft.py" not in evidence
+
+
+def test_review_scopes_work_before_first_commit(tmp_path, monkeypatch):
+    subprocess.run(["git", "-C", str(tmp_path), "init"], check=True, capture_output=True)
+    monkeypatch.setattr(oracle, "MAX_BASELINE_BYTES", 256)
+    tracked = tmp_path / "staged.py"
+    tracked.write_text("staged = True\n")
+    subprocess.run(["git", "-C", str(tmp_path), "add", tracked.name], check=True, capture_output=True)
+    draft = tmp_path / "draft.py"
+    context = "# Existing line\n" * 1000
+    draft.write_text(context + "value = 1\n")
+    before = oracle.snapshot(str(tmp_path), capture_start=True)
+    draft.write_text(context + "value = 2\n")
+    after = oracle.snapshot(str(tmp_path))
+
+    task = oracle.prepare_review(before, after, "Change a draft", "Done", [])
+    workspace = oracle.prepare_review(before, after, "Review workspace", "Done", [], scope="workspace")
+    assert "-value = 1" in task and "+value = 2" in task
+    assert "staged.py" not in task
+    assert "+staged = True" in workspace and "value = 2" in workspace
+
+
 @pytest.mark.parametrize("mode", ["complete", "incomplete", "stale", "unknown_tool", "repeat"])
-async def test_large_workspace_review_uses_read_only_agents(workspace, monkeypatch, mode):
+async def test_large_task_review_uses_read_only_agents(workspace, monkeypatch, mode):
     path = workspace / "code.py"
     secret = "sk-" + "secret" * 5
     seen_by_reviewer = []
@@ -583,7 +643,7 @@ async def test_large_workspace_review_uses_read_only_agents(workspace, monkeypat
             evidence = "".join(page.split("\n\n", 1)[1] for page in pages)
             assert "# [redacted]" in evidence
             assert "value = 2" in evidence
-            assert "Git diff (text files)" in evidence and "File code.py:" in evidence
+            assert "Task diff (text files)" in evidence and 'File "code.py":' in evidence
     else:
         assert run.status == "paused"
         assert run.stale == (mode == "stale")
@@ -667,7 +727,7 @@ def test_file_body_budget_stops_before_reading_remaining_files(workspace, monkey
 
     monkeypatch.setattr(type(workspace), "open", open_file)
     with pytest.raises(ValueError, match="64,000"):
-        oracle.review_input(before, after, "review", "done")
+        oracle._workspace_review_input(before, after, "review", "done")
     assert reads == ["a.py", "b.py"]
 
 
