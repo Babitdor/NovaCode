@@ -24,7 +24,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 from pydantic import BaseModel, ConfigDict, Field
 
 from novacode_cli import ui_events as ev
-from novacode_cli.agents.model_budget import _MODEL_CALL_BUDGET, _bounded_model
+from novacode_cli.agents.model_budget import _bounded_model
 from novacode_cli.core.autonomous_loop import run_with_goal
 from novacode_cli.core.verification_loop import _extract_test_evidence
 from novacode_cli.prime_memory import session_directory
@@ -44,8 +44,8 @@ logger = logging.getLogger(__name__)
 MAX_ROUNDS = 20
 MAX_REVIEW_CHARS = 64_000
 REVIEW_SIZE_ERROR = "Oracle review evidence exceeds 64,000 characters; split the task"
-REVIEW_TIMEOUT = _MODEL_CALL_BUDGET
-AGENT_REVIEW_TIMEOUT = 600
+REVIEW_TIMEOUT = 10 * 60
+REVIEW_SECONDS_PER_PAGE = 60
 EVIDENCE_PAGE_CHARS = 16_000
 MAX_AGENT_EVIDENCE_CHARS = 512_000
 MAX_BASELINE_BYTES = 32 * 1024 * 1024
@@ -62,6 +62,11 @@ REVIEW_ASSIGNMENTS = (
     ("Verification", "Evaluate test coverage, observed test results, and untested failure paths."),
     ("Maintainability", "Check integration, ownership of logic, duplication, and unnecessary complexity."),
 )
+
+
+def reviewer_timeout(page_count: int) -> float:
+    """Allow time to read every page in addition to the final model call."""
+    return REVIEW_TIMEOUT + page_count * REVIEW_SECONDS_PER_PAGE
 
 
 class ReviewEvidenceTooLarge(ValueError):
@@ -708,7 +713,7 @@ async def review_round(run: OracleRun, model: Any, evidence: str | tuple[str, ..
                 if isinstance(evidence, tuple):
                     row.review = await asyncio.wait_for(
                         _review_with_pages(reviewer_model, system, evidence, row),
-                        timeout=AGENT_REVIEW_TIMEOUT,
+                        timeout=reviewer_timeout(row.page_count),
                     )
                 else:
                     response = await asyncio.wait_for(

@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import json
+import logging
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 
@@ -14,6 +15,10 @@ from langchain_quickjs._repl import _Registry
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Iterator
+
+logger = logging.getLogger(__name__)
+
+HOST_CANCEL_GRACE = 0.5
 
 BOOTSTRAP = """
 // The library reuses its bridge when the registered tool names haven't changed.
@@ -99,6 +104,21 @@ async def open_repl(registry: _Registry, thread: str) -> Any:
         raise
 
 
+async def _cancel_host_calls(pending: set[asyncio.Task[str]]) -> None:
+    if not pending:
+        return
+    for task in pending:
+        if not task.cancelling():
+            task.cancel()
+    # A transport may shield teardown or swallow cancellation.
+    _, lingering = await asyncio.wait(pending, timeout=HOST_CANCEL_GRACE)
+    if lingering:
+        logger.warning(
+            "Code Mode ended while %d nested tool call(s) were still cleaning up",
+            len(lingering),
+        )
+
+
 async def run_script(
     code: str,
     dispatch: Callable[[str], Awaitable[str]],
@@ -122,7 +142,7 @@ async def run_script(
             subagents_enabled=False,
         )
     active = True
-    pending: set[asyncio.Task] = set()
+    pending: set[asyncio.Task[str]] = set()
     parent = contextvars.copy_context()
 
     async def guarded(raw: str) -> str:
@@ -173,9 +193,8 @@ async def run_script(
                 execution_deadline.reset(token)
     finally:
         active = False
-        for task in tuple(pending):
-            task.cancel()
-        if pending:
-            await asyncio.gather(*pending, return_exceptions=True)
-        if registry is not None:
-            await registry.aevict("call")
+        try:
+            await _cancel_host_calls(pending)
+        finally:
+            if registry is not None:
+                await registry.aevict("call")

@@ -424,6 +424,43 @@ async def test_outer_cancellation_stops_pending_calls_and_worker(tmp_path):
     assert sum(t.name == "nova-mcp-code" for t in threading.enumerate()) == baseline
 
 
+async def test_slow_nested_mcp_cleanup_does_not_hold_the_cancelled_turn(tmp_path):
+    started, release, stopped = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+    @tool("db_read")
+    async def read(value: int) -> int:
+        """Keep the transport busy until the test releases cleanup."""
+        started.set()
+        try:
+            while not release.is_set():
+                try:
+                    await release.wait()
+                except asyncio.CancelledError:
+                    continue
+            return value
+        finally:
+            stopped.set()
+
+    mcp = inventory(tmp_path, read)
+    turn = asyncio.create_task(
+        execute(graph(mcp, 'return await mcp.call("db","read",{value:1});'))
+    )
+    try:
+        await asyncio.wait_for(started.wait(), 5)
+        turn.cancel()
+        done, _ = await asyncio.wait({turn}, timeout=2)
+        assert turn in done
+        assert turn.cancelled()
+        assert not stopped.is_set()
+        next_turn = await execute(graph(mcp, "return 42;"))
+        assert json.loads(next_turn[0].content)["result"] == 42
+    finally:
+        release.set()
+        await asyncio.gather(turn, return_exceptions=True)
+        if started.is_set():
+            await asyncio.wait_for(stopped.wait(), 2)
+
+
 async def test_wall_deadline_and_oversized_intermediate(tmp_path):
     active = False
 
@@ -769,8 +806,28 @@ return await mcp.call("db","read",{value:2});
     assert "approval" in messages[0].content.lower()
 
 
+async def test_wrapped_mcp_call_propagates_cancellation():
+    from novacode_cli.mcp.middleware import _wrap_tool_error_handling
+
+    started = asyncio.Event()
+
+    @tool("db_read")
+    async def read() -> None:
+        """Wait for cancellation."""
+        started.set()
+        await asyncio.Event().wait()
+
+    call = asyncio.create_task(_wrap_tool_error_handling(read).ainvoke({}))
+    try:
+        await asyncio.wait_for(started.wait(), 2)
+    finally:
+        call.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await call
+
+
 @pytest.mark.parametrize("slow", [False, True])
-async def test_wrapped_mcp_errors_and_swallowed_cancellation_stay_errors(tmp_path, slow):
+async def test_wrapped_mcp_errors_and_timeouts_stay_errors(tmp_path, slow):
     from novacode_cli.mcp.middleware import _wrap_tool_error_handling
 
     @tool("db_read")

@@ -108,7 +108,7 @@ async def test_independent_rounds_fix_lowest_score_and_hold_done(workspace, monk
     assert "value = 3" in session._model.messages[3][1].content
 
 
-async def test_slow_second_round_can_finish_within_delegated_call_budget(workspace, monkeypatch):
+async def test_slow_second_round_can_finish_within_oracle_call_budget(workspace, monkeypatch):
     lead(monkeypatch, workspace)
     session = state(workspace, [5.0, 6.0, 9.0, 9.0], reviewers=2)
     invoke = session._model.ainvoke
@@ -116,8 +116,8 @@ async def test_slow_second_round_can_finish_within_delegated_call_budget(workspa
 
     async def model_call(messages):
         if "value = 3" in messages[-1].content:
-            # Simulate 180 seconds, past the former 120-second cutoff.
-            await asyncio.sleep(0.18)
+            # Simulate seven minutes, beyond the former four-minute cutoff.
+            await asyncio.sleep(0.42)
         return await invoke(messages)
 
     monkeypatch.setattr(session._model, "ainvoke", model_call)
@@ -125,6 +125,11 @@ async def test_slow_second_round_can_finish_within_delegated_call_budget(workspa
     run = session.oracle_run
     assert run.round == 2 and run.status == "passed"
     assert [row.review.score for row in run.latest] == [9.0, 9.0]
+
+
+@pytest.mark.parametrize("pages,minutes", [(0, 10), (5, 15), (32, 42)])
+def test_reviewer_timeout_scales_with_evidence_pages(pages, minutes):
+    assert oracle.reviewer_timeout(pages) == minutes * 60
 
 
 async def test_changes_during_review_force_a_fresh_round_without_extra_lead(workspace, monkeypatch):

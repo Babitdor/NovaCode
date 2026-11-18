@@ -266,8 +266,7 @@ def _wrap_tool_error_handling(tool: BaseTool) -> BaseTool:
     Wrapping the tool's coroutine/func to catch ``BaseException`` and return a
     readable error string means the model just sees the failure as the tool's
     result and can recover (retry, start the server, or report) instead of the
-    run dying. ``KeyboardInterrupt``/``SystemExit`` are re-raised so Ctrl-C and
-    shutdown still work.
+    run dying. Cancellation and process exits propagate to the caller.
     """
 
     # MCP tools are loaded with response_format="content_and_artifact", so they
@@ -289,7 +288,7 @@ def _wrap_tool_error_handling(tool: BaseTool) -> BaseTool:
         async def _safe_coroutine(*args: Any, **kwargs: Any) -> Any:
             try:
                 return _with_structured(await orig_coroutine(*args, **kwargs))
-            except (KeyboardInterrupt, SystemExit):
+            except (asyncio.CancelledError, KeyboardInterrupt, SystemExit):
                 raise
             except BaseException as exc:  # noqa: BLE001
                 logger.warning("MCP tool '%s' failed: %s", tool.name, exc)

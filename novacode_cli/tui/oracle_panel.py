@@ -13,12 +13,11 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Collapsible, Input, Select, Static, Switch
 
 from novacode_cli.core.oracle import (
-    AGENT_REVIEW_TIMEOUT,
     MAX_ROUNDS,
-    REVIEW_TIMEOUT,
     SCOPE_LABELS,
     OracleRun,
     OracleSettings,
+    reviewer_timeout,
 )
 from novacode_cli.core.subagent_tasks import format_elapsed
 from novacode_cli.tui.widgets import CachedMarkdown
@@ -302,7 +301,7 @@ class OraclePanel(Vertical):
             elapsed = format_elapsed(max(0, end - min(started))) if started else "—"
             progress = f"{finished}/{len(rows)} finished · {elapsed}"
             if reviewing:
-                timeout = AGENT_REVIEW_TIMEOUT if rows[0].page_count else REVIEW_TIMEOUT
+                timeout = reviewer_timeout(rows[0].page_count)
                 progress += f" · timeout {format_elapsed(timeout)} per reviewer"
         elif reviewing:
             progress = f"Preparing review · {SCOPE_LABELS[run.settings.scope]}…"
