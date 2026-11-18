@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from langchain.agents import create_agent
@@ -28,7 +28,9 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
-def test_live_preference_reuses_cached_read_and_detects_atomic_replacement(tmp_path, monkeypatch):
+def test_live_preference_reuses_cached_read_and_detects_atomic_replacement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     import os
     from pathlib import Path
 
@@ -36,17 +38,16 @@ def test_live_preference_reuses_cached_read_and_detects_atomic_replacement(tmp_p
     path = tmp_path / "Nova.config.json"
     path.write_text('{"code_mode_enabled":false}', encoding="utf-8")
     old = path.stat()
-    reads = Mock(side_effect=Path.read_text)
-    monkeypatch.setattr(Path, "read_text", lambda self, **kwargs: reads(self, **kwargs))
-    assert not live_code_mode_enabled()
-    assert not live_code_mode_enabled()
-    assert reads.call_count == 1
-    alternate = tmp_path / "replacement.json"
-    alternate.write_text('{"code_mode_enabled":true }', encoding="utf-8")
-    os.utime(alternate, ns=(old.st_atime_ns, old.st_mtime_ns))
-    alternate.replace(path)
-    assert live_code_mode_enabled()
-    assert reads.call_count == 2
+    with patch.object(Path, "read_text", autospec=True, side_effect=Path.read_text) as reads:
+        assert not live_code_mode_enabled()
+        assert not live_code_mode_enabled()
+        assert reads.call_count == 1
+        alternate = tmp_path / "replacement.json"
+        alternate.write_text('{"code_mode_enabled":true }', encoding="utf-8")
+        os.utime(alternate, ns=(old.st_atime_ns, old.st_mtime_ns))
+        alternate.replace(path)
+        assert live_code_mode_enabled()
+        assert reads.call_count == 2
 
 
 # Two full app boots plus pauses: past the 10 s default under coverage on Windows CI.

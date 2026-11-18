@@ -352,7 +352,7 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
             ),
         )
 
-    async def abefore_agent(self, state: Any, runtime: Any) -> dict[str, Any] | None:
+    async def abefore_agent(self, state: Any, runtime: Any) -> dict[str, Any] | None:  # noqa: ARG002
         """Report failed restoration instead of silently claiming variables survived."""
         payload = state.get("_quickjs_snapshot_payload")
         if not payload:
@@ -366,7 +366,9 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
                 await self._registry.aevict(thread)
                 raise
             except Exception:
-                logger.warning("Failed to restore QuickJS snapshot for thread_id=%s", thread, exc_info=True)
+                logger.warning(
+                    "Failed to restore QuickJS snapshot for thread_id=%s", thread, exc_info=True
+                )
                 await self._registry.aevict(thread)
                 self._state_warnings[thread] = (
                     "JavaScript state restoration failed; variables were cleared."
@@ -691,7 +693,7 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
         if self._mcp is not None and get_policy().tool_default("MCPTool") != "deny":
             await asyncio.shield(self._mcp.start_background_discovery())
             runtime_ids = {id(tool) for tool in request.runtime.tools}
-            by_name = {}
+            by_name: dict[tuple[str | None, str], BaseTool] = {}
             for tool in self._mcp.tools:
                 server = (tool.metadata or {}).get("nova_mcp_server")
                 by_name.setdefault((server, tool.name), tool)
@@ -714,8 +716,10 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
                         )
                     )
         visible = {
-            id(target) for target in ToolSearchMiddleware._discovery_tools(
-                (target for target, _route in targets), browsing=browser_mode_enabled(),
+            id(target)
+            for target in ToolSearchMiddleware._discovery_tools(
+                (target for target, _route in targets),
+                browsing=browser_mode_enabled(),
             )
         }
         catalog = [
@@ -729,7 +733,8 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
             for target, route in targets
             if id(target) in visible
         ]
-        matches = ToolSearchMiddleware._search_matches(query.strip(), catalog) if query.strip() else []
+        query = query.strip()
+        matches = ToolSearchMiddleware._search_matches(query, catalog) if query else []
         return {
             "tools": [
                 {

@@ -91,11 +91,9 @@ async def open_repl(registry: _Registry, thread: str) -> Any:
         # A cancelled await cannot stop a thread already creating the slot.
         while not startup.done():
             try:
-                await asyncio.shield(startup)
+                await asyncio.wait((startup,))
             except asyncio.CancelledError:
                 continue
-            except Exception:
-                break
         if not startup.cancelled():
             startup.exception()
         raise

@@ -2554,6 +2554,11 @@ async def _drive_parallel_fileops():
         assert [c.heading.render().plain for c in comps] == [
             "Ran read_file(a.py)", "Ran read_file(b.py)",
         ]
+        for card in comps:
+            assert card.collapsed
+            assert card.source is None and card.output is None
+            card.collapsed = False
+        await pilot.pause()
         assert "content-A" in comps[0].output.render().plain
         assert "content-B" in comps[1].output.render().plain
         assert not any(c.has_class("tool-active") for c in comps)
@@ -3581,7 +3586,9 @@ async def _drive_native_diff_body():
             )
         )
         await app._render(ev.FileOp(record=rec, full_output="", call_id="c1"))
+        await pilot.pause()
         comp = app.query("Collapsible.tool").first()
+        assert not comp.collapsed
         body = str(comp.query_one(".toolbody", Static).render())
         assert "+# Joji" in body and "-old line" in body, body
         assert "+2 / -1" in comp.preview.render().plain

@@ -95,5 +95,12 @@ def test_update_resume_keeps_shell_blocked_and_accepts_typing_and_scroll(tmp_pat
 
         _wait_for(clean_shell_return, output)
     finally:
-        terminal.close(force=True)
-        reader.join(timeout=2)
+        try:
+            terminal.close(force=True)
+        except PermissionError as exc:
+            # The process can exit between pywinpty's liveness check and os.kill.
+            if exc.winerror != 5:
+                raise
+            _wait_for(lambda: not terminal.isalive(), output, timeout=2)
+        finally:
+            reader.join(timeout=2)

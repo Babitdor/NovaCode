@@ -61,7 +61,9 @@ async def test_search_native_and_mcp_have_distinct_callable_targets(tmp_path):
     assert [hit["target"]["namespace"] for hit in result["tools"]] == ["tools"]
 
 
-async def test_search_uses_current_inventory_and_excludes_direct_control_tools(tmp_path, monkeypatch):
+async def test_search_uses_current_inventory_and_excludes_direct_control_tools(
+    tmp_path, monkeypatch
+):
     from novacode_cli.agents import tool_search, tool_search_variants
 
     parameter_text = tool_search_variants.parameter_text

@@ -80,7 +80,7 @@ async def _verify_read_edit_round_trip() -> None:
             # Permissions are tested separately; this smoke owns only fixed temp-file operations.
             with (
                 patch(
-                    "novacode_cli.agents.code_mode.NovaConfig.get_code_mode_enabled",
+                    "novacode_cli.agents.code_mode.live_code_mode_enabled",
                     return_value=True,
                 ),
                 patch(

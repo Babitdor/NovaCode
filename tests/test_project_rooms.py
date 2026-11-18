@@ -7,6 +7,7 @@ import json
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -619,6 +620,8 @@ async def test_task_card_start_and_review_are_wired_to_real_runtime(
     app = App()
     async with app.run_test(size=(110, 42)) as pilot:
         screen = RoomsScreen(project, "owner")
+        # Drive polling explicitly so a timer cannot replace the card mid-click.
+        monkeypatch.setattr(screen, "set_interval", partial(screen.set_interval, pause=True))
         await app.push_screen(screen)
         await pilot.pause()
         await screen.switch("__board")
@@ -627,18 +630,13 @@ async def test_task_card_start_and_review_are_wired_to_real_runtime(
         await screen.owner_action("room-propose")
         task = json.loads(screen.runtime.store.rows("SELECT body FROM tasks")[0]["body"])
         assert calls == []
-        # A timer may be finishing an older snapshot while preparation returns.
-        # Wait for that refresh, then request the current authoritative card.
-        while screen.refreshing:
-            await pilot.pause()
         await screen.poll()
         # Lay out the new card before scrolling; its restored board scroll is deferred.
         await pilot.pause()
         button = screen.query_one("#start-" + task["id"])
         button.scroll_visible(animate=False, top=True, immediate=True)
         await pilot.pause()
-        # Board refreshes can replace the target widget; verify the runtime effects below.
-        await pilot.click("#start-" + task["id"], offset=(2, 1))
+        assert await pilot.click("#start-" + task["id"], offset=(2, 1))
         await app.workers.wait_for_complete()
         for _ in range(25):
             if screen.runtime.store.task(task["id"])["status"] == "finished":

@@ -98,7 +98,9 @@ async def test_cancel_during_cold_start_keeps_the_loop_responsive_and_evicts_the
 
     monkeypatch.setattr(mode._registry, "get", get)
     graph = scripted([("eval", "1 + 1")], middleware=[mode])
-    turn = asyncio.create_task(graph.ainvoke({"messages": [HumanMessage(content="Run the snippet")]}))
+    turn = asyncio.create_task(
+        graph.ainvoke({"messages": [HumanMessage(content="Run the snippet")]})
+    )
     try:
         assert await asyncio.to_thread(entered.wait, 4)
         turn.cancel()
