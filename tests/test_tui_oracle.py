@@ -1,9 +1,11 @@
 """Oracle composer controls preserve drafts and expose owner decisions and threads."""
 
 import asyncio
+import io
 import time
 
 import pytest
+from rich.console import Console
 from textual.widgets import Button, Input, Select, Static, Switch
 
 from novacode_cli import ui_events as ev
@@ -315,7 +317,11 @@ async def test_reviewers_refresh_independently_with_live_and_frozen_timers(size)
                 started.set()
             await release[slot].wait()
             finished[slot].set()
-            return Review(score=9.0, summary=f"Result {slot + 1}", findings=[])
+            return Review(
+                score=9.0,
+                summary=f"**Result {slot + 1}**",
+                findings=["Check `demo.py`.", "Cover boundary inputs."],
+            )
 
     app = _app()
     async with app.run_test(size=size) as pilot:
@@ -353,14 +359,21 @@ async def test_reviewers_refresh_independently_with_live_and_frozen_timers(size)
             # A reviewer thread opened mid-call also receives the eventual result.
             app.push_screen(OracleThreadScreen(run, 2))
             await pilot.pause()
+            identity = run.latest[1].identity
+            result = app.screen.query_one(f"#oracle-thread-result-{identity}", Static)
+            assert result.content == "Waiting for model response"
             release[1].set()
             await asyncio.wait_for(task, 2)
             await pilot.pause(1.1)
-            result = app.screen.query_one(
-                f"#oracle-thread-result-{run.latest[1].identity}", Static
-            )
-            assert "complete" in str(result.content)
-            assert "Result 2" in str(result.content)
+            status = app.screen.query_one(f"#oracle-thread-status-{identity}", Static)
+            assert "complete" in str(status.content)
+            output = io.StringIO()
+            Console(file=output, width=size[0] - 4).print(result.content)
+            rendered = output.getvalue()
+            assert "Review result · 9/10" in rendered
+            assert "Result 2" in rendered and "**Result 2**" not in rendered
+            assert "• Check demo.py." in rendered
+            assert "• Cover boundary inputs." in rendered
             assert "2/2 finished" in str(progress.content)
             assert run.latest[0].elapsed == frozen
             await pilot.press("escape")

@@ -108,6 +108,25 @@ async def test_independent_rounds_fix_lowest_score_and_hold_done(workspace, monk
     assert "value = 3" in session._model.messages[3][1].content
 
 
+async def test_slow_second_round_can_finish_within_delegated_call_budget(workspace, monkeypatch):
+    lead(monkeypatch, workspace)
+    session = state(workspace, [5.0, 6.0, 9.0, 9.0], reviewers=2)
+    invoke = session._model.ainvoke
+    monkeypatch.setattr(oracle, "REVIEW_TIMEOUT", oracle.REVIEW_TIMEOUT / 1000)
+
+    async def model_call(messages):
+        if "value = 3" in messages[-1].content:
+            # Simulate 180 seconds, past the former 120-second cutoff.
+            await asyncio.sleep(0.18)
+        return await invoke(messages)
+
+    monkeypatch.setattr(session._model, "ainvoke", model_call)
+    await collect(session)
+    run = session.oracle_run
+    assert run.round == 2 and run.status == "passed"
+    assert [row.review.score for row in run.latest] == [9.0, 9.0]
+
+
 async def test_changes_during_review_force_a_fresh_round_without_extra_lead(workspace, monkeypatch):
     calls = lead(monkeypatch, workspace)
     session = state(workspace, [10.0, 10.0, 9.0, 9.0], reviewers=2)
@@ -668,6 +687,7 @@ async def test_paged_review_round_uses_real_tool_message_serialization():
 
     def respond(request):
         payload = json.loads(request.content)
+        assert request.extensions["timeout"]["read"] == oracle.REVIEW_TIMEOUT
         assert {tool["function"]["name"] for tool in payload["tools"]} == {"ReadEvidence", "Review"}
         turn = len(calls)
         calls.append(payload["messages"])
@@ -698,6 +718,8 @@ async def test_paged_review_round_uses_real_tool_message_serialization():
             http_async_client=client,
         )
         await oracle.review_round(run, model, ("Fixture page 1", "Fixture page 2"))
+        assert model.root_async_client.max_retries == 2
+        assert model.request_timeout is None
     assert len(calls) == 3
     assert run.lowest == 9
     assert run.latest[0].pages_read == 2

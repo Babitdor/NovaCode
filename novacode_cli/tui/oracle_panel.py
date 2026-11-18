@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import time
 
 from rich.text import Text
@@ -22,6 +21,7 @@ from novacode_cli.core.oracle import (
     OracleSettings,
 )
 from novacode_cli.core.subagent_tasks import format_elapsed
+from novacode_cli.tui.widgets import CachedMarkdown
 
 
 def _reviewer_status(row) -> str:
@@ -106,6 +106,7 @@ class OracleThreadScreen(ModalScreen[None]):
     DEFAULT_CSS = """
     OracleThreadScreen > Vertical { background: $surface; }
     OracleThreadScreen Static { height: auto; padding: 1 2; }
+    OracleThreadScreen .oracle-thread-status { padding: 0 2; color: $text-muted; }
     OracleThreadScreen VerticalScroll { height: 1fr; }
     """
 
@@ -125,6 +126,12 @@ class OracleThreadScreen(ModalScreen[None]):
                                 f"Review input\n{row.prompt}"
                             )
                         )
+                        yield Static(
+                            "",
+                            id=f"oracle-thread-status-{row.identity}",
+                            classes="oracle-thread-status",
+                            markup=False,
+                        )
                         yield Static("", id=f"oracle-thread-result-{row.identity}", markup=False)
             yield Button("Back", id="oracle-thread-back")
 
@@ -138,15 +145,27 @@ class OracleThreadScreen(ModalScreen[None]):
             widgets = self.query(f"#oracle-thread-result-{row.identity}")
             if not widgets:
                 continue
-            result = (
-                json.dumps(row.review.model_dump(), indent=2, ensure_ascii=False)
-                if row.review
-                else row.error or "Waiting for model response"
-            )
+            status = self.query_one(f"#oracle-thread-status-{row.identity}", Static)
+            text = _reviewer_status(row)
+            if status.content != text:
+                status.update(text)
             widget = widgets.first(Static)
-            text = f"{_reviewer_status(row)}\n\nReview result\n{result}"
-            if str(widget.content) != text:
-                widget.update(text)
+            if row.review is None:
+                result = row.error or "Waiting for model response"
+                if widget.content != result:
+                    widget.update(result)
+                continue
+
+            review = row.review
+            findings = "\n\n".join(
+                "- " + finding.strip().replace("\n", "\n  ") for finding in review.findings
+            )
+            result = (
+                f"### Review result · {review.score:g}/10\n\n{review.summary}\n\n"
+                f"#### Findings\n\n{findings or 'No findings.'}"
+            )
+            if getattr(widget.content, "markup", None) != result:
+                widget.update(CachedMarkdown(result, hyperlinks=False))
         if all(row.finished_at is not None or row.review or row.error for row in rows):
             self._timer.pause()
 

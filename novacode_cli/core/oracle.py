@@ -7,6 +7,7 @@ import codecs
 import difflib
 import hashlib
 import json
+import logging
 import math
 import os
 import stat
@@ -23,6 +24,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 from pydantic import BaseModel, ConfigDict, Field
 
 from novacode_cli import ui_events as ev
+from novacode_cli.agents.model_budget import _MODEL_CALL_BUDGET, _bounded_model
 from novacode_cli.core.autonomous_loop import run_with_goal
 from novacode_cli.core.verification_loop import _extract_test_evidence
 from novacode_cli.prime_memory import session_directory
@@ -37,10 +39,12 @@ from novacode_cli.tracking.usage_tree import (
     usage_scope,
 )
 
+logger = logging.getLogger(__name__)
+
 MAX_ROUNDS = 20
 MAX_REVIEW_CHARS = 64_000
 REVIEW_SIZE_ERROR = "Oracle review evidence exceeds 64,000 characters; split the task"
-REVIEW_TIMEOUT = 120
+REVIEW_TIMEOUT = _MODEL_CALL_BUDGET
 AGENT_REVIEW_TIMEOUT = 600
 EVIDENCE_PAGE_CHARS = 16_000
 MAX_AGENT_EVIDENCE_CHARS = 512_000
@@ -683,6 +687,7 @@ async def review_round(run: OracleRun, model: Any, evidence: str | tuple[str, ..
         for slot in range(1, run.settings.reviewers + 1)
     ]
     run.reviewers.extend(rows)
+    reviewer_model = _bounded_model(model, request_timeout=REVIEW_TIMEOUT, max_retries=None)
 
     async def review(row: Reviewer) -> None:
         row.started_at = time.monotonic()
@@ -702,11 +707,12 @@ async def review_round(run: OracleRun, model: Any, evidence: str | tuple[str, ..
             with usage_scope(f"oracle/reviewer-{row.slot}"):
                 if isinstance(evidence, tuple):
                     row.review = await asyncio.wait_for(
-                        _review_with_pages(model, system, evidence, row), timeout=AGENT_REVIEW_TIMEOUT
+                        _review_with_pages(reviewer_model, system, evidence, row),
+                        timeout=AGENT_REVIEW_TIMEOUT,
                     )
                 else:
                     response = await asyncio.wait_for(
-                        model.with_structured_output(Review).ainvoke(
+                        reviewer_model.with_structured_output(Review).ainvoke(
                             [SystemMessage(content=system), HumanMessage(content=evidence)]
                         ),
                         timeout=REVIEW_TIMEOUT,
@@ -715,6 +721,16 @@ async def review_round(run: OracleRun, model: Any, evidence: str | tuple[str, ..
         except asyncio.CancelledError:
             row.error = "CancelledError"
             raise
+        except TimeoutError:
+            row.error = "TimeoutError"
+            logger.warning(
+                "Oracle round %d reviewer %d timed out after %.1fs (%d/%d evidence pages read)",
+                row.round,
+                row.slot,
+                row.elapsed,
+                row.pages_read,
+                row.page_count,
+            )
         except ReviewerProtocolError as exc:
             row.error = str(exc)
         except Exception as exc:  # noqa: BLE001 - Failed reviewers never grant a grade.
