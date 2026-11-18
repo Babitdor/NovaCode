@@ -20,11 +20,14 @@ import os
 import re
 import shlex
 import subprocess
+import tempfile
 import threading
+import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -32,7 +35,10 @@ from rich.markup import escape
 
 from novacode_cli.commands import ralph_events as rev
 from novacode_cli.config.config import COLORS, console
+from novacode_cli.prime_memory import session_directory
 from novacode_cli.prompts import render_template
+from novacode_cli.session.session_persistence import atomic_write
+from novacode_cli.shell.processes import kill_process_tree, process_group_options
 from novacode_cli.states.Session import BackgroundRalphTask, RalphTaskStatus
 from novacode_cli.ui.ui_elements import TokenTracker
 
@@ -83,9 +89,9 @@ def _ensure_ralph_dir() -> None:
         pass
 
 
-def _read_ralph_progress() -> str:
+def _read_ralph_progress(path: Path = Path(RALPH_PROGRESS_PATH)) -> str:
     """Return the current progress.md contents (bounded), or '' if absent."""
-    p = Path(".nova") / "ralph" / "progress.md"
+    p = path
     try:
         if p.exists():
             text = p.read_text(encoding="utf-8", errors="replace").strip()
@@ -143,9 +149,9 @@ class _ChecklistState:
         return [text for checked, text in self.items if not checked]
 
 
-def _read_checklist() -> _ChecklistState:
+def _read_checklist(path: Path = Path(RALPH_CHECKLIST_PATH)) -> _ChecklistState:
     """Parse ``.nova/ralph/checklist.md`` (empty state if absent/unreadable)."""
-    p = Path(".nova") / "ralph" / "checklist.md"
+    p = path
     items: list[tuple[bool, str]] = []
     try:
         if p.exists():
@@ -159,37 +165,44 @@ def _read_checklist() -> _ChecklistState:
 
 
 def _git_change_signature(working_directory: str) -> str:
-    """Fingerprint the working tree, to detect a no-progress iteration.
-
-    Combines ``git status --porcelain`` (new/untracked files) with ``git diff
-    HEAD`` (edits to already-dirty tracked files, which the status line alone
-    would miss). Returns ``""`` on any git failure — the caller treats an empty
-    signature as "changed" so a git hiccup never false-positives as stuck.
-    """
-    chunks: list[str] = []
-    for args in (["status", "--porcelain"], ["diff", "HEAD"]):
-        try:
-            r = subprocess.run(  # noqa: S603, S607 — fixed git command
-                ["git", *args],
-                cwd=working_directory,
-                capture_output=True,
-                text=True,
-                timeout=8,
-                check=False,
-            )
-        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+    """Hash dirty file contents and HEAD, excluding Ralph's progress files."""
+    workspace = Path(working_directory)
+    try:
+        status = subprocess.run(
+            ["git", "--no-optional-locks", "status", "--porcelain=v1", "-z",
+             "--untracked-files=all", "--no-renames", "--", ".", ":(exclude).nova/ralph"],
+            cwd=workspace, capture_output=True, timeout=8, check=True,
+        ).stdout
+        head = subprocess.run(
+            ["git", "rev-parse", "--verify", "--quiet", "HEAD"],
+            cwd=workspace, capture_output=True, timeout=8, check=False,
+        )
+        if head.returncode not in (0, 1):
             return ""
-        if r.returncode != 0:
-            return ""
-        chunks.append(r.stdout)
-    return hashlib.sha256("\x00".join(chunks).encode("utf-8", "replace")).hexdigest()
+        root = Path(os.fsdecode(subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=workspace, capture_output=True, timeout=8, check=True,
+        ).stdout.rstrip(b"\r\n")))
+        signature = hashlib.sha256(head.stdout + b"\0" + status)
+        for entry in status.split(b"\0"):
+            if not entry:
+                continue
+            path = root / os.fsdecode(entry[3:])
+            if path.is_symlink():
+                signature.update(os.fsencode(path.readlink()))
+            elif path.is_file() and path.resolve().is_relative_to(workspace):
+                with path.open("rb") as stream:
+                    signature.update(hashlib.file_digest(stream, "sha256").digest())
+        return signature.hexdigest()
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return ""
 
 
 def _read_verify_command(working_directory: str) -> str:
     """The opt-in verification command from ``.nova/ralph/verify.txt`` ('' if none)."""
     cfg = Path(working_directory) / ".nova" / "ralph" / "verify.txt"
     try:
-        if cfg.exists():
+        if cfg.resolve().is_relative_to(working_directory) and cfg.is_file():
             return cfg.read_text(encoding="utf-8", errors="replace").strip()
     except OSError:
         pass
@@ -204,38 +217,45 @@ class _VerifyResult:
     summary: str
 
 
-def _run_verification(working_directory: str) -> _VerifyResult | None:
+def _run_verification(
+    working_directory: str, command: str, cancelled: threading.Event,
+) -> _VerifyResult | None:
     """Run the opt-in verification command, or ``None`` if not configured.
 
-    The command lives in ``.nova/ralph/verify.txt`` (one shell command). Opt-in
-    by design: auto-running a whole test suite every iteration would be slow and
-    surprising. Best-effort — a missing/blank file, an unparseable command, or a
-    launch failure returns ``None`` (verification simply doesn't gate the loop).
+    The command is pinned before the agent starts so workspace edits cannot
+    change the executable that the user opted into running.
     """
-    command = _read_verify_command(working_directory)
     if not command:
         return None
     try:
-        argv = shlex.split(command, posix=os.name != "nt")
+        argv = command if os.name == "nt" else shlex.split(command)
     except ValueError:
         argv = []
     if not argv:
+        return _VerifyResult(passed=False, summary="Invalid verification command")
+    if cancelled.is_set():
         return None
     try:
-        r = subprocess.run(  # noqa: S603 — user's own opt-in verify command, by design
-            argv,
-            cwd=working_directory,
-            capture_output=True,
-            text=True,
-            timeout=600,
-            check=False,
-        )
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as e:
+        with tempfile.TemporaryFile() as output, subprocess.Popen(  # noqa: S603
+            argv, cwd=working_directory, stdin=subprocess.DEVNULL, stdout=output,
+            stderr=subprocess.STDOUT, **process_group_options(),
+        ) as process:
+            deadline = time.monotonic() + 600
+            while process.poll() is None:
+                if cancelled.wait(0.15) or time.monotonic() >= deadline:
+                    kill_process_tree(process.pid)
+                    if process.poll() is None:
+                        process.kill()
+                    return _VerifyResult(passed=False, summary="Verification stopped or timed out")
+            size = output.seek(0, os.SEEK_END)
+            output.seek(max(0, size - 4 * _VERIFY_TAIL_CHARS))
+            tail = output.read().decode("utf-8", errors="replace").strip()
+            returncode = process.returncode
+    except OSError as e:
         return _VerifyResult(passed=False, summary=f"verification could not run: {e}")
-    tail = (r.stdout + r.stderr).strip()
     if len(tail) > _VERIFY_TAIL_CHARS:
         tail = "…\n" + tail[-_VERIFY_TAIL_CHARS:]
-    return _VerifyResult(passed=r.returncode == 0, summary=tail or f"exit code {r.returncode}")
+    return _VerifyResult(passed=returncode == 0, summary=tail or f"exit code {returncode}")
 
 
 def _ralph_iteration_decision(
@@ -259,14 +279,14 @@ def _ralph_iteration_decision(
         if verify is not None:
             reason += " and verification passed"
         return "complete", reason
-    if no_change_streak >= max_no_change and not checklist.all_done:
+    if no_change_streak >= max_no_change:
         return "stuck", f"no file changes for {no_change_streak} consecutive iterations"
     return "continue", ""
 
 
-def _read_checklist_md() -> str:
+def _read_checklist_md(path: Path) -> str:
     """Raw checklist markdown for display in the prompt ('' if absent)."""
-    p = Path(".nova") / "ralph" / "checklist.md"
+    p = path
     try:
         if p.exists():
             return p.read_text(encoding="utf-8", errors="replace").strip()
@@ -276,14 +296,16 @@ def _read_checklist_md() -> str:
 
 
 def _ralph_render_extras(
-    no_change_streak: int, last_verify: _VerifyResult | None
+    no_change_streak: int, last_verify: _VerifyResult | None,
+    *, workspace: Path = Path(), checklist_path: str = RALPH_CHECKLIST_PATH,
 ) -> dict[str, Any]:
     """Template kwargs that carry the smart-loop state into the next iteration."""
-    checklist = _read_checklist()
+    path = workspace / checklist_path
+    checklist = _read_checklist(path)
     return {
-        "checklist_path": RALPH_CHECKLIST_PATH,
+        "checklist_path": checklist_path,
         "verify_path": RALPH_VERIFY_PATH,
-        "checklist_md": _read_checklist_md(),
+        "checklist_md": _read_checklist_md(path),
         "checklist_summary": checklist.summary,
         "verify_summary": last_verify.summary if last_verify else "",
         "verify_passed": last_verify.passed if last_verify else False,
@@ -292,7 +314,8 @@ def _ralph_render_extras(
 
 
 def _ralph_evaluate(
-    working_directory: str, sig_before: str, no_change_streak: int
+    working_directory: str, sig_before: str, no_change_streak: int,
+    checklist_path: Path, verify_command: str, cancelled: threading.Event,
 ) -> tuple[str, str, int, _VerifyResult | None]:
     """Post-iteration evaluation shared by both loops.
 
@@ -301,11 +324,13 @@ def _ralph_evaluate(
     An empty before/after signature (git unavailable) counts as "changed" so a
     git failure never false-positives the stuck check.
     """
+    verify = _run_verification(working_directory, verify_command, cancelled)
+    if cancelled.is_set():
+        return "continue", "", no_change_streak, verify
     sig_after = _git_change_signature(working_directory)
     changed = (not sig_before) or (not sig_after) or (sig_after != sig_before)
     streak = 0 if changed else no_change_streak + 1
-    verify = _run_verification(working_directory)
-    checklist = _read_checklist()
+    checklist = _read_checklist(checklist_path)
     decision, reason = _ralph_iteration_decision(checklist, streak, verify)
     return decision, reason, streak, verify
 
@@ -315,109 +340,75 @@ def _ralph_evaluate(
 # =============================================================================
 
 
-def _get_checkpoint_path() -> Path:
-    """Get the path to the ralph checkpoint file."""
-    home = Path.home()
-    return home / ".nova" / "ralph-checkpoint.json"
+def _get_checkpoint_path(working_directory: str) -> Path:
+    key = hashlib.sha256(os.path.normcase(working_directory).encode("utf-8")).hexdigest()
+    return Path.home() / ".nova" / "ralph" / "checkpoints" / f"{key}.json"
 
 
-def _save_ralph_checkpoint(
-    task: str,
-    max_iterations: int,
-    completed_iterations: int,
-    working_directory: str,
-    notes: str = "",
-) -> None:
-    """Save ralph checkpoint to disk."""
-    checkpoint_path = _get_checkpoint_path()
-    checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
-
-    checkpoint: dict[str, Any] = {
-        "task": task,
-        "max_iterations": max_iterations,
-        "completed_iterations": completed_iterations,
-        "timestamp": datetime.now(UTC).isoformat(),
-        "working_directory": working_directory,
-        "notes": notes,
-    }
-
-    # Track modified files via git
+def _reserve_workspace(working_directory: str) -> int:
+    """Hold the workspace's checkpoint lock until the run or process exits."""
+    lock = _get_checkpoint_path(working_directory).with_suffix(".lock")
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(lock, os.O_CREAT | os.O_RDWR, 0o600)
     try:
-        result = subprocess.run(
-            ["git", "status", "--porcelain"],
-            cwd=working_directory,
-            capture_output=True,
-            text=True,
-            timeout=5,
-            check=False,
-        )
-        if result.returncode == 0:
-            checkpoint["files_modified"] = [
-                line[3:] for line in result.stdout.strip().split("\n") if line
-            ]
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        checkpoint["files_modified"] = []
+        if os.name == "nt":
+            import msvcrt
 
-    with checkpoint_path.open("w") as f:
-        json.dump(checkpoint, f, indent=2)
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        os.close(fd)
+        raise
+    return fd
 
 
-def _load_ralph_checkpoint() -> dict[str, Any] | None:
-    """Load ralph checkpoint from disk."""
-    checkpoint_path = _get_checkpoint_path()
-    if not checkpoint_path.exists():
-        return None
-
+def _load_ralph_checkpoint(working_directory: str) -> dict[str, Any] | None:
+    path = _get_checkpoint_path(working_directory)
+    legacy = Path.home() / ".nova" / "ralph-checkpoint.json"
     try:
-        with checkpoint_path.open("r") as f:
-            return json.load(f)
-    except (json.JSONDecodeError, OSError):
+        checkpoint = json.loads((path if path.exists() else legacy).read_text(encoding="utf-8"))
+        if not isinstance(checkpoint, dict):
+            return None
+        directory = checkpoint.get("working_directory")
+        run_id = checkpoint.get("run_id", "")
+        if (
+            not isinstance(directory, str)
+            or Path(directory).resolve() != Path(working_directory)
+            or not isinstance(checkpoint.get("task"), str)
+            or not checkpoint["task"].strip()
+            or any(
+                type(checkpoint.get(key)) is not int or checkpoint[key] < 0
+                for key in ("max_iterations", "completed_iterations")
+            )
+            or type(checkpoint.get("budget", 5)) is not int
+            or checkpoint.get("budget", 5) < 0
+            or not isinstance(run_id, str)
+            or (run_id and not re.fullmatch(r"[0-9a-f]{32}", run_id))
+        ):
+            return None
+        return checkpoint
+    except (OSError, UnicodeError, ValueError):
         return None
 
 
-def _clear_ralph_checkpoint() -> None:
-    """Remove ralph checkpoint file."""
-    checkpoint_path = _get_checkpoint_path()
-    if checkpoint_path.exists():
-        checkpoint_path.unlink()
+def _save_ralph_checkpoint(working_directory: str, record: dict[str, Any]) -> None:
+    path = _get_checkpoint_path(working_directory)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write(path, json.dumps(record, indent=2))
 
 
 def _stop_and_save_all_ralph_tasks(session_state, emit: EmitFn = _console_emit) -> bool:
-    """Stop all running Ralph background tasks and save their state.
-
-    Returns True if tasks were stopped and saved, False if none were running.
-    """
-    if not session_state.background_ralph_tasks:
-        return False
-
-    running_tasks = [
-        task
+    """Request a stop. The current iteration already has a durable checkpoint."""
+    if not any(
+        task.status == RalphTaskStatus.RUNNING
         for task in session_state.background_ralph_tasks.values()
-        if task.status == RalphTaskStatus.RUNNING
-    ]
-
-    if not running_tasks:
+    ):
         return False
-
-    for task in running_tasks:
-        try:
-            # Completed iterations = current - 1 (we stop before this one finishes).
-            completed = max(0, task.iteration - 1)
-            _save_ralph_checkpoint(
-                task=task.task_description,
-                max_iterations=task.max_iterations,
-                completed_iterations=completed,
-                working_directory=task.working_directory,
-                notes=f"Stopped at iteration {task.iteration}. Resume with /ralph --resume",
-            )
-            task.status = RalphTaskStatus.CANCELLED
-            task.completed_at = datetime.now(UTC)
-
-            emit(f"[yellow]✓[/yellow] Saved Ralph checkpoint at iteration {task.iteration}")
-            emit("[dim]  Resume later with: /ralph --resume[/dim]")
-        except Exception as e:
-            emit(f"[red]✗ Failed to save Ralph checkpoint: {escape(str(e))}[/red]")
-
+    session_state._ralph_stop_requested = True
+    emit("[dim]Resume the saved Ralph run with /ralph --resume.[/dim]")
     return True
 
 
@@ -539,270 +530,171 @@ async def handle_ralph_status(
     return True
 
 
-def _run_background_ralph_in_thread(
-    task: str,
-    start_iteration: int,
-    max_iterations: int,
-    agent,
-    assistant_id: str,
-    session_state,
-    token_tracker: TokenTracker,
-    working_directory: str,
-    backend,
-    emit: EmitFn = _console_emit,
-    on_event: EventFn | None = None,
+async def _run_ralph_loop(
+    *, record: dict[str, Any], workspace: Path, start_iteration: int,
+    agent, session_state, token_tracker: TokenTracker, backend, execute_fn,
+    verify_command: str, background: bool, emit: EmitFn, on_event: EventFn | None,
 ) -> None:
-    """Run background Ralph iterations in a separate thread with its own loop."""
-    loop = None
-    try:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(
-            _execute_all_ralph_iterations_background(
-                task=task,
-                start_iteration=start_iteration,
-                max_iterations=max_iterations,
-                agent=agent,
-                assistant_id=assistant_id,
-                session_state=session_state,
-                token_tracker=token_tracker,
-                working_directory=working_directory,
-                backend=backend,
-                emit=emit,
-                on_event=on_event,
-            )
-        )
-    except BaseException as e:
-        logger.exception("Background Ralph execution failed")
-        emit(f"[red]✗ Background Ralph execution failed: {escape(str(e))}[/red]")
-    finally:
-        if loop is not None:
-            try:
-                loop.close()
-            except Exception:
-                logger.exception("Failed to close background Ralph event loop")
+    task = record["task"]
+    limit = record["max_iterations"]
+    completed = start_iteration - 1
+    directory = Path(".nova/ralph/runs") / record["run_id"]
+    progress_path = (directory / "progress.md").as_posix()
+    checklist_path = (directory / "checklist.md").as_posix()
+    active: BackgroundRalphTask | None = None
+    running_iteration = False
+    failed = 0
+    reason, detail = "limit", "Iteration limit reached"
+    streak = 0
+    last_verify = None
 
-
-async def _execute_all_ralph_iterations_background(
-    task: str,
-    start_iteration: int,
-    max_iterations: int,
-    agent,
-    assistant_id: str,
-    session_state,
-    token_tracker: TokenTracker,
-    working_directory: str,
-    backend,
-    emit: EmitFn = _console_emit,
-    on_event: EventFn | None = None,
-) -> None:
-    """Execute all Ralph iterations sequentially in the background (non-blocking).
-
-    Tool calls are auto-approved so the run never blocks on input. Progress is
-    surfaced via ``emit`` / ``on_event`` and a final notification; check anytime
-    with ``/ralph --status``.
-    """
-    from novacode_cli.ui.execution import execute_task
-
-    def _hdr() -> None:
-        emit("")
-        emit("[bold]🚀 Ralph background execution started[/bold]")
-        desc = task[:70] + "..." if len(task) > 70 else task
-        emit(f"[dim]Task: {escape(desc)}[/dim]")
-
-    _emit_event(
-        on_event,
-        rev.RalphStarted(task=task, max_iterations=max_iterations, background=True),
-        _hdr,
-    )
-
-    original_auto_approve = session_state.auto_approve
-    session_state.auto_approve = True
-
-    # Ground the loop in the prior conversation (read once before iterating).
-    conversation_context = ""
-    try:
-        from novacode_cli.context import ContextManager
-
-        conversation_context = await ContextManager().digest(agent, session_state.thread_id)
-    except Exception:
-        conversation_context = ""
-
-    _ensure_ralph_dir()
-    iteration = start_iteration
-    # Smart-loop state, carried across iterations.
-    no_change_streak = 0
-    last_verify: _VerifyResult | None = None
-    sig_before = ""
-
-    try:
+    async def checkpoint() -> None:
+        record["completed_iterations"] = completed
+        save = asyncio.create_task(asyncio.to_thread(_save_ralph_checkpoint, str(workspace), record.copy()))
         try:
-            while max_iterations == 0 or iteration <= max_iterations:
-                # Check for stop/checkpoint requests from TUI
-                if getattr(session_state, "_ralph_stop_requested", False):
-                    session_state._ralph_stop_requested = False
-                    break
-
-                if getattr(session_state, "_ralph_checkpoint_requested", False):
-                    session_state._ralph_checkpoint_requested = False
-                    _save_ralph_checkpoint(
-                        task=task,
-                        max_iterations=max_iterations,
-                        completed_iterations=iteration - 1,
-                        working_directory=working_directory,
-                        notes="Checkpoint requested by user (background mode)",
-                    )
-                    emit(f"[green]✓ Saved Ralph checkpoint at iteration {iteration - 1}[/green]")
-                    break
-
-                task_id = str(uuid.uuid4())
-                iters_str = f"{iteration}/{max_iterations}" if max_iterations > 0 else str(
-                    iteration,
-                )
-                iter_display = iters_str
-
-                bg_task = BackgroundRalphTask(
-                    task_id=task_id,
-                    iteration=iteration,
-                    max_iterations=max_iterations,
-                    task_description=task,
-                    working_directory=working_directory,
-                )
-                session_state.background_ralph_tasks[task_id] = bg_task
-
-                _emit_event(
-                    on_event,
-                    rev.IterationStarted(iteration=iteration, max_iterations=max_iterations),
-                    lambda disp=iter_display, tid=task_id: emit(
-                        f"[dim]\u2192 iteration {disp} started ({tid[:8]})[/dim]"
-                    ),
-                )
-
-                sig_before = _git_change_signature(working_directory)
-                prompt = render_template(
-                    "ralph_iteration.jinja",
-                    iteration_display=iter_display,
-                    task=task,
-                    conversation_context=conversation_context,
-                    progress_notes=_read_ralph_progress(),
-                    progress_path=RALPH_PROGRESS_PATH,
-                    **_ralph_render_extras(no_change_streak, last_verify),
-                )
-
-                try:
-                    await execute_task(
-                        prompt,
-                        agent,
-                        "ralph",  # display the agent as "Ralph"
-                        session_state,
-                        token_tracker,
-                        backend=backend,
-                    )
-                    bg_task.status = RalphTaskStatus.COMPLETED
-                    bg_task.completed_at = datetime.now(UTC)
-                    elapsed = (bg_task.completed_at - bg_task.created_at).total_seconds()
-                    _emit_event(
-                        on_event,
-                        rev.IterationFinished(
-                            iteration=iteration,
-                            max_iterations=max_iterations,
-                            ok=True,
-                            elapsed=elapsed,
-                        ),
-                        lambda disp=iter_display, el=elapsed: emit(
-                            f"[green]\u2713 iteration {disp} done[/green] [dim]({el:.1f}s)[/dim]"
-                        ),
-                    )
-                except Exception as e:
-                    bg_task.status = RalphTaskStatus.FAILED
-                    bg_task.error_message = str(e)
-                    bg_task.completed_at = datetime.now(UTC)
-                    elapsed = (bg_task.completed_at - bg_task.created_at).total_seconds()
-                    err = str(e)[:100] + "..." if len(str(e)) > 100 else str(e)
-                    _emit_event(
-                        on_event,
-                        rev.IterationFinished(
-                            iteration=iteration,
-                            max_iterations=max_iterations,
-                            ok=False,
-                            elapsed=elapsed,
-                            error=err,
-                        ),
-                        lambda disp=iter_display, msg=err: emit(
-                            f"[red]\u2717 iteration {disp} failed: {escape(msg)}[/red]"
-                        ),
-                    )
-
-                iteration += 1
-
-                decision, decision_reason, no_change_streak, last_verify = _ralph_evaluate(
-                    working_directory, sig_before, no_change_streak
-                )
-                if decision in ("complete", "stuck"):
-                    style = "green" if decision == "complete" else "yellow"
-                    label = "Task complete" if decision == "complete" else "Stopped — no progress"
-                    emit(f"[{style}]{label}.[/{style}] [dim]{decision_reason}[/dim]")
-                    _emit_event(
-                        on_event,
-                        rev.RalphFinished(
-                            completed=iteration - 1, failed=0, total=iteration - 1, reason=decision
-                        ),
-                        lambda: None,
-                    )
-                    break
+            await asyncio.shield(save)
         except asyncio.CancelledError:
-            _save_ralph_checkpoint(
-                task=task,
-                max_iterations=max_iterations,
-                completed_iterations=iteration - 1,
-                working_directory=working_directory,
-                notes="Cancelled (background mode)",
-            )
-            iter_n = iteration - 1
-            emit(f"[yellow]\u2713 Saved checkpoint at iteration {iter_n} before cancel[/yellow]")
+            await save
             raise
-    finally:
-        total_tasks = len(session_state.background_ralph_tasks)
-        completed = sum(
-            1
-            for t in session_state.background_ralph_tasks.values()
-            if t.status == RalphTaskStatus.COMPLETED
-        )
-        failed = sum(
-            1
-            for t in session_state.background_ralph_tasks.values()
-            if t.status == RalphTaskStatus.FAILED
-        )
 
-        def _summary() -> None:
-            emit("")
-            emit(
-                f"[bold]📊 Ralph background summary[/bold] — "
-                f"{completed} completed, {failed} failed of {total_tasks} task(s)"
-            )
+    try:
+        def validate_progress_paths() -> None:
+            for path in (directory, Path(progress_path), Path(checklist_path)):
+                if not (workspace / path).resolve().is_relative_to(workspace):
+                    raise ValueError("Ralph progress files must stay inside the workspace")
 
-        _emit_event(
-            on_event,
-            rev.RalphFinished(
-                completed=completed,
-                failed=failed,
-                total=total_tasks,
-                reason="background",
-            ),
-            _summary,
-        )
-
+        validate_progress_paths()
+        await asyncio.to_thread((workspace / directory).mkdir, parents=True, exist_ok=True)
+        await checkpoint()
+        conversation = ""
         try:
-            session_state.add_notification(
-                level="error" if failed and not completed else ("warning" if failed else "success"),
-                title="Ralph background run finished",
-                message=f"{completed} completed, {failed} failed of {total_tasks} task(s)",
-                source="ralph",
-            )
-        except Exception:
+            from novacode_cli.context import ContextManager
+
+            conversation = await ContextManager().digest(agent, session_state.thread_id)
+        except Exception:  # The worktree and checkpoint are sufficient to continue.
             pass
 
-        session_state.auto_approve = original_auto_approve
+        while limit == 0 or completed < limit:
+            if getattr(session_state, "_ralph_stop_requested", False):
+                reason, detail = "stopped", "Stopped by user"
+                break
+            if getattr(session_state, "_ralph_checkpoint_requested", False):
+                reason, detail = "checkpoint", "Paused after saving a checkpoint"
+                break
+            if background and not session_state.auto_approve:
+                reason, detail = "stopped", "Background run paused because auto-approval was turned off"
+                break
+
+            validate_progress_paths()
+            iteration = completed + 1
+            display = f"{iteration}/{limit}" if limit else str(iteration)
+            if background:
+                key = uuid.uuid4().hex
+                active = BackgroundRalphTask(
+                    key, iteration, limit, task, working_directory=str(workspace)
+                )
+                session_state.background_ralph_tasks[key] = active
+            started = datetime.now(UTC)
+            running_iteration = True
+            _emit_event(
+                on_event, rev.IterationStarted(iteration, limit),
+                lambda: emit(f"[cyan]Iteration {display}[/cyan]"),
+            )
+            sig_before, progress, extras = await asyncio.gather(
+                asyncio.to_thread(_git_change_signature, str(workspace)),
+                asyncio.to_thread(_read_ralph_progress, workspace / progress_path),
+                asyncio.to_thread(
+                    _ralph_render_extras, streak, last_verify,
+                    workspace=workspace, checklist_path=checklist_path,
+                ),
+            )
+            prompt = render_template(
+                "ralph_iteration.jinja", iteration_display=display, task=task,
+                conversation_context=conversation, progress_notes=progress,
+                progress_path=progress_path, **extras,
+            )
+            outcome = await execute_fn(
+                prompt, agent, "ralph", session_state, token_tracker, backend=backend,
+            )
+            if asyncio.current_task().cancelling():
+                raise asyncio.CancelledError
+            if outcome is False:
+                raise RuntimeError("The agent turn ended before completing")
+            completed = iteration
+            await checkpoint()
+            running_iteration = False
+            elapsed = (datetime.now(UTC) - started).total_seconds()
+            if active is not None:
+                active.status = RalphTaskStatus.COMPLETED
+                active.completed_at = datetime.now(UTC)
+                active = None
+            _emit_event(
+                on_event, rev.IterationFinished(iteration, limit, ok=True, elapsed=elapsed),
+                lambda: emit(f"[dim]Iteration {display} ended ({elapsed:.1f}s)[/dim]"),
+            )
+            if (
+                getattr(session_state, "_ralph_stop_requested", False)
+                or getattr(session_state, "_ralph_checkpoint_requested", False)
+            ):
+                reason, detail = ("stopped", "Stopped by user") if getattr(
+                    session_state, "_ralph_stop_requested", False
+                ) else ("checkpoint", "Paused after saving a checkpoint")
+                break
+            validate_progress_paths()
+            cancelled = threading.Event()
+            evaluation = asyncio.create_task(asyncio.to_thread(
+                _ralph_evaluate, str(workspace), sig_before, streak,
+                workspace / checklist_path, verify_command, cancelled,
+            ))
+            try:
+                decision, decision_reason, streak, last_verify = await asyncio.shield(evaluation)
+            except asyncio.CancelledError:
+                cancelled.set()
+                await evaluation
+                raise
+            if decision != "continue":
+                reason, detail = decision, decision_reason
+                break
+        if reason in {"limit", "stuck"} and last_verify is not None and not last_verify.passed:
+            detail += " with verification still failing"
+        if reason == "complete":
+            record["complete"] = True
+            await checkpoint()
+    except (asyncio.CancelledError, KeyboardInterrupt):
+        reason, detail = "stopped", "Stopped by user"
+    except Exception as exc:
+        logger.debug("Ralph run failed", exc_info=True)
+        reason, detail = "failed", str(exc)
+        failed = int(running_iteration)
+        if running_iteration:
+            _emit_event(
+                on_event, rev.IterationFinished(
+                    iteration, limit, ok=False, elapsed=(datetime.now(UTC) - started).total_seconds(),
+                    error=detail[:300],
+                ),
+                lambda: None,
+            )
+    finally:
+        if active is not None:
+            active.status = RalphTaskStatus.CANCELLED if reason == "stopped" else RalphTaskStatus.FAILED
+            active.error_message = detail
+            active.completed_at = datetime.now(UTC)
+        session_state._ralph_stop_requested = False
+        session_state._ralph_checkpoint_requested = False
+        if reason != "complete" and not record.get("complete"):
+            if _get_checkpoint_path(str(workspace)).is_file():
+                detail += " · Resume with /ralph --resume"
+        _emit_event(
+            on_event, rev.RalphFinished(completed, failed, completed + failed, reason, detail),
+            lambda: emit(f"{escape(detail)} · {completed} completed iteration(s)"),
+        )
+
+
+def _run_background_ralph_in_thread(lock_fd: int, **kwargs: Any) -> None:
+    try:
+        asyncio.run(_run_ralph_loop(**kwargs))
+    finally:
+        os.close(lock_fd)
 
 
 def _print_ralph_usage(emit: EmitFn) -> None:
@@ -818,13 +710,13 @@ def _print_ralph_usage(emit: EmitFn) -> None:
     emit("[dim]        /ralph --status (check running background tasks)[/dim]")
     emit("")
     emit("[bold]Options:[/bold]")
-    emit("  --iterations N, -i N    Maximum number of iterations (default: 5)")
-    emit("  --background            Run iterations in background (non-blocking)")
-    emit("  --resume                Resume from last saved checkpoint")
+    emit("  --iterations N, -i N    Maximum iterations (default: 5, 0 runs without a limit)")
+    emit("  --background            Run while NovaCode is open; requires existing auto-approval")
+    emit("  --resume                Resume unfinished work in this workspace")
+    emit("  --verify                Run the command in .nova/ralph/verify.txt each iteration")
     emit("  --status                Show status of background ralph tasks")
     emit("")
-    emit("[dim]Ralph mode runs autonomously, making progress each iteration.[/dim]")
-    emit("[dim]Press Ctrl+C to choose: Stop, Finish iteration, Continue, or Checkpoint.[/dim]")
+    emit("[dim]Ralph saves progress after each iteration. Esc stops the current run.[/dim]")
     emit("")
 
 
@@ -850,7 +742,8 @@ def _emit_ralph_header(
     emit("")
     if background_mode:
         emit("[dim]Background mode enabled. Iterations will run asynchronously.[/dim]")
-    emit("[dim]Press Ctrl+C to stop at any time.[/dim]")
+    else:
+        emit("[dim]Press Ctrl+C to stop and keep the checkpoint.[/dim]")
     emit("")
 
 
@@ -867,7 +760,7 @@ async def handle_ralph_command(
     """Handle /ralph command - autonomous looping mode.
 
     Usage:
-        /ralph <task>                 - Run autonomously (unlimited iterations)
+        /ralph <task>                 - Run for up to five iterations
         /ralph <task> --iterations N  - Run with max N iterations
         /ralph <task> -i N            - Shorthand for --iterations
         /ralph <task> --background    - Run iterations in background (non-blocking)
@@ -900,380 +793,121 @@ async def handle_ralph_command(
     if cmd_args and len(cmd_args) == 1 and cmd_args[0] == "--status":
         return await handle_ralph_status(session_state, emit, on_event)
 
-    # Parse task, iterations, resume flag, and background mode.
-    max_iterations = 5
-    background_mode = False
-    resume_mode = False
-    task_parts: list[str] = []
+    budget = None
+    background = resume = verify = False
+    task_parts = []
     i = 0
     while i < len(cmd_args):
         arg = cmd_args[i]
-        if arg == "--resume":
-            resume_mode = True
-            i += 1
-            continue
-        if arg == "--background":
-            background_mode = True
-            i += 1
-            continue
-        if arg in ("--iterations", "-i"):
-            if i + 1 < len(cmd_args) and cmd_args[i + 1].isdigit():
-                max_iterations = int(cmd_args[i + 1])
-                i += 2
-                continue
-            emit("")
-            emit("[red]Error: --iterations requires a number[/red]")
-            emit("[dim]Example: /ralph task --iterations 5[/dim]")
-            emit("")
-            return True
-        task_parts.append(arg)
         i += 1
+        if arg == "--resume":
+            resume = True
+        elif arg == "--background":
+            background = True
+        elif arg == "--verify":
+            verify = True
+        elif arg in ("--iterations", "-i"):
+            value = cmd_args[i] if i < len(cmd_args) else ""
+            if not re.fullmatch(r"[0-9]{1,9}", value):
+                emit("[red]Error: --iterations requires a number[/red]")
+                return True
+            budget = int(value)
+            i += 1
+        else:
+            task_parts.append(arg)
 
-    task = " ".join(task_parts)
-
-    # Resume mode.
-    if resume_mode:
-        checkpoint = _load_ralph_checkpoint()
-        if not checkpoint:
-            emit("")
-            emit("[red]No checkpoint found to resume.[/red]")
-            emit("[dim]Start a new ralph session first: /ralph <task>[/dim]")
-            emit("")
-            return True
-
-        task = checkpoint["task"]
-        max_iterations = checkpoint["max_iterations"]
-        start_iteration = checkpoint["completed_iterations"] + 1
-        working_directory = checkpoint.get("working_directory", os.getcwd())
-
-        _emit_event(
-            on_event,
-            rev.RalphStarted(
-                task=task,
-                max_iterations=max_iterations,
-                background=background_mode,
-                resumed_from=start_iteration,
-            ),
-            lambda: _emit_ralph_header(
-                emit,
-                task=task,
-                max_iterations=max_iterations,
-                background_mode=background_mode,
-                resumed_from=start_iteration,
-            ),
-        )
-        _clear_ralph_checkpoint()
-    else:
-        if not task:
-            emit("")
-            emit("[red]Error: No task specified[/red]")
-            emit("[dim]Usage: /ralph <task> [--iterations N][/dim]")
-            emit("[dim]       /ralph --resume[/dim]")
-            emit("")
-            return True
-
-        start_iteration = 1
-        working_directory = os.getcwd()
-        _emit_event(
-            on_event,
-            rev.RalphStarted(
-                task=task,
-                max_iterations=max_iterations,
-                background=background_mode,
-            ),
-            lambda: _emit_ralph_header(
-                emit,
-                task=task,
-                max_iterations=max_iterations,
-                background_mode=background_mode,
-            ),
-        )
-
-    # Resolve backend from the agent.
-    backend = None
-    if hasattr(agent, "backend"):
-        backend = agent.backend
-    elif hasattr(agent, "graph") and hasattr(agent.graph, "backend"):
-        backend = agent.graph.backend
-
-    # Background mode: one thread runs all iterations sequentially.
-    if background_mode:
-        background_thread = threading.Thread(
-            target=_run_background_ralph_in_thread,
-            args=(
-                task,
-                start_iteration,
-                max_iterations,
-                agent,
-                assistant_id,
-                session_state,
-                token_tracker,
-                working_directory,
-                backend,
-                emit,
-                on_event,
-            ),
-            daemon=True,
-        )
-        if not hasattr(session_state, "_background_threads"):
-            session_state._background_threads = []
-        session_state._background_threads.append(background_thread)
-        background_thread.start()
-
-        emit("")
-        emit("[green]✓ Background execution started[/green]")
-        emit("[dim]Iterations will progress asynchronously in the background.[/dim]")
-        emit("[dim]Check progress with: /ralph --status[/dim]")
-        emit("")
+    if resume and task_parts:
+        emit("[red]Start a new task without --resume, or resume without task text.[/red]")
+        return True
+    if not resume and not task_parts:
+        _print_ralph_usage(emit)
+        return True
+    if getattr(session_state, "_sandbox_type", None) not in {None, "none", "os"}:
+        emit("[red]Ralph requires a local workspace for progress and checkpoints.[/red]")
+        return True
+    if getattr(session_state, "plan_mode_enabled", False):
+        emit("[yellow]Exit Plan Mode before starting Ralph.[/yellow]")
+        return True
+    if background and not session_state.auto_approve:
+        emit("[yellow]Background Ralph requires a session with auto-approval already enabled.[/yellow]")
         return True
 
-    # Foreground mode: run iterations synchronously.
-    stop_after_iteration = False
-    interrupted = False
-
-    original_auto_approve = session_state.auto_approve
-    session_state.auto_approve = True
-
-    # Ground the loop in the prior conversation (read once before iterating).
-    conversation_context = ""
+    workspace = Path(session_directory(session_state)).resolve()
+    if not workspace.is_dir():
+        emit("[red]Ralph needs an existing workspace directory.[/red]")
+        return True
+    directory = str(workspace)
     try:
-        from novacode_cli.context import ContextManager
+        lock_fd = _reserve_workspace(directory)
+    except OSError as exc:
+        emit(f"[yellow]Could not reserve the Ralph workspace. Check for another active run. {escape(str(exc))}[/yellow]")
+        return True
 
-        conversation_context = await ContextManager().digest(agent, session_state.thread_id)
-    except Exception:
-        conversation_context = ""
-
-    _ensure_ralph_dir()
-    iteration = start_iteration
-    # Smart-loop state, carried across iterations.
-    no_change_streak = 0
-    last_verify: _VerifyResult | None = None
-    sig_before = ""
-
+    handed_off = False
     try:
-        try:
-            while max_iterations == 0 or iteration <= max_iterations:
-                if getattr(session_state, "_ralph_stop_requested", False):
-                    session_state._ralph_stop_requested = False
-                    done = iteration - 1
-
-                    def _finished_stop(done: int = done) -> None:
-                        emit("")
-                        emit("[yellow]Ralph mode stopped by user.[/yellow]")
-                        emit(f"[dim]Completed {done} iteration(s).[/dim]")
-                        emit("")
-
-                    _emit_event(
-                        on_event,
-                        rev.RalphFinished(completed=done, failed=0, total=done, reason="stopped"),
-                        _finished_stop,
-                    )
-                    return True
-
-                if getattr(session_state, "_ralph_checkpoint_requested", False):
-                    session_state._ralph_checkpoint_requested = False
-                    done = iteration - 1
-                    _save_ralph_checkpoint(
-                        task=task,
-                        max_iterations=max_iterations,
-                        completed_iterations=done,
-                        working_directory=working_directory,
-                        notes="Checkpoint requested by user",
-                    )
-
-                    def _finished_checkpoint(done: int = done) -> None:
-                        emit("")
-                        emit(f"[green]✓ Saved Ralph checkpoint at iteration {done}[/green]")
-                        emit(f"[dim]Completed {done} iteration(s). Run stopped.[/dim]")
-                        emit("")
-
-                    _emit_event(
-                        on_event,
-                        rev.RalphFinished(
-                            completed=done, failed=0, total=done, reason="checkpoint"
-                        ),
-                        _finished_checkpoint,
-                    )
-                    return True
-
-                iters_str = f"{iteration}/{max_iterations}" if max_iterations > 0 else str(
-                    iteration,
-                )
-                iter_display = iters_str
-
-                def _banner(display: str = iter_display) -> None:
-                    emit("")
-                    emit(f"[bold cyan]{'─' * 50}[/bold cyan]")
-                    emit(f"[bold cyan]Iteration {display}[/bold cyan]")
-                    emit(f"[bold cyan]{'─' * 50}[/bold cyan]")
-                    emit("")
-
-                _emit_event(
-                    on_event,
-                    rev.IterationStarted(iteration=iteration, max_iterations=max_iterations),
-                    _banner,
-                )
-                iter_start = datetime.now(UTC)
-
-                sig_before = _git_change_signature(working_directory)
-                prompt = render_template(
-                    "ralph_iteration.jinja",
-                    iteration_display=iter_display,
-                    task=task,
-                    conversation_context=conversation_context,
-                    progress_notes=_read_ralph_progress(),
-                    progress_path=RALPH_PROGRESS_PATH,
-                    **_ralph_render_extras(no_change_streak, last_verify),
-                )
-
-                # The agent run streams natively through execute_fn.
-                await execute_fn(
-                    prompt,
-                    agent,
-                    "ralph",  # display the agent as "Ralph"
-                    session_state,
-                    token_tracker,
-                    backend=backend,
-                )
-
-                # The iteration completed (a HITL interrupt would have broken the loop
-                # before here). Report it; the trailing markup "Continuing…" line below
-                # remains the CLI-only cue between iterations.
-                elapsed = (datetime.now(UTC) - iter_start).total_seconds()
-                _emit_event(
-                    on_event,
-                    rev.IterationFinished(
-                        iteration=iteration,
-                        max_iterations=max_iterations,
-                        ok=True,
-                        elapsed=elapsed,
-                    ),
-                    lambda: None,
-                )
-
-                iteration += 1
-
-                decision, decision_reason, no_change_streak, last_verify = _ralph_evaluate(
-                    working_directory, sig_before, no_change_streak
-                )
-                if decision in ("complete", "stuck"):
-                    done = iteration - 1
-
-                    def _finished_smart(
-                        done: int = done,
-                        decision: str = decision,
-                        reason: str = decision_reason,
-                    ) -> None:
-                        style = "green" if decision == "complete" else "yellow"
-                        label = (
-                            "Task complete"
-                            if decision == "complete"
-                            else "Ralph stopped — no progress"
-                        )
-                        emit("")
-                        emit(f"[{style}]{label}.[/{style}] [dim]{reason}[/dim]")
-                        emit(f"[dim]Completed {done} iteration(s).[/dim]")
-                        emit("")
-
-                    _emit_event(
-                        on_event,
-                        rev.RalphFinished(
-                            completed=done, failed=0, total=done, reason=decision
-                        ),
-                        _finished_smart,
-                    )
-                    return True
-
-                if stop_after_iteration:
-                    done = iteration - 1
-
-                    def _finished_stop(done: int = done) -> None:
-                        emit("")
-                        emit("[green]Finished current iteration. Stopping as requested.[/green]")
-                        emit(f"[dim]Completed {done} iteration(s).[/dim]")
-                        emit("")
-
-                    _emit_event(
-                        on_event,
-                        rev.RalphFinished(completed=done, failed=0, total=done, reason="finished"),
-                        _finished_stop,
-                    )
-                    return True
-
-                if (max_iterations == 0 or iteration <= max_iterations) and on_event is None:
-                    # CLI-only inter-iteration cue; the TUI shows it via the cards.
-                    emit("")
-                    emit(f"[dim]Completed iteration {iteration - 1}. Continuing...[/dim]")
-
-        except asyncio.CancelledError:
-            done = iteration - 1
-
-            def _cancelled_stop(done: int = done) -> None:
-                emit("")
-                emit("[yellow]Ralph mode stopped by user.[/yellow]")
-                emit(f"[dim]Completed {done} iteration(s).[/dim]")
-                emit("")
-
-            _emit_event(
-                on_event,
-                rev.RalphFinished(completed=done, failed=0, total=done, reason="stopped"),
-                _cancelled_stop,
-            )
-            return True
-        except KeyboardInterrupt:
-            if on_event is not None:
-                done = iteration - 1
-
-                def _tui_stop(done: int = done) -> None:
-                    emit("")
-                    emit("[yellow]Ralph mode stopped by user.[/yellow]")
-                    emit(f"[dim]Completed {done} iteration(s).[/dim]")
-                    emit("")
-
-                _emit_event(
-                    on_event,
-                    rev.RalphFinished(completed=done, failed=0, total=done, reason="stopped"),
-                    _tui_stop,
-                )
+        if resume:
+            saved = await asyncio.to_thread(_load_ralph_checkpoint, directory)
+            if not saved or saved.get("complete"):
+                emit("[yellow]No unfinished Ralph checkpoint in this workspace.[/yellow]")
                 return True
-            interrupted = True
-
-        if interrupted:
-            # The console REPL was removed and the TUI always passes ``on_event``
-            # (handled above), so this path is unreachable in practice. Default to
-            # a clean stop rather than prompting for an action.
-            emit("")
-            emit("[dim]Ralph mode stopped (no interactive UI available).[/dim]")
-            emit(f"[dim]Completed {iteration - 1} iteration(s).[/dim]")
-            emit("")
+            if saved.get("verify") and not verify:
+                emit("[yellow]Resume this verified run with /ralph --resume --verify.[/yellow]")
+                return True
+            completed = saved["completed_iterations"]
+            limit = saved["max_iterations"]
+            if budget is not None:
+                limit = completed + budget if budget else 0
+            elif limit and completed >= limit:
+                limit = completed + saved.get("budget", 5)
+            record = {
+                **saved, "run_id": saved.get("run_id") or uuid.uuid4().hex, "max_iterations": limit,
+                "budget": budget if budget is not None else saved.get("budget", 5), "verify": verify,
+            }
+        else:
+            limit = 5 if budget is None else budget
+            completed = 0
+            record = {
+                "task": " ".join(task_parts), "working_directory": directory,
+                "run_id": uuid.uuid4().hex, "max_iterations": limit, "budget": limit,
+                "verify": verify,
+            }
+        command = await asyncio.to_thread(_read_verify_command, directory) if verify else ""
+        if verify and not command:
+            emit("[red]--verify needs a command in .nova/ralph/verify.txt.[/red]")
             return True
-
-        done = iteration - 1
-
-        def _finished_ok(done: int = done) -> None:
-            emit("")
-            emit(f"[green]Ralph mode completed after {done} iteration(s).[/green]")
-            emit("")
-
+        start_iteration = completed + 1
         _emit_event(
-            on_event,
-            rev.RalphFinished(completed=done, failed=0, total=done, reason="completed"),
-            _finished_ok,
+            on_event, rev.RalphStarted(record["task"], limit, background, start_iteration if resume else None),
+            lambda: _emit_ralph_header(
+                emit, task=record["task"], max_iterations=limit, background_mode=background,
+                resumed_from=start_iteration if resume else None,
+            ),
         )
+        backend = getattr(agent, "backend", None) or getattr(getattr(agent, "graph", None), "backend", None)
+        kwargs = dict(
+            record=record, workspace=workspace, start_iteration=start_iteration,
+            agent=agent, session_state=session_state, token_tracker=token_tracker, backend=backend,
+            execute_fn=execute_fn, verify_command=command, background=background,
+            emit=emit, on_event=on_event,
+        )
+        if background:
+            from novacode_cli.ui.execution import execute_task
 
-        try:
-            session_state.add_notification(
-                level="success",
-                title="Ralph mode completed",
-                message=f"{escape(task[:80])} — {iteration - 1} iteration(s)",
-                source="ralph",
+            kwargs["execute_fn"] = partial(execute_task, is_subagent=True)
+            thread = threading.Thread(
+                target=_run_background_ralph_in_thread, args=(lock_fd,), kwargs=kwargs, daemon=True,
             )
-        except Exception:
-            pass
-
+            thread.start()
+            handed_off = True
+            emit("[dim]Ralph is running in the background. Check /ralph --status.[/dim]")
+        else:
+            await _run_ralph_loop(**kwargs)
         return True
     finally:
-        session_state.auto_approve = original_auto_approve
+        if not handed_off:
+            os.close(lock_fd)
+
+
 # Registry
 # ---------------------------------------------------------------------------
 

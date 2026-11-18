@@ -8,6 +8,8 @@ from __future__ import annotations
 import copy
 import json
 import os
+from functools import lru_cache
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from novacode_cli.config.config import Settings, console
@@ -60,6 +62,24 @@ def _config_bool(value: Any, *, default: bool = False) -> bool:
             return False
         return text in _TRUTHY_STRINGS
     return default
+
+
+@lru_cache(maxsize=16)
+def _read_code_mode(path: Path, _version: tuple[int, ...]) -> bool:
+    values = json.loads(path.read_text(encoding="utf-8"))
+    return _config_bool(values.get("code_mode_enabled", True), default=True) if isinstance(values, dict) else True
+
+
+def live_code_mode_enabled() -> bool:
+    """Read the live preference, reloading only when the profile file changes."""
+    from novacode_cli.config.config import HOME_DIR
+
+    path = HOME_DIR / "Nova.config.json"
+    try:
+        stat = path.stat()
+        return _read_code_mode(path, (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns))
+    except (OSError, ValueError):
+        return True
 
 
 def _browser_server_names(value: object) -> list[str] | None:

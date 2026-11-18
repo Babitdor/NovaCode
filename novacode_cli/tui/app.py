@@ -170,7 +170,6 @@ from novacode_cli.tui.screens import (
     PluginsScreen,
     ProjectSessionPicker,
     QuestionModal,
-    RalphScreen,
     RememberRuleModal,
     RemoteScreen,
     RouterScreen,
@@ -670,7 +669,7 @@ TUI_COMMANDS: dict[str, SlashCommand] = {
     "browser-use": SlashCommand(
         "_run_browser_use", "Browser research mode (on/off/status/settings or a task)"
     ),
-    "ralph": SlashCommand("_run_ralph_screen", "autonomous looping mode (/ralph <task>)"),
+    "ralph": SlashCommand("_run_ralph", "iterate on a task and save progress (/ralph <task>)"),
     "trello": SlashCommand("_run_trello", "kanban task board in the browser"),
     "create": SlashCommand("_run_create", "Skills & Agents web UI"),
     "council": SlashCommand(
@@ -1590,21 +1589,6 @@ class NovaApp(App):
     }
     /* /council plan cards draw their own border; no log-line band behind them. */
     #transcript > .council-plan { height: auto; margin: 1 0 0 0; }
-    /* --- /ralph native cards --- */
-    #transcript > .ralph-run {
-        height: auto; border-left: none;
-        padding: 0 2; margin: 1 0; background: $surface;
-    }
-    #transcript > .ralph-iter {
-        height: auto; border-left: none;
-        padding: 0 2; margin: 1 0; background: $surface;
-    }
-    #transcript > .ralph-iter.done { border-left: none; }
-    #transcript > .ralph-iter.failed { border-left: none; }
-    #transcript > .ralph-summary {
-        height: auto; border-left: none;
-        padding: 0 2; margin: 1 0; background: $surface;
-    }
     #transcript > .ralph-status {
         height: auto; border-left: none;
         padding: 0 2; margin: 1 0; background: $surface;
@@ -2381,9 +2365,9 @@ class NovaApp(App):
         # query_one DOM walk on every delta / keystroke / status tick.
         self._w_cache: dict[str, Any] = {}
         # call_id -> (collapsible, body Static, base title) for open tool calls
-        self._tool_components: dict[str, tuple[Collapsible, Static, str]] = {}
+        self._tool_components: dict[str, tuple[Collapsible, Static | None, str]] = {}
         # fallback for tool calls that arrive without an id
-        self._last_tool: tuple[Collapsible, Static, str] | None = None
+        self._last_tool: tuple[Collapsible, Static | None, str] | None = None
         # Condensed tool view: a run of consecutive tool calls collapses into a
         # single "tool group" panel (one compact line per tool) instead of one
         # Collapsible per call, so a burst of tools doesn't flood the chat.
@@ -2472,7 +2456,6 @@ class NovaApp(App):
         # _init_widget and _init_steps removed — /init progress is now _log-only
         # Live per-iteration Ralph cards, keyed by iteration number, so an
         # IterationFinished event can update the card mounted at its start.
-        self._ralph_iter_cards: dict[int, Static] = {}
         self._skill_names_cache: list[str] | None = None
         # Enabled-skill count shown in the status bar (total minus curation-
         # disabled), cached briefly; invalidated to None on a /skills toggle.
@@ -4807,7 +4790,7 @@ class NovaApp(App):
         # and persisted session history are independent of these widgets.
         weights = []
         for child in children:
-            weight = 0
+            weight = child.unmounted_detail_chars if isinstance(child, CodeModePanel) else 0
             for node in child.walk_children(with_self=True):
                 if isinstance(node, OutputLog):
                     weight += node._output_chars
@@ -4844,7 +4827,7 @@ class NovaApp(App):
         for w, weight in zip(children, weights):
             if remaining <= target_count and total_chars <= target_chars:
                 break
-            if id(w) not in protected:
+            if id(w) not in protected and not w.has_class("ralph-active"):
                 to_remove.append(w)
                 remaining -= 1
                 total_chars -= weight
@@ -6991,7 +6974,7 @@ class NovaApp(App):
                 return
         self.action_toggle_subagents()
 
-    def _pop_tool(self, call_id: str | None) -> "tuple[Collapsible, Static, str] | None":
+    def _pop_tool(self, call_id: str | None) -> "tuple[Collapsible, Static | None, str] | None":
         """Find (and stop tracking) the tool component for a result."""
         entry = None
         if call_id and call_id in self._tool_components:
@@ -10414,7 +10397,7 @@ class NovaApp(App):
         phrase = re.sub(r"\s+project$", "", phrase, flags=re.IGNORECASE).strip()
         return (phrase, task.strip()) if phrase else None
 
-    async def _stream_prompt(self, text: str, assistant_id: str | None = None) -> None:
+    async def _stream_prompt(self, text: str, assistant_id: str | None = None) -> bool:
         """Run a single prompt through the agent and render its events.
 
         Serialized on the shared remote lock so local and remote turns never
@@ -10518,7 +10501,7 @@ class NovaApp(App):
         # reports can start another exclusive turn and cancel this continuation.
         if turn_completed and getattr(self.session_state, "approved_plan_content", None):
             await self._maybe_run_approved_plan()
-            return
+            return True
         # Refresh the per-category context breakdown from agent state, then
         # proactively manage the context window once the turn has settled.
         await self._update_context_breakdown()
@@ -10530,6 +10513,7 @@ class NovaApp(App):
         await self._drain_deferred_commands()
         await self._drain_deferred_prompts()
         self._schedule_pending_async_report()
+        return turn_completed
 
     async def _update_context_breakdown(self) -> None:
         """Recompute the context breakdown from agent state after a turn.
@@ -11454,25 +11438,11 @@ class NovaApp(App):
                     )
                 )
 
-                # We want to forward ralph's emit events to both the local TUI and the remote user
-                async def _emit_remote(message: str = "") -> None:
-                    if not message:
-                        return
-                    try:
-                        renderable = Text.from_markup(message)
-                    except Exception:
-                        renderable = Text(message)
+                lines = []
 
-                    # Log to TUI locally
-                    self._log(renderable, transcript=True)
-
-                    # Reply to remote user
-                    plain = renderable.plain.strip()
-                    if plain and msg_obj is not None:
-                        try:
-                            await msg_obj.reply_fn(plain)
-                        except Exception:
-                            pass
+                def _emit_remote(message: str = "") -> None:
+                    if message:
+                        lines.append(Text.from_markup(message).plain)
 
                 from novacode_cli.commands.ralph_handler import handle_ralph_command
 
@@ -11485,9 +11455,11 @@ class NovaApp(App):
                     self.assistant_id,
                     self.token_tracker,
                     ralph_args or None,
-                    execute_fn=self._tui_execute_fn,
+                    execute_fn=self._tui_ralph_execute,
                     emit=_emit_remote,
                 )
+                if lines and msg_obj is not None:
+                    await msg_obj.reply_fn("\n".join(lines))
 
             return None, run_ralph
 
@@ -12653,26 +12625,59 @@ class NovaApp(App):
             pass
 
     async def _check_oracle_freshness(self) -> None:
-        import subprocess
-
-        from novacode_cli.core.oracle import snapshot
-
         self._refresh_oracle()
         state = self.session_state
         run = getattr(state, "oracle_run", None)
-        if (not getattr(state, "oracle_enabled", False) or run is None
-                or run.status not in {"passed", "waiting", "accepted"} or not run.revision):
-            return
+        key = (
+            (id(state), run.identity, run.revision)
+            if getattr(state, "oracle_enabled", False) and run is not None and run.revision
+            and run.status in {"passed", "waiting", "accepted"}
+            else None
+        )
+        if key != getattr(self, "_oracle_watch_key", None):
+            self._oracle_watch_key = key
+            self.workers.cancel_group(self, "oracle-freshness")
+            if key is not None:
+                self.run_worker(
+                    self._watch_oracle_changes(state, run, key),
+                    group="oracle-freshness", exit_on_error=False,
+                )
+
+    async def _watch_oracle_changes(self, state, run, key) -> None:
+        import subprocess
+
+        from watchfiles import awatch
+
+        from novacode_cli.core.oracle import snapshot, workspace_changes_relevant, workspace_watch_paths
+
+        def current() -> bool:
+            return (
+                self.session_state is state and state.oracle_enabled and state.oracle_run is run
+                and self._oracle_watch_key == key and run.revision == key[2]
+                and run.status in {"passed", "waiting", "accepted"}
+            )
+
+        first = True
         try:
-            current = await asyncio.to_thread(snapshot, run.directory)
-            stale = current.revision != run.revision
-        except (OSError, ValueError, subprocess.SubprocessError):
-            stale = True
-        if stale and getattr(state, "oracle_run", None) is run:
+            paths = await asyncio.to_thread(workspace_watch_paths, run.directory)
+            roots = [path for path in paths if not any(path != other and path.is_relative_to(other) for other in paths)]
+            # The empty poll closes the gap between publishing scores and subscribing.
+            async for changes in awatch(*roots, watch_filter=None, rust_timeout=500, yield_on_timeout=True):
+                if not current():
+                    return
+                if first or (changes and await asyncio.to_thread(
+                    workspace_changes_relevant, paths, {name for _, name in changes},
+                )):
+                    first = False
+                    revision = await asyncio.to_thread(snapshot, run.directory)
+                    if revision.revision != key[2]:
+                        break
+        except (OSError, ValueError, subprocess.SubprocessError, RuntimeError):
+            pass
+        if current():
             run.status = "stale"
             run.stale = True
-            if self.session_state is state:
-                self._refresh_oracle()
+            self._refresh_oracle()
 
     async def _run_oracle_mode(self, text: str = "/oracle-mode") -> None:
         from novacode_cli.core.oracle import initialize
@@ -13227,20 +13232,6 @@ class NovaApp(App):
                 f"Verbose mode {'on' if new else 'off'} — internal context "
                 f"{'shown' if new else 'collapsed'}.",
                 style="green" if new else "dim",
-            )
-        )
-
-    async def _run_ralph_screen(self, text: str) -> None:
-        parts = text.split(maxsplit=1)
-        args = parts[1].strip() if len(parts) > 1 else ""
-        await self.push_screen_wait(
-            RalphScreen(
-                session_state=self.session_state,
-                agent=self.agent,
-                assistant_id=self.assistant_id,
-                token_tracker=self.token_tracker,
-                args=args,
-                execute_fn=self._tui_execute_fn,
             )
         )
 
@@ -18202,59 +18193,12 @@ class NovaApp(App):
         if task:
             await self._stream_prompt(task)
 
-    # --- /ralph native widgets -------------------------------------------
-    _RALPH_ITER_GLYPH = {
-        "running": ("▸", "yellow"),
-        "done": ("●", "green"),
-        "failed": ("✖", "red"),
-    }
-
     def _ralph_mount(self, widget: Widget) -> None:
-        """Mount a native Ralph card into the transcript (app thread only)."""
+        self._set_home_visible(visible=False)
         self._close_tool_group()
         self._transcript().mount(widget)
         self._prune_transcript()
         self._scroll_end()
-
-    def _ralph_run_text(self, event: Any) -> Text:
-        """Header card for a Ralph run: task, iteration budget, and mode."""
-        iters = "unlimited" if event.max_iterations == 0 else str(event.max_iterations)
-        title = "↻ Ralph Mode (Resumed)" if event.resumed_from else "↻ Ralph Mode"
-        t = Text()
-        t.append(f"{title}\n", style="bold")
-        t.append("Task: ", style="bold")
-        t.append(f"{event.task}\n")
-        t.append("Max iterations: ", style="bold")
-        t.append(f"{iters}\n")
-        if event.resumed_from:
-            t.append("Resuming from: ", style="bold")
-            t.append(f"iteration {event.resumed_from}\n")
-        t.append("Mode: ", style="bold")
-        t.append("background (non-blocking)" if event.background else "foreground")
-        return t
-
-    def _ralph_iter_text(
-        self,
-        iteration: int,
-        max_iterations: int,
-        status: str,
-        elapsed: float | None = None,
-        error: str | None = None,
-    ) -> Text:
-        """One iteration card line, styled by ``status`` (running/done/failed)."""
-        glyph, color = self._RALPH_ITER_GLYPH.get(status, ("•", "dim"))
-        disp = f"{iteration}/{max_iterations}" if max_iterations > 0 else str(iteration)
-        t = Text()
-        t.append(f"{glyph} Iteration {disp}", style=f"bold {color}")
-        if status == "running":
-            t.append("  — running…", style="dim")
-        else:
-            t.append(f"  — {'done' if status == 'done' else 'failed'}", style=color)
-            if elapsed is not None:
-                t.append(f" ({elapsed:.1f}s)", style="dim")
-            if error:
-                t.append(f"\n    {error}", style="red")
-        return t
 
     def _ralph_status_renderable(self, snap: Any) -> Any:
         """Render a ``/ralph --status`` snapshot as a native table card."""
@@ -18299,99 +18243,62 @@ class NovaApp(App):
         summary.append(f"  ·  failed {snap.failed}", style="red")
         return Group(header, table, summary)
 
-    def _ralph_on_event(self, event: Any) -> None:
-        """Drive native Ralph widgets from a structured handler event (app thread).
-
-        The UI-agnostic handler reports run milestones through
-        :mod:`novacode_cli.commands.ralph_events`, and this turns each into a
-        native card instead of a flat log line.
-        """
-        from novacode_cli.commands import ralph_events as rev
-
-        if isinstance(event, rev.RalphStarted):
-            self._ralph_iter_cards.clear()
-            self._ralph_mount(Static(self._ralph_run_text(event), classes="ralph-run"))
-        elif isinstance(event, rev.IterationStarted):
-            card = Static(
-                self._ralph_iter_text(event.iteration, event.max_iterations, "running"),
-                classes="ralph-iter running",
-            )
-            self._ralph_iter_cards[event.iteration] = card
-            self._ralph_mount(card)
-        elif isinstance(event, rev.IterationFinished):
-            status = "done" if event.ok else "failed"
-            text = self._ralph_iter_text(
-                event.iteration, event.max_iterations, status, event.elapsed, event.error
-            )
-            card = self._ralph_iter_cards.get(event.iteration)
-            updated = False
-            if card is not None:
-                try:
-                    card.set_classes(f"ralph-iter {status}")
-                    _paint(card, text)
-                    updated = True
-                except Exception:  # noqa: BLE001 - card may have been pruned
-                    updated = False
-            if not updated:
-                self._ralph_mount(Static(text, classes=f"ralph-iter {status}"))
-        elif isinstance(event, rev.RalphFinished):
-            t = Text()
-            t.append("≡ Ralph finished", style="bold")
-            t.append(f" — {event.completed} completed", style="green")
-            if event.failed:
-                t.append(f", {event.failed} failed", style="red")
-            t.append(f" of {event.total} iteration(s)", style="dim")
-            self._ralph_mount(Static(t, classes="ralph-summary"))
-        elif isinstance(event, rev.StatusSnapshot):
-            self._ralph_mount(Static(self._ralph_status_renderable(event), classes="ralph-status"))
+    async def _tui_ralph_execute(self, prompt, _agent, assistant_id, session, *_args, **_kwargs):
+        if self.session_state is not session:
+            raise RuntimeError("The active tab changed. Resume Ralph from its original workspace.")
+        return await self._stream_prompt(prompt, assistant_id=assistant_id)
 
     async def _run_ralph(self, text: str) -> None:
-        """Run /ralph natively: structured milestones render as native cards via
-        ``on_event``, free-form notices via a thread-safe ``emit``, and foreground
-        iterations stream through ``_tui_execute_fn``."""
+        """Run Ralph in the transcript while the normal composer stays available."""
         import threading
 
+        from novacode_cli.commands import ralph_events as rev
         from novacode_cli.commands.ralph_handler import handle_ralph_command
+        from novacode_cli.tui.ralph import RalphProgress
 
-        parts = text.split(maxsplit=1)
-        args = parts[1].strip() if len(parts) > 1 else ""
-        self._log(Text(f"↻ Ralph: {args or '(status)'}", style="bold"))
-
+        args = text.partition(" ")[2].strip()
         loop_tid = threading.get_ident()
+        current = asyncio.current_task()
+        session = self.session_state
+        card = None
+
+        def stop() -> None:
+            if self._turn_active and self.session_state is session:
+                from novacode_cli.shell.jobs import request_kill
+
+                request_kill()
+            current.cancel()
 
         def _emit(message: str = "") -> None:
-            try:
-                renderable = Text.from_markup(message) if message else Text("")
-            except Exception:  # noqa: BLE001 - never let bad markup break the run
-                renderable = Text(message)
+            if not message:
+                return
+            renderable = Text.from_markup(message)
             if threading.get_ident() == loop_tid:
                 self._log(renderable, transcript=True)
             else:
-                try:
+                with suppress(RuntimeError):
                     self.call_from_thread(self._log, renderable, transcript=True)
-                except Exception:  # noqa: BLE001 - app may be shutting down
-                    pass
+
+        def _paint_event(event: Any) -> None:
+            nonlocal card
+            if isinstance(event, rev.RalphStarted):
+                card = RalphProgress(event, session, stop)
+                self._ralph_mount(card)
+            elif isinstance(event, rev.StatusSnapshot):
+                self._ralph_mount(Static(self._ralph_status_renderable(event), classes="ralph-status"))
+            elif card is not None:
+                card.update_run(event)
 
         def _on_event(event: Any) -> None:
-            # Background runs fire events from a worker thread; hop to the app
-            # thread before touching widgets (same contract as ``_emit``).
             if threading.get_ident() == loop_tid:
-                self._ralph_on_event(event)
+                _paint_event(event)
             else:
-                try:
-                    self.call_from_thread(self._ralph_on_event, event)
-                except Exception:  # noqa: BLE001 - app may be shutting down
-                    pass
+                with suppress(RuntimeError):
+                    self.call_from_thread(_paint_event, event)
 
         await handle_ralph_command(
-            self.agent,
-            self.session_state,
-            self.assistant_id,
-            self.token_tracker,
-            args or None,
-            execute_fn=self._tui_execute_fn,
-            emit=_emit,
-            on_event=_on_event,
+            self.agent, session, self.assistant_id, self.token_tracker, args,
+            execute_fn=self._tui_ralph_execute, emit=_emit, on_event=_on_event,
         )
 
     async def _run_trello(self, text: str) -> None:
@@ -19176,13 +19083,12 @@ class NovaApp(App):
                 elif e.name in _DETAILED_TOOL_NAMES:
                     body = DiffPreview(classes="toolbody")
                 else:
-                    body = Static("Waiting for output.", classes="code-mode-output", markup=False)
+                    body = None
                 comp = CodeModePanel(
                     json.dumps(e.args, indent=2, ensure_ascii=False), tool_name=e.name,
                     display_str=e.display_str, output_widget=body,
+                    streaming=isinstance(body, OutputLog),
                 )
-                if isinstance(body, OutputLog):
-                    comp.collapsed = False
             comp.add_class("tool", "tool-active")
             await self._mount(comp)
             if isinstance(body, OutputLog):
@@ -19229,7 +19135,8 @@ class NovaApp(App):
                 mark = "•"
                 if isinstance(comp, CodeModePanel):
                     comp.finish(
-                        e.full_output or "", is_error=errored, preview=self._fileop_summary(rec)
+                        e.full_output or getattr(rec, "read_output", None) or "",
+                        is_error=errored, preview=self._fileop_summary(rec),
                     )
                 else:
                     comp.title = f"{base}  {mark} {_esc(self._fileop_summary(rec))}".rstrip()
@@ -19244,7 +19151,7 @@ class NovaApp(App):
                     body.set_diff(
                         diff, getattr(rec, "display_path", None), classic, self._diff_preview_style
                     )
-                else:
+                elif body is not None:
                     body.update(classic)
             else:
                 self._mark_tool_group_result(

@@ -124,6 +124,10 @@ class DiffPreview(Static):
         """Rewrap each side to its canvas or use Classic on small terminals."""
         self.refresh(layout=True)
 
+    def on_mount(self) -> None:
+        # An edit's disclosure may have been closed when the appearance changed.
+        self.set_preview_style(getattr(self.app, "_diff_preview_style", self.preview_style))
+
     def render(self) -> RenderResult:
         """Draw aligned source rows with independent numbering and syntax colors."""
         if self._classic is None:

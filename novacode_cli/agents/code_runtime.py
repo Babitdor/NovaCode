@@ -82,6 +82,25 @@ execution_deadline: contextvars.ContextVar[ExecutionDeadline | None] = contextva
 )
 
 
+async def open_repl(registry: _Registry, thread: str) -> Any:
+    """Let the worker initialize without blocking asyncio or outliving cancellation."""
+    startup = asyncio.create_task(asyncio.to_thread(registry.get, thread))
+    try:
+        return await asyncio.shield(startup)
+    except asyncio.CancelledError:
+        # A cancelled await cannot stop a thread already creating the slot.
+        while not startup.done():
+            try:
+                await asyncio.shield(startup)
+            except asyncio.CancelledError:
+                continue
+            except Exception:
+                break
+        if not startup.cancelled():
+            startup.exception()
+        raise
+
+
 async def run_script(
     code: str,
     dispatch: Callable[[str], Awaitable[str]],
@@ -104,7 +123,6 @@ async def run_script(
             max_ptc_calls=None,
             subagents_enabled=False,
         )
-        repl = registry.get("call")
     active = True
     pending: set[asyncio.Task] = set()
     parent = contextvars.copy_context()
@@ -127,6 +145,8 @@ async def run_script(
         name="nova_dispatch", description="Guarded Nova host dispatch.", coroutine=guarded
     )
     try:
+        if registry is not None:
+            repl = await open_repl(registry, "call")
         async with asyncio.timeout(wall_timeout) as timeout:
             token = execution_deadline.set(ExecutionDeadline(timeout))
             parent = contextvars.copy_context()

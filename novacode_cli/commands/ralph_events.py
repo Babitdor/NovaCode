@@ -56,14 +56,14 @@ class IterationFinished:
 class RalphFinished:
     """A Ralph run ended. ``reason`` is a short outcome label.
 
-    ``reason`` is one of ``"completed" | "stopped" | "rollback" | "finished" |
-    "checkpoint" | "background"`` so renderers can pick an accent/icon.
+    ``reason`` is a machine-readable outcome and ``detail`` explains it to the user.
     """
 
     completed: int
     failed: int
     total: int
     reason: str = "completed"
+    detail: str = ""
 
 
 @dataclass

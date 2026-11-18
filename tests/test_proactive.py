@@ -10,10 +10,11 @@ import pytest
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage
 from textual.app import App
-from textual.widgets import Button, Input, Static, TextArea
+from textual.widgets import Button, Input, Select, Static, TextArea
 
 from novacode_cli import proactive
 from novacode_cli.tui.proactive import ProactiveRuntime, ProactiveScreen
+from tests.test_tui_home_preferences import _resize_terminal
 from tests.test_tui_sessions import _app, isolated_session_config  # noqa: F401
 
 
@@ -132,21 +133,42 @@ async def test_screen_create_run_and_view_history(tmp_path):
             screen = ProactiveScreen(store, str(tmp_path))
             await app.push_screen(screen)
             await pilot.pause()
+            assert screen.query_one("#proactive-configure").display
+            assert not screen.query_one("#proactive-activity").display
             screen.query_one("#proactive-name", Input).value = "Release Steward"
             screen.query_one("#proactive-instructions", TextArea).load_text("Check the release.")
-            screen.query_one("#proactive-save", Button).press()
+            assert await pilot.click("#proactive-save")
             run_button = screen.query_one("#proactive-run", Button)
             async with asyncio.timeout(5):
                 while not screen.key or run_button.disabled:
                     await pilot.pause(0.05)
             assert screen.key in dict(store.agents())
+            assert await pilot.click("#proactive-activity-tab")
+            await pilot.pause()
+            assert not screen.query_one("#proactive-configure").display
+            assert screen.query_one("#proactive-activity").display
+            assert screen.query_one("#proactive-history", Select).disabled
+            assert "No runs yet" in str(screen.query_one("#proactive-report", Static).content)
             screen.query_one("#proactive-context", Input).value = "v1.2.36"
-            run_button.press()
+            assert await pilot.click(run_button)
             async with asyncio.timeout(10):
                 while not notices:
                     await pilot.pause(0.1)
             await screen.reload_history()
             assert "Synthetic release report" in str(screen.query_one("#proactive-report", Static).content)
+            assert "Complete · Manual" in str(screen.query_one("#proactive-report-status", Static).content)
+            assert not screen.query_one("#proactive-history", Select).disabled
+            await _resize_terminal(pilot, 110, 36)
+            configure, activity = (screen.query_one(f"#proactive-{pane}") for pane in ("configure", "activity"))
+            assert configure.display and activity.display
+            assert not configure.region.overlaps(activity.region)
+            await _resize_terminal(pilot, 40, 14)
+            assert not configure.display and activity.display
+            screen.query_one("#proactive-configure-tab", Button).focus()
+            await pilot.press("enter")
+            assert configure.display and not activity.display
+            assert screen.query_one("#proactive-instructions", TextArea).text == "Check the release."
+            assert screen.region.contains_region(screen.query_one("#proactive-save", Button).region)
             assert notices == ["Release Steward · complete. Open /proactive to see the report."]
     finally:
         await runtime.close()

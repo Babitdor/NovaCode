@@ -2,7 +2,6 @@
 
 import asyncio
 import time
-from types import SimpleNamespace
 
 import pytest
 from textual.widgets import Button, Input, Select, Static, Switch
@@ -166,23 +165,50 @@ async def test_settings_validate_cancel_and_save_without_sending(monkeypatch):
         assert len(saved) == 1
 
 
-async def test_live_staleness_and_oracle_interrupt_controls(monkeypatch):
+async def test_live_staleness_and_oracle_interrupt_controls(monkeypatch, tmp_path):
+    import subprocess
+
     from novacode_cli.core import oracle
 
+    tmp_path = tmp_path / "worktree"
+    tmp_path.mkdir()
+    subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
+    (tmp_path / ".gitignore").write_text("ignored.txt\n", encoding="utf-8")
+    file = tmp_path / "tracked-by-oracle.txt"
+    file.write_text("before", encoding="utf-8")
+    snapshot = oracle.snapshot
+    baseline = snapshot(str(tmp_path)).revision
+    calls = []
+
+    def observe(directory):
+        current = snapshot(directory)
+        calls.append(current.revision)
+        return current
+
+    monkeypatch.setattr(oracle, "snapshot", observe)
     app = _app()
     async with app.run_test(size=(110, 40)) as pilot:
         await app._run_oracle_mode("/oracle-mode on")
         run = OracleRun(
             OracleSettings(),
-            ".",
+            str(tmp_path),
             app.session_state.thread_id,
             round=1,
             status="passed",
-            revision="old",
+            revision=baseline,
         )
         app.session_state.oracle_run = run
-        monkeypatch.setattr(oracle, "snapshot", lambda _: SimpleNamespace(revision="new"))
         await app._check_oracle_freshness()
+        async with asyncio.timeout(8):
+            while not calls:
+                await pilot.pause(0.04)
+        (tmp_path / "ignored.txt").write_text("noise", encoding="utf-8")
+        await pilot.pause(0.7)
+        assert calls == [baseline]
+        file.write_text("after", encoding="utf-8")
+        async with asyncio.timeout(8):
+            while run.status != "stale":
+                await pilot.pause(0.04)
         assert run.status == "stale"
         run.decision = asyncio.get_running_loop().create_future()
         event = ev.InterruptRequest("oracle", {"run_id": run.identity}, run.decision)

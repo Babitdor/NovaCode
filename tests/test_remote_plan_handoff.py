@@ -47,7 +47,10 @@ async def test_first_plan_decision_retracts_other_surface(
     task = asyncio.create_task(NovaApp._handle_interrupt(app, event))
     await asyncio.wait_for(shown.wait(), 2)
     app.push_screen_wait.assert_awaited_once()
-    assert PLAN.replace("\n", r"\n") in prompts[-1]
+    if platform is RemotePlatform.TELEGRAM:
+        assert prompts[:-1] == [PLAN]
+    else:
+        assert PLAN.replace("\n", r"\n") in prompts[-1]
     if winner == "remote":
         await decide(app, msg, prompts, choice)
     else:
@@ -62,7 +65,7 @@ async def test_first_plan_decision_retracts_other_surface(
             "manual" if winner == "remote" else choice
         )
     assert not app._remote_approvals._pending
-    retract.assert_awaited_once()
+    assert retract.await_count == len(prompts)
     result = event.future.result()
     # A late remote reply cannot approve or change a plan already settled locally.
     await decide(app, msg, prompts, "Approve")
@@ -143,7 +146,7 @@ async def test_real_terminal_modal_is_removed_after_either_decision(
         assert event.future.result()["response"]["approved"]
         assert not isinstance(app.screen, PlanApprovalModal)
         assert not app._remote_approvals._pending
-        retract.assert_awaited_once()
+        assert retract.await_count == 2
 
 
 async def test_remote_consumer_reads_implementation_thread_then_handles_next_message(

@@ -133,7 +133,7 @@ async def test_remote_plan_shows_content_and_approves_in_manual_mode(
     event = ev.InterruptRequest("plan", {}, asyncio.get_running_loop().create_future())
     task = asyncio.create_task(NovaApp._handle_interrupt(app, event))
     await asyncio.wait_for(shown.wait(), 2)
-    assert "Plan: inspect then test" in prompts[-1]
+    assert prompts[:-1] == ["Plan: inspect then test"]
     saved[0] = "A different, unreviewed plan"
     await decide(app, msg, prompts)
     await asyncio.wait_for(task, 2)

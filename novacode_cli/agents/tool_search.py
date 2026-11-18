@@ -341,21 +341,11 @@ class ToolSearchMiddleware(AgentMiddleware):
             )
         ]
 
-    def _catalog_for(self, tools: Sequence[Any]) -> list[dict]:
-        """Discovery metadata belongs to this invocation's current inventory."""
-        from novacode_cli.shell.tool_surface import execution_tools
-
-        tools = execution_tools(list(tools))
-        browsing = browser_mode_enabled()
+    @staticmethod
+    def _discovery_tools(tools, *, browsing: bool) -> list[Any]:
         trusted = trusted_browser_servers() if browsing else frozenset()
         return [
-            {
-                "name": _name(tool),
-                "description": _description(tool),
-                "kind": "tool",
-                "parameters": parameter_text(tool),
-            }
-            for tool in sorted(tools, key=_name)
+            tool for tool in tools
             if _name(tool)
             and (
                 not browsing
@@ -367,6 +357,22 @@ class ToolSearchMiddleware(AgentMiddleware):
                     trusted_servers=trusted,
                 )
             )
+        ]
+
+    def _catalog_for(self, tools: Sequence[Any]) -> list[dict]:
+        """Discovery metadata belongs to this invocation's current inventory."""
+        from novacode_cli.shell.tool_surface import execution_tools
+
+        browsing = browser_mode_enabled()
+        visible = self._discovery_tools(execution_tools(list(tools)), browsing=browsing)
+        return [
+            {
+                "name": _name(tool),
+                "description": _description(tool),
+                "kind": "tool",
+                "parameters": parameter_text(tool),
+            }
+            for tool in sorted(visible, key=_name)
         ] + [
             {"name": name, "description": description, "kind": "subagent"}
             for name, description in sorted(self._deferred_subagents.items())
@@ -648,12 +654,12 @@ class ToolSearchMiddleware(AgentMiddleware):
         return tool
 
     def _apply(self, request: ModelRequest) -> ModelRequest:
-        from novacode_cli.config.nova_config import NovaConfig
+        from novacode_cli.config.nova_config import live_code_mode_enabled
         from novacode_cli.shell.tool_surface import execution_tools
 
         request = request.override(tools=execution_tools(request.tools))
 
-        if NovaConfig().get_code_mode_enabled() and any(_name(t) == "eval" for t in request.tools):
+        if any(_name(t) == "eval" for t in request.tools) and live_code_mode_enabled():
             from novacode_cli.agents.code_mode import code_mode_surface
 
             # Provider search must never reintroduce the host-only inventory.

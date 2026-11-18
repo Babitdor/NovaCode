@@ -222,7 +222,7 @@ async def execute_task(  # type: ignore
 
     verify: bool = False,
 
-) -> None:
+) -> bool:
 
     """Execute any task by passing it directly to the AI agent.
 
@@ -1057,7 +1057,7 @@ async def execute_task(  # type: ignore
 
                     console.print(f"[red]{event.message}[/red]")
 
-                return
+                return False
 
 
 
@@ -1070,7 +1070,7 @@ async def execute_task(  # type: ignore
                 console.print("\n[yellow]Interrupted by user[/yellow]")
 
 
-                return
+                return False
 
 
 
@@ -1200,7 +1200,7 @@ async def execute_task(  # type: ignore
 
 
 
-        return
+        return False
 
 
 
@@ -1213,7 +1213,7 @@ async def execute_task(  # type: ignore
         console.print("\n[yellow]Interrupted by user[/yellow]")
 
 
-        return
+        return False
 
 
 
@@ -1336,3 +1336,5 @@ async def execute_task(  # type: ignore
             except Exception:
 
                 pass
+
+    return has_responded

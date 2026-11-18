@@ -9,8 +9,8 @@ import time
 from datetime import datetime
 
 from rich.text import Text
-from textual import on
-from textual.containers import Grid, VerticalScroll
+from textual import events, on
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import Screen
 from textual.widgets import Button, Checkbox, Input, Label, Select, Static, TextArea
 
@@ -108,12 +108,67 @@ async def start_proactive(app, *, create=False):
 class ProactiveScreen(Screen):
     BINDINGS = [("escape", "app.pop_screen", "Back")]
     CSS = """
-    ProactiveScreen > VerticalScroll { padding: 0 2 1 2; }
-    ProactiveScreen Label { margin-top: 1; }
+    ProactiveScreen { background: $background; }
+    ProactiveScreen #proactive-header { height: 3; align-vertical: middle; padding: 0 1; }
+    ProactiveScreen #proactive-title {
+        width: 1fr; border-left: thick $accent; padding-left: 1;
+        text-style: bold; color: $text;
+    }
+    ProactiveScreen #proactive-agent { margin: 0 1 1 1; width: 1fr; }
+    ProactiveScreen #proactive-tabs { display: none; height: 2; margin: 0 1; }
+    ProactiveScreen #proactive-tabs Button { width: 1fr; }
+    ProactiveScreen.show-activity #proactive-configure-tab, ProactiveScreen #proactive-activity-tab {
+        background: $surface; color: $text-muted;
+    }
+    ProactiveScreen #proactive-configure-tab,
+    ProactiveScreen.show-activity #proactive-activity-tab {
+        background: $primary-muted; color: $text; text-style: bold;
+    }
+    ProactiveScreen #proactive-tabs Button:focus { text-style: bold underline; }
+    ProactiveScreen #proactive-body { height: 1fr; padding: 0 1; }
+    ProactiveScreen #proactive-configure { width: 5fr; margin-right: 1; }
+    ProactiveScreen #proactive-activity { width: 4fr; }
+    ProactiveScreen .proactive-pane { height: 1fr; background: $surface; }
+    ProactiveScreen .proactive-heading {
+        height: 2; padding: 0 1; text-style: bold; color: $accent;
+        border-bottom: solid $primary-muted;
+    }
+    ProactiveScreen .proactive-fields { height: 1fr; padding: 0 1 1 1; }
+    ProactiveScreen Label { margin-top: 1; color: $text-muted; }
+    ProactiveScreen .proactive-section {
+        margin-top: 1; height: 1; color: $text; text-style: bold;
+    }
     ProactiveScreen TextArea { height: 7; }
-    ProactiveScreen Grid { height: auto; grid-size: 2; grid-rows: 3; }
-    ProactiveScreen Button { width: 100%; min-width: 0; }
-    ProactiveScreen #proactive-report { height: auto; padding: 1 0; }
+    ProactiveScreen Checkbox { width: 100%; padding: 0; }
+    ProactiveScreen Button { min-width: 0; }
+    ProactiveScreen #proactive-actions { height: 2; padding: 0 1; }
+    ProactiveScreen #proactive-actions Button { width: 1fr; }
+    ProactiveScreen #proactive-save { margin-right: 1; }
+    ProactiveScreen #proactive-run-row { height: 3; align-vertical: middle; }
+    ProactiveScreen #proactive-context { width: 1fr; }
+    ProactiveScreen #proactive-run { width: 11; margin: 1 0 0 1; }
+    ProactiveScreen #proactive-trigger-status { color: $text-muted; height: auto; margin-top: 1; }
+    ProactiveScreen #proactive-report-status {
+        text-style: bold; height: auto; margin-top: 1; padding-left: 1; color: $text;
+        border-left: tall $primary-muted;
+    }
+    ProactiveScreen #proactive-report-status.complete { border-left: tall $success; }
+    ProactiveScreen #proactive-report-status.failed { border-left: tall $error; }
+    ProactiveScreen #proactive-report-status.queued,
+    ProactiveScreen #proactive-report-status.running,
+    ProactiveScreen #proactive-report-status.interrupted { border-left: tall $warning; }
+    ProactiveScreen #proactive-report {
+        height: auto; padding: 0 1; margin-top: 1; color: $text;
+        border-left: tall $primary-muted;
+    }
+    ProactiveScreen #proactive-report.empty { color: $text-muted; }
+    ProactiveScreen.compact #proactive-tabs { display: block; }
+    ProactiveScreen.compact .proactive-heading { display: none; }
+    ProactiveScreen.compact #proactive-configure,
+    ProactiveScreen.compact #proactive-activity { width: 1fr; margin-right: 0; }
+    ProactiveScreen.compact #proactive-activity,
+    ProactiveScreen.compact.show-activity #proactive-configure { display: none; }
+    ProactiveScreen.compact.show-activity #proactive-activity { display: block; }
     """
 
     def __init__(self, store: ProactiveStore, workspace: str):
@@ -125,45 +180,63 @@ class ProactiveScreen(Screen):
         self.runs = {}
 
     def compose(self):
-        with VerticalScroll():
-            yield Label("Proactive agents")
-            yield Select([("Create agent", "")], allow_blank=False, value="", id="proactive-agent")
-            yield Label("Name")
-            yield Input(id="proactive-name", max_length=80)
-            yield Label("Standing instructions")
-            yield TextArea(id="proactive-instructions")
-            yield Label("Workspace")
-            yield Input(self.workspace, id="proactive-workspace")
-            yield Checkbox("Allow reads from committed Git files", id="proactive-read-workspace")
-            yield Label("GitHub repository (optional owner/repo)")
-            yield Input(id="proactive-github")
-            yield Label("PyPI package (optional)")
-            yield Input(id="proactive-pypi")
-            yield Label("Cron schedule (optional, local time)")
-            yield Input(placeholder="0 9 * * 1-5", id="proactive-cron")
-            yield Checkbox("Watch for new GitHub tags", id="proactive-watch-tags")
-            yield Checkbox("Enable triggers while NovaCode is open", id="proactive-enabled")
-            yield Static("", id="proactive-trigger-status", markup=False)
-            yield Label("Run context (optional, e.g. a release or commit)")
-            yield Input(id="proactive-context", max_length=4000)
-            with Grid():
-                yield Button("Save agent", id="proactive-save", variant="primary")
-                yield Button("Run now", id="proactive-run", disabled=True)
-                yield Button("Remove agent", id="proactive-remove", disabled=True)
-                yield Button("Back", id="proactive-back")
-            yield Label("Run history")
-            yield Select([], prompt="Select a run", id="proactive-history")
-            yield Static("", id="proactive-report", markup=False)
+        with Horizontal(id="proactive-header"):
+            yield Static("Proactive agents", id="proactive-title")
+            yield Button("Back", id="proactive-back", compact=True)
+        yield Select([("New agent", "")], allow_blank=False, value="", id="proactive-agent")
+        with Horizontal(id="proactive-tabs"):
+            yield Button("Configure", id="proactive-configure-tab", compact=True)
+            yield Button("Activity", id="proactive-activity-tab", compact=True)
+        with Horizontal(id="proactive-body"):
+            with Vertical(id="proactive-configure", classes="proactive-pane"):
+                yield Static("Configure", classes="proactive-heading")
+                with VerticalScroll(classes="proactive-fields"):
+                    yield Label("Name")
+                    yield Input(id="proactive-name", max_length=80)
+                    yield Label("Standing instructions")
+                    yield TextArea(id="proactive-instructions", soft_wrap=True)
+                    yield Static("Sources", classes="proactive-section")
+                    yield Label("Workspace")
+                    yield Input(self.workspace, id="proactive-workspace")
+                    yield Checkbox("Read committed Git files", id="proactive-read-workspace", compact=True)
+                    yield Label("GitHub repository")
+                    yield Input(id="proactive-github", placeholder="owner/repo (optional)")
+                    yield Label("PyPI package")
+                    yield Input(id="proactive-pypi", placeholder="package-name (optional)")
+                    yield Static("Triggers", classes="proactive-section")
+                    yield Label("Cron schedule (local time)")
+                    yield Input(placeholder="0 9 * * 1-5 (optional)", id="proactive-cron")
+                    yield Checkbox("Watch for new GitHub tags", id="proactive-watch-tags", compact=True)
+                    yield Checkbox("Enable triggers while open", id="proactive-enabled", compact=True)
+                    yield Static("", id="proactive-trigger-status", markup=False)
+                with Horizontal(id="proactive-actions"):
+                    yield Button("Save agent", id="proactive-save", variant="primary", compact=True)
+                    yield Button("Remove", id="proactive-remove", disabled=True, compact=True)
+            with Vertical(id="proactive-activity", classes="proactive-pane"):
+                yield Static("Activity", classes="proactive-heading")
+                with VerticalScroll(classes="proactive-fields"):
+                    yield Label("Run context (optional)")
+                    with Horizontal(id="proactive-run-row"):
+                        yield Input(id="proactive-context", max_length=4000, placeholder="Release or commit")
+                        yield Button("Run now", id="proactive-run", disabled=True, variant="primary", compact=True)
+                    yield Label("Run history")
+                    yield Select([], prompt="Select a run", id="proactive-history", disabled=True)
+                    yield Static("", id="proactive-report-status", markup=False)
+                    yield Static("", id="proactive-report", markup=False)
 
     async def on_mount(self):
+        self.show_report(Select.NULL)
         await self.reload_agents()
         self.set_interval(2, self.reload_history)
+
+    def on_resize(self, event: events.Resize) -> None:
+        self.set_class(event.size.width < 86, "compact")
 
     async def reload_agents(self):
         self.definitions = dict(await asyncio.to_thread(self.store.agents))
         select = self.query_one("#proactive-agent", Select)
         with select.prevent(Select.Changed):
-            select.set_options([("Create agent", ""), *(
+            select.set_options([("New agent", ""), *(
                 (Text(spec.name), key) for key, spec in self.definitions.items()
             )])
             select.value = self.key or ""
@@ -184,16 +257,19 @@ class ProactiveScreen(Screen):
         self.show_triggers(triggers)
         runs = {row["id"]: row for row in history}
         if runs == self.runs:
+            if not runs:
+                self.show_report(Select.NULL)
             return
         self.runs = runs
         select = self.query_one("#proactive-history", Select)
         previous = select.value
         with select.prevent(Select.Changed):
             select.set_options([
-                (f"{datetime.fromtimestamp(row['created']):%b %d %H:%M} · {row['trigger']} · {row['status']}", key)
+                (f"{datetime.fromtimestamp(row['created']):%b %d %H:%M} · {row['status'].title()}", key)
                 for key, row in runs.items()
             ])
             select.value = previous if previous in runs else next(iter(runs), Select.NULL)
+            select.disabled = not runs
         self.show_report(select.value)
 
     def show_triggers(self, state):
@@ -217,6 +293,8 @@ class ProactiveScreen(Screen):
     @on(Select.Changed, "#proactive-agent")
     async def select_agent(self, event):
         self.key = event.value if event.value in self.definitions else None
+        if self.key is None:
+            self.remove_class("show-activity")
         record = self.definitions.get(self.key)
         for field in ("name", "workspace", "github", "pypi", "cron"):
             value = getattr(record, field, self.workspace if field == "workspace" else "")
@@ -236,9 +314,19 @@ class ProactiveScreen(Screen):
 
     def show_report(self, run_id):
         row = self.runs.get(run_id)
-        self.query_one("#proactive-report", Static).update(
-            row["result"] or row["status"].capitalize() if row else ""
-        )
+        status = self.query_one("#proactive-report-status", Static)
+        report = self.query_one("#proactive-report", Static)
+        status.display = row is not None
+        report.set_class(not row or not row["result"], "empty")
+        if row:
+            when = datetime.fromtimestamp(row["created"])
+            status.set_classes(row["status"])
+            status.update(f"{row['status'].title()} · {row['trigger']} · {when:%b %d %H:%M}")
+            report.update(row["result"] or "The report appears when the run ends.")
+        else:
+            empty = "No runs yet. Run this agent to see a report." if self.key else "Save an agent to start a run."
+            if report.content != empty:
+                report.update(empty)
 
     @on(Button.Pressed)
     async def handle_button(self, event):
@@ -246,6 +334,8 @@ class ProactiveScreen(Screen):
         try:
             if action == "proactive-back":
                 self.app.pop_screen()
+            elif action in {"proactive-configure-tab", "proactive-activity-tab"}:
+                self.set_class(action == "proactive-activity-tab", "show-activity")
             elif action == "proactive-save":
                 spec = AgentSpec(
                     **{name: self.query_one(f"#proactive-{name}", Input).value

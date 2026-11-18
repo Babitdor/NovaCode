@@ -3477,6 +3477,8 @@ async def _drive_tool_error_detail_is_shown():
         success = app.query("CodeModePanel").last()
         assert success.heading.render().plain == "Ran read a.py"
         assert not success.has_class("failed")
+        success.collapsed = False
+        await pilot.pause()
         assert "Traceback" not in success.output.render().plain
         assert "Traceback" in "\n".join(line.text for line in failed_panel.output.lines)
 
@@ -5125,11 +5127,14 @@ def test_tui_compact_card(summary_text: str):
     asyncio.run(_drive_compact_card(summary_text))
 
 
-async def _drive_ralph_screen():
-    from novacode_cli.tui.app import NovaApp, RalphScreen
-    from novacode_cli.ui.ui_elements import TokenTracker
+async def _drive_ralph_inline(monkeypatch, control):
     from textual.widgets import Button, Static
+
     from novacode_cli.commands import ralph_events as rev
+    from novacode_cli.commands import ralph_handler as rh
+    from novacode_cli.tui.app import NovaApp
+    from novacode_cli.tui.ralph import RalphProgress
+    from novacode_cli.ui.ui_elements import TokenTracker
 
     app = NovaApp(
         agent=_FakeAgent(),
@@ -5140,65 +5145,48 @@ async def _drive_ralph_screen():
         image_tracker=None,
         model_name="m",
     )
+    started = asyncio.Event()
 
-    import asyncio
-
-    ralph_called = False
-
-    async def mock_handle_ralph_command(*args, **kwargs):
-        nonlocal ralph_called
-        ralph_called = True
-        on_event = kwargs.get("on_event")
-        if on_event:
-            on_event(rev.RalphStarted(task="test task", max_iterations=5, background=False))
-            on_event(rev.IterationStarted(iteration=1, max_iterations=5))
+    async def run(*args, on_event, **kwargs):
+        on_event(rev.RalphStarted("test task", 5))
+        on_event(rev.IterationStarted(1, 5))
+        started.set()
         try:
-            while True:
+            while not getattr(app.session_state, "_ralph_checkpoint_requested", False):
                 await asyncio.sleep(0.01)
         except asyncio.CancelledError:
-            if on_event:
-                on_event(rev.RalphFinished(completed=0, failed=0, total=5, reason="stopped"))
-            raise
+            assert app.session_state._ralph_stop_requested
+            on_event(rev.RalphFinished(0, 0, 0, "stopped", "Stopped by user"))
+        else:
+            on_event(rev.RalphFinished(1, 0, 1, "checkpoint", "Paused after saving a checkpoint"))
 
-    import novacode_cli.commands.ralph_handler as rh
-
-    orig_handle = rh.handle_ralph_command
-    rh.handle_ralph_command = mock_handle_ralph_command
-
-    try:
-        async with app.run_test() as pilot:
-            screen = RalphScreen(
-                session_state=app.session_state,
-                agent=app.agent,
-                assistant_id=app.assistant_id,
-                token_tracker=app.token_tracker,
-                args="test task --iterations 5",
-                execute_fn=app._tui_execute_fn,
-            )
-            await app.push_screen(screen)
-            await pilot.pause()
-
-            assert ralph_called is True
-            assert screen.query_one("#ralph-stop", Button).disabled is False
-            assert screen.query_one("#ralph-checkpoint", Button).disabled is False
-            assert screen.query_one("#ralph-close", Button).disabled is False
-
-            screen.query_one("#ralph-checkpoint", Button).press()
-            await pilot.pause()
-            assert app.session_state._ralph_checkpoint_requested is True
-            assert screen.query_one("#ralph-close", Button).disabled is False
-
-            await pilot.press("escape")
-            await pilot.pause()
-            assert app.screen == app.screen_stack[0]
-    finally:
-        rh.handle_ralph_command = orig_handle
+    monkeypatch.setattr(rh, "handle_ralph_command", run)
+    async with app.run_test() as pilot:
+        original = app.screen
+        worker = app._dispatch("/ralph test task --iterations 5")
+        await asyncio.wait_for(started.wait(), 5)
+        await pilot.pause()
+        assert app.screen is original
+        assert app.query_one("#prompt").is_on_screen
+        card = app.query_one(RalphProgress)
+        assert "Iteration 1/5" in str(card.query_one("#ralph-progress", Static).content)
+        button = card.query_one(f"#ralph-{control}", Button)
+        button.scroll_visible(immediate=True)
+        await pilot.pause()
+        assert await pilot.click(button)
+        await asyncio.wait_for(worker.wait(), 5)
+        await pilot.pause()
+        detail = "Paused after saving a checkpoint" if control == "pause" else "Stopped by user"
+        assert detail in str(card.query_one("#ralph-progress", Static).content)
+        assert not card.query_one("#ralph-controls").display
+        assert app.screen is original
 
 
-def test_tui_ralph_screen():
+@pytest.mark.parametrize("control", ["pause", "stop"])
+def test_tui_ralph_inline(monkeypatch, control):
     if not _HAS_TEXTUAL:
         return
-    asyncio.run(_drive_ralph_screen())
+    asyncio.run(_drive_ralph_inline(monkeypatch, control))
 
 
 def test_tui_wiki_screen():
@@ -5343,7 +5331,8 @@ if __name__ == "__main__":
         asyncio.run(_drive_live_steering())
         asyncio.run(_drive_startup_info())
         asyncio.run(test_tui_subagent_tool_bursts_keep_one_plain_status_line())
-        asyncio.run(_drive_ralph_screen())
+        with pytest.MonkeyPatch.context() as ralph_patch:
+            asyncio.run(_drive_ralph_inline(ralph_patch, "pause"))
         asyncio.run(_drive_wiki_screen())
         print(
             "TUI HEADLESS + ROUTING + SAVE + SESSIONS + MCP + AUTOCOMPLETE + "

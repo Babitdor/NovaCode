@@ -372,8 +372,9 @@ async def test_approval_is_revalidated_after_blocked_prompt_retraction(
         await release.wait()
 
     async def ask(text: str) -> Callable[[], Awaitable[None]]:
-        nonce = re.search(r"\nApprove ([a-f0-9]+)", text)[1]
-        await broker.handle(message(f"Approve {nonce}"))
+        match = re.search(r"\nApprove ([a-f0-9]+)", text)
+        if match:
+            await broker.handle(message(f"Approve {match[1]}"))
         return retract
 
     msg = message(ask_fn=ask, approval_check=allowed.__contains__)

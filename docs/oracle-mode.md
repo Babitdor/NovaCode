@@ -49,8 +49,8 @@ continue to use their existing streams.
 Each review records a content fingerprint of the Git workspace, including
 nonignored untracked files. Changes during review force another round. Oracle
 checks freshness again before finishing, and checks displayed results in a
-background worker every two seconds. Modified results become **stale**; old
-scores cannot approve new changes. Missing, invalid, timed-out or failed reviews
+background worker when relevant filesystem changes arrive. Modified results
+become **stale**. Old scores cannot approve new changes. Missing, invalid, timed-out or failed reviews
 never count as passing scores.
 
 ## Settings and decisions

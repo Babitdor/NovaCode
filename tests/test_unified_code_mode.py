@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 from typing import TYPE_CHECKING
 
 import pytest
@@ -59,8 +60,16 @@ async def invoke(graph, thread="chat"):
     return [m for m in output["messages"] if isinstance(m, ToolMessage)][-1]
 
 
-async def test_variables_survive_snippets_turns_and_compatibility_but_not_other_chats():
+async def test_variables_survive_snippets_turns_and_compatibility_but_not_other_chats(monkeypatch):
     mode = CodeModeMiddleware()
+    loop_thread = threading.get_ident()
+    original_get = mode._registry.get
+
+    def get(thread):
+        assert threading.get_ident() != loop_thread
+        return original_get(thread)
+
+    monkeypatch.setattr(mode._registry, "get", get)
     graph = scripted(
         [
             ("eval", "let kept = 41; kept"),
@@ -75,6 +84,31 @@ async def test_variables_survive_snippets_turns_and_compatibility_but_not_other_
     assert json.loads((await invoke(graph)).content)["result"] == "42"
     assert json.loads((await invoke(graph)).content)["result"] == 42
     assert json.loads((await invoke(graph, "new-chat")).content)["result"] == "undefined"
+
+
+async def test_cancel_during_cold_start_keeps_the_loop_responsive_and_evicts_the_slot(monkeypatch):
+    mode = CodeModeMiddleware()
+    entered, release = threading.Event(), threading.Event()
+    original_get = mode._registry.get
+
+    def get(thread):
+        entered.set()
+        assert release.wait(5)
+        return original_get(thread)
+
+    monkeypatch.setattr(mode._registry, "get", get)
+    graph = scripted([("eval", "1 + 1")], middleware=[mode])
+    turn = asyncio.create_task(graph.ainvoke({"messages": [HumanMessage(content="Run the snippet")]}))
+    try:
+        assert await asyncio.to_thread(entered.wait, 4)
+        turn.cancel()
+        await asyncio.sleep(0)
+        assert not turn.done()
+    finally:
+        release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(turn, 5)
+    assert mode._registry.get_if_exists(mode._fallback_thread_id) is None
 
 
 async def test_host_bridge_survives_multiple_snippets_in_one_turn():

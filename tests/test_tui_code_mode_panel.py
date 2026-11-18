@@ -140,10 +140,9 @@ async def test_eval_events_create_keyboard_accessible_panels_and_keep_ids(  # no
         assert panels[0].heading.render().plain == "Ran read_file"
         assert panels[1].heading.render().plain == "Failed MCPCode"
         assert panels[1].has_class("failed")
-        assert source in panels[0].source.render().plain
+        assert panels[0].source is panels[0].output is None
         assert "limit must be <= 50" in panels[1].preview.render().plain
         assert "Inspect completed" in str(panels[1].note.render())
-        assert "[bold]" in panels[0].output.render().plain
         assert panels[0].styles.border_top[0] in {"", "none"}
         assert panels[1].styles.border_top[0] in {"", "none"}
         assert panels[0].preview.display
@@ -165,6 +164,8 @@ async def test_eval_events_create_keyboard_accessible_panels_and_keep_ids(  # no
         await pilot.press("enter")
         await pilot.pause()
         assert not panels[0].collapsed
+        assert source in panels[0].source.render().plain
+        assert panels[0].output.render().plain == good
         nested = list(panels[0].query(Collapsible))
         nested[0].query_one("CollapsibleTitle").focus()
         await pilot.press("enter")
@@ -185,8 +186,11 @@ async def test_eval_events_create_keyboard_accessible_panels_and_keep_ids(  # no
         await app._render(ev.ToolResult(preview="done", full_output=large, call_id="large"))
         large_panel = list(app.query(CodeModePanel))[-1]
         assert large_panel.heading.render().plain == "Ran execute"
-        assert "exact-tail" in large_panel.output.render().plain
+        assert large_panel.output is None
         assert "/cleared/selected.json" in large_panel.note.render().plain
+        large_panel.collapsed = False
+        await pilot.pause()
+        assert large_panel.output.render().plain == large
         # ID-less legacy events use the most recent Code Mode component.
         await app._render(ev.ToolCall(name="eval", display_str="eval()", icon="*", args={}))
         await app._render(ev.ToolResult(preview="done", full_output='{"result":42,"calls":0}'))
@@ -208,6 +212,9 @@ async def test_eval_events_create_keyboard_accessible_panels_and_keep_ids(  # no
         )
         assert normal.heading.render().plain == "Ran read_file(a.py)"
         assert not normal.has_class("failed")
+        assert normal.output is None
+        normal.collapsed = False
+        await pilot.pause()
         assert '"error":"ordinary data"' in normal.output.render().plain
         assert normal.query_one(Collapsible).title == "Arguments"
         await app._render(
@@ -249,6 +256,8 @@ async def test_eval_events_create_keyboard_accessible_panels_and_keep_ids(  # no
         legacy = list(app.query(CodeModePanel))[-1]
         await app._render(ev.FileOp(record=None, full_output="legacy content"))
         assert legacy.heading.render().plain == "Ran read_file(legacy.py)"
+        legacy.collapsed = False
+        await pilot.pause()
         assert "legacy content" in legacy.output.render().plain
         assert app._last_tool is None
 
@@ -275,11 +284,13 @@ async def test_compact_result_preview_keeps_full_output_source_and_recovery():
         assert "+ 2 lines" in str(panel.title)
         assert panel.collapsed
         assert "five" not in panel.preview.render().plain
-        assert "five" in panel.output.render().plain
+        assert panel.source is panel.output is None
+        assert panel.unmounted_detail_chars >= len(output)
         panel.query_one("CollapsibleTitle").focus()
         await pilot.press("enter")
         await pilot.pause()
         assert not panel.collapsed
+        assert panel.output.render().plain == output
         assert panel.source.render().plain == "// exact [source]\nreturn result;"
         saved = "/cleared/selected.json"
         panel.finish(

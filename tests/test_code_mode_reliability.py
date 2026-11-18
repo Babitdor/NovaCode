@@ -61,7 +61,18 @@ async def test_search_native_and_mcp_have_distinct_callable_targets(tmp_path):
     assert [hit["target"]["namespace"] for hit in result["tools"]] == ["tools"]
 
 
-async def test_search_uses_current_inventory_and_excludes_direct_control_tools(tmp_path):
+async def test_search_uses_current_inventory_and_excludes_direct_control_tools(tmp_path, monkeypatch):
+    from novacode_cli.agents import tool_search, tool_search_variants
+
+    parameter_text = tool_search_variants.parameter_text
+    indexed = []
+
+    def track(target):
+        indexed.append(target.name)
+        return parameter_text(target)
+
+    monkeypatch.setattr(tool_search, "parameter_text", track)
+    monkeypatch.setattr(tool_search_variants, "parameter_text", track)
     mode = CodeModeMiddleware(inventory(tmp_path, echo.model_copy(update={"name": "db_echo"})))
     control = echo.model_copy(update={"name": "write_todos"})
     request = SimpleNamespace(runtime=SimpleNamespace(tools=[echo, control]))
@@ -75,6 +86,7 @@ async def test_search_uses_current_inventory_and_excludes_direct_control_tools(t
         ),
     )
     assert [hit["name"] for hit in result["tools"]] == ["echo"]
+    assert indexed == ["echo"]
     other = SimpleNamespace(runtime=SimpleNamespace(tools=[]))
     assert (
         await mode._native(

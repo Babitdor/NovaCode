@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import logging
 import re
 from dataclasses import replace
 from types import SimpleNamespace
@@ -22,10 +23,11 @@ from langgraph.types import Command
 from pydantic import BaseModel, ConfigDict, Field
 from quickjs_rs import TimeoutError as QuickJSTimeoutError
 
+from novacode_cli.agents.code_runtime import open_repl
 from novacode_cli.agents.strict_tools import _validator
 from novacode_cli.agents.tool_offload import save_tool_result
 from novacode_cli.agents.tool_search_variants import SEARCH_VARIANTS
-from novacode_cli.config.nova_config import NovaConfig
+from novacode_cli.config.nova_config import live_code_mode_enabled
 from novacode_cli.core.tool_results import MAX_INTERMEDIATE_CHARS, capture_file_read, data_text
 from novacode_cli.mcp.generic import MCPInput, build_mcp_tool, resolve_target
 from novacode_cli.security.policy import get_policy
@@ -39,6 +41,7 @@ if TYPE_CHECKING:
 
 MAX_ARGUMENT_CHARS = 100000
 MAX_OUTPUT_CHARS = 12000
+logger = logging.getLogger(__name__)
 
 
 def _failure_kind(exc: Exception) -> str:
@@ -301,6 +304,7 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
         self._offload_dir = offload_dir
         self._state_warnings: dict[str, str] = {}
         self._execution_locks: dict[str, asyncio.Lock] = {}
+        self._registry_access = asyncio.Lock()
 
         def unavailable(code: str) -> str:  # noqa: ARG001 -- public tool schema.
             return "MCPCode requires its owning agent middleware."
@@ -350,18 +354,31 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
 
     async def abefore_agent(self, state: Any, runtime: Any) -> dict[str, Any] | None:
         """Report failed restoration instead of silently claiming variables survived."""
-        update = await super().abefore_agent(state, runtime)
-        if update is not None:
-            thread = _resolve_thread_id(self._fallback_thread_id)
-            await self._registry.aevict(thread)
-            self._state_warnings[thread] = (
-                "JavaScript state restoration failed; variables were cleared."
-            )
-        return update
+        payload = state.get("_quickjs_snapshot_payload")
+        if not payload:
+            return None
+        thread = _resolve_thread_id(self._fallback_thread_id)
+        async with self._registry_access:
+            try:
+                repl = await open_repl(self._registry, thread)
+                await repl.arestore_snapshot(payload, inject_globals=True)
+            except asyncio.CancelledError:
+                await self._registry.aevict(thread)
+                raise
+            except Exception:
+                logger.warning("Failed to restore QuickJS snapshot for thread_id=%s", thread, exc_info=True)
+                await self._registry.aevict(thread)
+                self._state_warnings[thread] = (
+                    "JavaScript state restoration failed; variables were cleared."
+                )
+                return {"_quickjs_snapshot_payload": None}
+        return None
 
     async def aafter_agent(self, state: Any, runtime: Any) -> dict[str, Any] | None:
         """Keep the installed snapshot lifecycle and surface snapshot loss."""
-        update = await super().aafter_agent(state, runtime)
+        # Upstream's snapshot hook looks up the slot under the registry's threading lock.
+        async with self._registry_access:
+            update = await super().aafter_agent(state, runtime)
         self._execution_locks.pop(_resolve_thread_id(self._fallback_thread_id), None)
         if update is not None and update.get("_quickjs_snapshot_payload") is None:
             thread = _resolve_thread_id(self._fallback_thread_id)
@@ -397,11 +414,11 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
 
     def wrap_model_call(self, request: ModelRequest, handler: Callable) -> Any:
         """Expose Code Mode only while the saved preference is enabled."""
-        return handler(self._model_request(request, enabled=NovaConfig().get_code_mode_enabled()))
+        return handler(self._model_request(request, enabled=live_code_mode_enabled()))
 
     async def awrap_model_call(self, request: ModelRequest, handler: Callable) -> Any:
         """Apply preference changes to existing graphs without rebuilding them."""
-        enabled = await asyncio.to_thread(lambda: NovaConfig().get_code_mode_enabled())
+        enabled = await asyncio.to_thread(live_code_mode_enabled)
         return await handler(self._model_request(request, enabled=enabled))
 
     @staticmethod
@@ -427,7 +444,7 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
         """Route each nested call through the remaining middleware and ToolNode."""
         if request.tool_call["name"] not in {"MCPCode", "eval"}:
             return await handler(request)
-        if not await asyncio.to_thread(lambda: NovaConfig().get_code_mode_enabled()):
+        if not await asyncio.to_thread(live_code_mode_enabled):
             return self._message(request, "MCP Code Mode is disabled.")
         if get_policy().tool_default("eval") == "deny":
             return self._message(request, "Code Mode denied by approval policy.")
@@ -450,7 +467,8 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
                 try:
                     return await self._execute(request, handler, params.code)
                 except asyncio.CancelledError:
-                    await self._registry.aevict(thread)
+                    async with self._registry_access:
+                        await self._registry.aevict(thread)
                     raise
 
         # Execute inside ToolNode, so tool callbacks and downstream wrappers see
@@ -534,13 +552,16 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
                 raise
 
         try:
+            thread = _resolve_thread_id(self._fallback_thread_id)
+            async with self._registry_access:
+                repl = await open_repl(self._registry, thread)
             result, error = await run_script(
                 code,
                 dispatch,
                 cpu_timeout=self._cpu_timeout,
                 wall_timeout=self._wall_timeout,
                 memory_limit=self._memory_limit,
-                repl=self._registry.get(_resolve_thread_id(self._fallback_thread_id)),
+                repl=repl,
                 runtime=request.runtime,
                 expression=request.tool_call["name"] == "eval",
             )
@@ -661,6 +682,7 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
         """Rank only callable capabilities in this invocation, keeping routing identities."""
         from novacode_cli.agents.tool_search import ToolSearchMiddleware
         from novacode_cli.agents.tool_search_variants import parameter_text
+        from novacode_cli.config.browser_mode import browser_mode_enabled
 
         targets = [
             (target, {"namespace": "tools", "tool_name": name})
@@ -668,15 +690,19 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
         ]
         if self._mcp is not None and get_policy().tool_default("MCPTool") != "deny":
             await asyncio.shield(self._mcp.start_background_discovery())
+            runtime_ids = {id(tool) for tool in request.runtime.tools}
+            by_name = {}
+            for tool in self._mcp.tools:
+                server = (tool.metadata or {}).get("nova_mcp_server")
+                by_name.setdefault((server, tool.name), tool)
+            seen_routes = set()
             for entry in self._mcp._tools_cache:
-                target = resolve_target(
-                    self._mcp,
-                    MCPInput(
-                        server_name=entry["server"],
-                        tool_name=entry["skill_alias"],
-                    ),
-                )
-                if target is not None and any(t is target for t in request.runtime.tools):
+                route = (entry["server"], entry["skill_alias"])
+                if route in seen_routes:
+                    continue
+                seen_routes.add(route)
+                target = by_name.get((entry["server"], entry["name"]))
+                if target is not None and id(target) in runtime_ids:
                     targets.append(
                         (
                             target,
@@ -687,7 +713,11 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
                             },
                         )
                     )
-        search = ToolSearchMiddleware()
+        visible = {
+            id(target) for target in ToolSearchMiddleware._discovery_tools(
+                (target for target, _route in targets), browsing=browser_mode_enabled(),
+            )
+        }
         catalog = [
             {
                 "name": target.name,
@@ -697,9 +727,9 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
                 "target": route,
             }
             for target, route in targets
-            if search._catalog_for([target])
+            if id(target) in visible
         ]
-        matches = search._search_matches(query.strip(), catalog) if query.strip() else []
+        matches = ToolSearchMiddleware._search_matches(query.strip(), catalog) if query.strip() else []
         return {
             "tools": [
                 {

@@ -6,6 +6,7 @@ Pins the pure decision policy and the parsing helpers — the loop integration
 
 from __future__ import annotations
 
+import subprocess
 from typing import TYPE_CHECKING
 
 from novacode_cli.commands import ralph_handler as rh
@@ -90,3 +91,17 @@ def test_render_extras_expose_state() -> None:
     assert extras["verify_passed"] is False
     assert extras["verify_summary"] == "boom"
     assert extras["checklist_path"] == rh.RALPH_CHECKLIST_PATH
+
+
+def test_bookkeeping_writes_do_not_count_as_progress_in_an_unborn_repo(tmp_path: Path) -> None:
+    subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
+    code = tmp_path / "new.py"
+    code.write_text("version = 1", encoding="utf-8")
+    baseline = rh._git_change_signature(str(tmp_path))
+    assert baseline
+    progress = tmp_path / rh.RALPH_PROGRESS_PATH
+    progress.parent.mkdir(parents=True)
+    progress.write_text("Iteration notes", encoding="utf-8")
+    assert rh._git_change_signature(str(tmp_path)) == baseline
+    code.write_text("version = 2", encoding="utf-8")
+    assert rh._git_change_signature(str(tmp_path)) != baseline

@@ -88,8 +88,7 @@ def _details(kind: str, payload: object) -> tuple[str, int] | None:
             return None
         content, count = {"plan": plan}, 1
     try:
-        # JSON preserves controls and Unicode visibly. Escaping backticks keeps
-        # untrusted arguments and plans inside every platform's code fences.
+        # Keep a canonical snapshot for validation and for prompts that show literal details.
         text = json.dumps(content, ensure_ascii=True, allow_nan=False, indent=2).replace(
             "`", r"\u0060"
         )
@@ -197,15 +196,25 @@ class RemoteApprovalBroker:
         try:
             try:
                 async with asyncio.timeout(APPROVAL_TTL):
-                    pages = [text[i : i + _PART_SIZE] for i in range(0, len(text), _PART_SIZE)]
-                    heading = f"Review {kind} approval"
-                    if label:
-                        heading += f"\nLabel (JSON):\n```\n{label_json}\n```"
-                    for index, page in enumerate(pages, 1):
-                        prompt = (
+                    if kind == "plan" and owner[0] == "telegram":
+                        # Render the whole document before paging and keep approval controls
+                        # outside its Markdown, including any unclosed fences or links.
+                        plan = json.loads(text)["plan"]
+                        controls = "**Plan approval**"
+                        if label:
+                            controls += f"\n\nSession `{label_json[1:-1]}`"
+                        prompts = [plan, controls]
+                    else:
+                        heading = f"Review {kind} approval"
+                        if label:
+                            heading += f"\nLabel (JSON):\n```\n{label_json}\n```"
+                        pages = [text[i : i + _PART_SIZE] for i in range(0, len(text), _PART_SIZE)]
+                        prompts = [
                             f"{heading}\nDetails {index}/{len(pages)} (JSON):\n```\n{page}\n```"
-                        )
-                        final_page = index == len(pages)
+                            for index, page in enumerate(pages, 1)
+                        ]
+                    for index, prompt in enumerate(prompts, 1):
+                        final_page = index == len(prompts)
                         if final_page:
                             prompt += (
                                 "\nChoose Approve or Reject below.\nExpires in 5 minutes."

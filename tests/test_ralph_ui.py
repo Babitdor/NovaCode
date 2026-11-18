@@ -6,8 +6,29 @@ printing to stdout/stderr.
 from __future__ import annotations
 
 import types
+from pathlib import Path
+
+import pytest
 
 from novacode_cli.commands import ralph_handler as rh
+
+
+@pytest.fixture(autouse=True)
+def isolated_checkpoints(monkeypatch):
+    monkeypatch.setattr(rh, "_get_checkpoint_path", lambda workspace: Path(workspace) / "ralph-checkpoint.json")
+
+
+def test_a_workspace_can_only_have_one_checkpoint_owner(tmp_path):
+    import os
+
+    workspace = str(tmp_path)
+    fd = rh._reserve_workspace(workspace)
+    try:
+        with pytest.raises(OSError):
+            rh._reserve_workspace(workspace)
+    finally:
+        os.close(fd)
+    os.close(rh._reserve_workspace(workspace))
 
 
 def _sink():
@@ -122,11 +143,13 @@ async def test_foreground_emits_structured_events(tmp_path, monkeypatch):
     calls: list[str] = []
 
     async def fake_execute(prompt, agent, name, ss, tt, backend=None):  # noqa: ANN001, ARG001
+        assert not ss.auto_approve
         calls.append(name)
 
     session = types.SimpleNamespace(
         auto_approve=False,
         thread_id="t",
+        workspace_root=str(tmp_path),
         background_ralph_tasks={},
         add_notification=lambda **_: None,
     )
@@ -161,6 +184,7 @@ async def test_foreground_emits_structured_events(tmp_path, monkeypatch):
     assert events[0].background is False
     assert events[-1].completed == 2
     assert events[-1].failed == 0
+    assert events[-1].reason == "limit"
 
     # The header/banner/summary markup is routed to on_event, not the markup sink.
     joined = "\n".join(markup)
@@ -180,6 +204,7 @@ async def test_ralph_stop_requested(tmp_path, monkeypatch):
     session = types.SimpleNamespace(
         auto_approve=False,
         thread_id="t",
+        workspace_root=str(tmp_path),
         background_ralph_tasks={},
         add_notification=lambda **_: None,
         _ralph_stop_requested=False,
@@ -214,7 +239,6 @@ async def test_ralph_stop_requested(tmp_path, monkeypatch):
 
 async def test_ralph_checkpoint_requested(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(rh, "_get_checkpoint_path", lambda: tmp_path / "ralph-checkpoint.json")
     calls = []
 
     async def fake_execute(prompt, agent, name, ss, tt, backend=None):
@@ -225,6 +249,7 @@ async def test_ralph_checkpoint_requested(tmp_path, monkeypatch):
     session = types.SimpleNamespace(
         auto_approve=False,
         thread_id="t",
+        workspace_root=str(tmp_path),
         background_ralph_tasks={},
         add_notification=lambda **_: None,
         _ralph_checkpoint_requested=False,
@@ -272,6 +297,7 @@ async def test_ralph_cancelled_error(tmp_path, monkeypatch):
     session = types.SimpleNamespace(
         auto_approve=False,
         thread_id="t",
+        workspace_root=str(tmp_path),
         background_ralph_tasks={},
         add_notification=lambda **_: None,
     )
@@ -299,4 +325,104 @@ async def test_ralph_cancelled_error(tmp_path, monkeypatch):
     ]
     assert events[-1].completed == 0
     assert events[-1].reason == "stopped"
+
+
+async def test_ralph_new_run_cannot_inherit_completed_work_and_resume_keeps_its_files(tmp_path):
+    import re
+
+    from novacode_cli.commands.ralph_events import RalphStarted
+
+    first, other = tmp_path / "first", tmp_path / "other"
+    first.mkdir()
+    other.mkdir()
+    session = types.SimpleNamespace(auto_approve=False, thread_id="t", workspace_root=str(first))
+    events, paths = [], []
+
+    async def execute(prompt, *_args, **_kwargs):
+        checklist = first / re.search(r"\.nova/ralph/runs/[0-9a-f]+/checklist\.md", prompt)[0]
+        paths.append(checklist)
+        complete = len(paths) != 2
+        checklist.write_text(f"- [{'x' if complete else ' '}] Check the work\n", encoding="utf-8")
+        if not complete:
+            checklist.with_name("progress.md").write_text("Notes from task two", encoding="utf-8")
+        if len(paths) == 3:
+            assert "Notes from task two" in prompt
+
+    async def run(command):
+        await rh.handle_ralph_command(object(), session, "ralph", None, command, execute_fn=execute,
+                                      emit=lambda _message: None, on_event=events.append)
+
+    await run("first task --iterations 1")
+    assert events[-1].reason == "complete"
+    await run("second task --iterations 1")
+    assert events[-1].reason == "limit"
+    assert paths[0] != paths[1]
+    session.workspace_root = str(other)
+    await run("--resume")
+    assert len(paths) == 2
+    session.workspace_root = str(first)
+    await run("--resume")
+    assert paths[1] == paths[2]
+    assert [item.resumed_from for item in events if isinstance(item, RalphStarted)] == [None, None, 2]
+    assert events[-1].reason == "complete"
+
+
+async def test_ralph_verify_runs_the_original_command_and_gates_completion(tmp_path):
+    import re
+    import sys
+
+    verify = tmp_path / rh.RALPH_VERIFY_PATH
+    verify.parent.mkdir(parents=True)
+    verify.write_text(f'"{sys.executable}" -c "raise SystemExit(7)"', encoding="utf-8")
+    session = types.SimpleNamespace(auto_approve=False, thread_id="t", workspace_root=str(tmp_path))
+    events = []
+
+    async def execute(prompt, *_args, **_kwargs):
+        checklist = tmp_path / re.search(r"\.nova/ralph/runs/[0-9a-f]+/checklist\.md", prompt)[0]
+        checklist.write_text("- [x] Implement the change\n", encoding="utf-8")
+        verify.write_text(f'"{sys.executable}" -c "raise SystemExit(0)"', encoding="utf-8")
+
+    await rh.handle_ralph_command(object(), session, "ralph", None, "test --iterations 1 --verify",
+                                  execute_fn=execute, emit=lambda _message: None, on_event=events.append)
+    assert events[-1].reason == "limit"
+    assert "verification still failing" in events[-1].detail
+    assert not rh._load_ralph_checkpoint(str(tmp_path.resolve())).get("complete")
+
+
+async def test_background_ralph_requires_permission_and_uses_the_same_completion_policy(tmp_path, monkeypatch):
+    import asyncio
+    import re
+    import threading
+
+    from novacode_cli.commands.ralph_events import RalphFinished
+    from novacode_cli.ui import execution
+
+    session = types.SimpleNamespace(auto_approve=False, thread_id="t", workspace_root=str(tmp_path),
+                                    background_ralph_tasks={})
+    messages, events = [], []
+    finished = threading.Event()
+
+    async def execute(prompt, *_args, is_subagent, **_kwargs):
+        assert is_subagent and session.auto_approve
+        checklist = tmp_path / re.search(r"\.nova/ralph/runs/[0-9a-f]+/checklist\.md", prompt)[0]
+        checklist.write_text("- [x] Work done\n", encoding="utf-8")
+        return True
+
+    def report(event):
+        events.append(event)
+        if isinstance(event, RalphFinished):
+            finished.set()
+
+    monkeypatch.setattr(execution, "execute_task", execute)
+    await rh.handle_ralph_command(object(), session, "ralph", None, "do it --background",
+                                  emit=messages.append, on_event=report)
+    assert not events and not session.auto_approve
+    assert "already enabled" in messages[-1]
+    session.auto_approve = True
+    await rh.handle_ralph_command(object(), session, "ralph", None, "do it --background",
+                                  emit=messages.append, on_event=report)
+    assert await asyncio.to_thread(finished.wait, 5)
+    assert events[-1].reason == "complete"
+    assert sum(type(event).__name__ == "RalphStarted" for event in events) == 1
+    assert session.auto_approve
 

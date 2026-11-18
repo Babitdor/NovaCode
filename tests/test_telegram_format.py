@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from novacode_cli.remote.telegram_format import MAX_MESSAGE, render, to_plain
 
 
@@ -74,6 +76,18 @@ def test_unsafe_links_and_raw_html_are_neutralised() -> None:
     assert "<a" not in out and "<script>" not in out
 
 
+def test_fence_language_cannot_add_markup_or_exceed_the_page_budget() -> None:
+    for hint in ('bad"><b>', 'x' * MAX_MESSAGE):
+        assert render(f"```{hint}\ncode < here\n```") == ["<pre>code &lt; here</pre>"]
+
+
+def test_markdown_with_only_link_definitions_has_a_bounded_plain_fallback() -> None:
+    text = "\n".join(f"[ref{i}]: https://example.com/{i}" for i in range(400))
+    pages = render(text)
+    assert len(pages) > 1 and all(len(page) <= MAX_MESSAGE for page in pages)
+    assert "\n".join(pages) == text
+
+
 def test_long_output_splits_into_valid_messages() -> None:
     code = "```\n" + "\n".join(f"line {i} <x>" for i in range(2000)) + "\n```"
     pages = render("intro\n\n" + code + "\n\noutro")
@@ -92,7 +106,6 @@ def test_unclosed_markdown_mid_stream_is_still_valid() -> None:
 async def test_a_rejected_html_message_is_resent_plain_not_lost() -> None:
     from novacode_cli.remote.bridge import BridgeConfig, RemotePlatform
     from novacode_cli.remote.telegram_bridge import TelegramBridge
-    import asyncio
 
     bridge = TelegramBridge(
         BridgeConfig(platform=RemotePlatform.TELEGRAM, token="t", chat_id=1), asyncio.Queue()

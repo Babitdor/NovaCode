@@ -13,7 +13,7 @@ from langchain_core.messages import AIMessage
 from langchain_core.tools import tool
 from textual.widgets import Button
 
-from novacode_cli.config.nova_config import NovaConfig
+from novacode_cli.config.nova_config import NovaConfig, live_code_mode_enabled
 from novacode_cli.mcp.code_mode import MCPCodeModeMiddleware
 from tests.test_mcp_code_mode import (
     ScriptedModel,
@@ -26,6 +26,27 @@ from tests.test_tui_home_preferences import _app
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+
+def test_live_preference_reuses_cached_read_and_detects_atomic_replacement(tmp_path, monkeypatch):
+    import os
+    from pathlib import Path
+
+    monkeypatch.setattr("novacode_cli.config.config.HOME_DIR", tmp_path)
+    path = tmp_path / "Nova.config.json"
+    path.write_text('{"code_mode_enabled":false}', encoding="utf-8")
+    old = path.stat()
+    reads = Mock(side_effect=Path.read_text)
+    monkeypatch.setattr(Path, "read_text", lambda self, **kwargs: reads(self, **kwargs))
+    assert not live_code_mode_enabled()
+    assert not live_code_mode_enabled()
+    assert reads.call_count == 1
+    alternate = tmp_path / "replacement.json"
+    alternate.write_text('{"code_mode_enabled":true }', encoding="utf-8")
+    os.utime(alternate, ns=(old.st_atime_ns, old.st_mtime_ns))
+    alternate.replace(path)
+    assert live_code_mode_enabled()
+    assert reads.call_count == 2
 
 
 # Two full app boots plus pauses: past the 10 s default under coverage on Windows CI.

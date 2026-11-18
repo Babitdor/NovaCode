@@ -41,6 +41,10 @@ def summarize_run(
         data = json.loads(output)
     except (ValueError, TypeError):
         data = None
+    return _summarize(data, is_error=is_error, preview=preview, fallback=fallback)
+
+
+def _summarize(data: object, *, is_error: bool, preview: str, fallback: str) -> tuple[str, str, bool]:
     title = fallback
     failed = is_error
     note = ""
@@ -140,6 +144,7 @@ class CodeModePanel(Collapsible):
         tool_name: str = "eval",
         display_str: str | None = None,
         output_widget: Widget | None = None,
+        streaming: bool = False,
     ) -> None:
         """Keep the exact script and result behind separate disclosure controls."""
         self.status = Static("•", classes="code-mode-status")
@@ -150,18 +155,15 @@ class CodeModePanel(Collapsible):
         self.note.display = False
         self.tool_name = tool_name
         self.display_str = display_str
-        self.source = Static(Text(code or "(script unavailable)"), classes="code-mode-source")
-        self.output = (
-            output_widget
-            if output_widget is not None
-            else Static("Waiting for output.", classes="code-mode-output", markup=False)
-        )
-        source_title = "JavaScript" if display_str is None else "Arguments"
+        self._source_text = code or "(script unavailable)"
+        self._output_text = "Waiting for output."
+        self.source: Static | None = None
+        self.output = output_widget
+        self._source_title = "JavaScript" if display_str is None else "Arguments"
         super().__init__(
-            Collapsible(self.source, title=source_title, collapsed=True),
-            self.output,
-            title=f"{source_title} & full output (Enter to expand)",
-            collapsed=True,
+            *([output_widget] if streaming and output_widget is not None else []),
+            title=f"{self._source_title} & full output (Enter to expand)",
+            collapsed=not streaming,
             collapsed_symbol="",
             expanded_symbol="",
             classes="tool-active",
@@ -176,21 +178,48 @@ class CodeModePanel(Collapsible):
         yield self.note
         yield from super().compose()
 
+    @property
+    def unmounted_detail_chars(self) -> int:
+        """Count retained text even while its disclosure widgets are absent."""
+        return (len(self._source_text) if self.source is None or not self.source.is_mounted else 0) + (
+            len(self._output_text) if self.output is None or not self.output.is_mounted else 0
+        )
+
+    async def on_mount(self) -> None:
+        if not self.collapsed:
+            await self._mount_details()
+
+    async def on_collapsible_expanded(self, event: Collapsible.Expanded) -> None:
+        if event.collapsible is self and not self.collapsed:
+            await self._mount_details()
+
+    async def _mount_details(self) -> None:
+        if self.source is not None:
+            return
+        contents = self.query_one(self.Contents)
+        self.source = Static(Text(self._source_text), classes="code-mode-source")
+        drawer = Collapsible(self.source, title=self._source_title, collapsed=True)
+        if self.output is None:
+            self.output = Static(Text(self._output_text), classes="code-mode-output", markup=False)
+        if self.output.parent is contents:
+            await contents.mount(drawer, before=self.output)
+        else:
+            await contents.mount(drawer, self.output)
+
     def finish(self, output: str, *, is_error: bool, preview: str) -> None:
         """Update this run alone and surface failures without opening raw output."""
+        try:
+            data = json.loads(output) if self.display_str is None else None
+        except (ValueError, TypeError):
+            data = None
         title, note, failed = (
-            summarize_run(output, is_error=is_error, preview=preview, fallback=self.tool_name)
+            _summarize(data, is_error=is_error, preview=preview, fallback=self.tool_name)
             if self.display_str is None
             else (self.display_str, preview if is_error and preview not in output else "", is_error)
         )
         # Rich Text keeps tool-provided brackets literal in the summary and result.
         self.heading.update(Text.assemble(("Failed " if failed else "Ran ", "bold"), title))
-        try:
-            data = json.loads(output) if self.display_str is None else None
-            pretty = json.dumps(data, indent=2, ensure_ascii=False)
-        except (ValueError, TypeError):
-            data = None
-            pretty = output or "(no output)"
+        self._output_text = output or preview or "(no output)"
         selected = (
             data.get("error") or data.get("result", preview)
             if isinstance(data, dict)
@@ -221,6 +250,6 @@ class CodeModePanel(Collapsible):
             or (isinstance(data, dict) and bool(data.get("truncated") or data.get("state_warning")))
         )
         if isinstance(self.output, Static):
-            self.output.update(Text(pretty if self.display_str is None else output or preview))
+            self.output.update(Text(self._output_text))
         self.set_class(failed, "failed")
         self.remove_class("tool-active")

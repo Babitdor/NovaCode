@@ -223,6 +223,41 @@ class Snapshot:
         }
 
 
+def workspace_watch_paths(directory: str) -> tuple[Path, ...]:
+    """Include the worktree and Git metadata stored outside linked worktrees."""
+    locations = _git(
+        Path(directory), "rev-parse", "--path-format=absolute", "--show-toplevel",
+        "--absolute-git-dir", "--git-common-dir",
+    ).decode().splitlines()
+    return tuple(dict.fromkeys(Path(location).resolve() for location in locations))
+
+
+def workspace_changes_relevant(paths: tuple[Path, ...], changed_paths: set[str]) -> bool:
+    """Skip ignored output and Git housekeeping that cannot change the fingerprint."""
+    root, *git_dirs = paths
+    worktree: set[bytes] = set()
+    for name in changed_paths:
+        path = Path(name)
+        git_dir = next((base for base in git_dirs if path.is_relative_to(base)), None)
+        if git_dir is not None:
+            relative = path.relative_to(git_dir).as_posix()
+            if relative in {".", "HEAD", "index", "packed-refs", "info/exclude"} or relative.startswith("refs/"):
+                return True
+        elif path.is_relative_to(root):
+            relative = path.relative_to(root).as_posix()
+            if relative in {".", ".git"} or path.name == ".gitignore":
+                return True
+            worktree.add(os.fsencode(f"./{relative}"))
+    if not worktree:
+        return False
+    ignored = subprocess.run(
+        ["git", "check-ignore", "-z", "--stdin"], cwd=root,
+        input=b"\0".join(worktree) + b"\0", capture_output=True, timeout=GIT_TIMEOUT,
+        check=False,
+    )
+    return ignored.returncode not in {0, 1} or bool(worktree - set(ignored.stdout.split(b"\0")))
+
+
 def snapshot(directory: str, *, capture_start: bool = False) -> Snapshot:
     """Hash nonignored tracked/untracked inputs without touching the Git index."""
     root = Path(_git(Path(directory), "rev-parse", "--show-toplevel").decode().strip())

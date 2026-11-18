@@ -980,9 +980,9 @@ class MCPMiddleware(AgentMiddleware):
 
         import time
 
-        from novacode_cli.config.nova_config import NovaConfig
+        from novacode_cli.config.nova_config import live_code_mode_enabled
 
-        code_mode_enabled = NovaConfig().get_code_mode_enabled()
+        code_mode_enabled = live_code_mode_enabled()
         current_time = time.time()
 
         # Sliding-window cache: refresh on access to keep hot during active use

@@ -69,8 +69,8 @@ def _pre(code: str, lang: str = "") -> str:
     body = esc(code.rstrip("\n"))
     lang = lang.split()[0] if lang.strip() else ""
     return (
-        f'<pre><code class="language-{esc(lang)}">{body}</code></pre>'
-        if lang
+        f'<pre><code class="language-{lang}">{body}</code></pre>'
+        if re.fullmatch(r"[A-Za-z0-9_+-]{1,32}", lang)
         else f"<pre>{body}</pre>"
     )
 
@@ -190,7 +190,7 @@ def render(markdown: str) -> list[str]:
                 cur = f"{cur}\n\n{piece}" if cur else piece
     if cur:
         messages.append(cur)
-    return messages or [esc(markdown.strip()) or "…"]
+    return messages or _pack(esc(markdown.strip()).split("\n"), MAX_MESSAGE) or ["…"]
 
 
 def image_sources(markdown: str) -> list[str]:

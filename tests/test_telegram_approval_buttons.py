@@ -12,6 +12,7 @@ import pytest
 from novacode_cli.remote import approvals
 from novacode_cli.remote.approvals import RemoteApprovalBroker
 from novacode_cli.remote.telegram_bridge import TelegramBridge
+from novacode_cli.remote.telegram_format import MAX_MESSAGE
 from tests.test_remote_approval_transport import (
     isolated_remote_config,  # noqa: F401
     telegram_target,
@@ -29,26 +30,45 @@ async def test_native_buttons_resolve_once_for_original_sender(choice: str, kind
     target.route["sid"] = "root"
     sent = asyncio.Event()
     controls = {}
+    messages = []
     next_id = 10
 
     async def api(method: str, params: dict, **_kwargs: object) -> dict:
         nonlocal next_id
         next_id += 1
-        if method == "sendMessage" and "reply_markup" in params:
-            controls.update(params)
-            sent.set()
+        if method == "sendMessage":
+            messages.append(params)
+            if "reply_markup" in params:
+                controls.update(params)
+                sent.set()
         return {"ok": True, "result": {"message_id": next_id}}
 
     bot._api_call = AsyncMock(side_effect=api)
     broker = RemoteApprovalBroker()
-    data = payload() if kind == "tool" else {"plan": "Run the requested checks."}
-    task = asyncio.create_task(broker.request(target, kind, data))
+    plan = (
+        "# Proposed changes\n\n1. Fix `parser.py`\n2. **Run tests**\n\n"
+        "```python\n" + "assert x < 42\n" * 450 + "# End of plan"
+    )
+    data = payload() if kind == "tool" else {"plan": plan}
+    task = asyncio.create_task(broker.request(target, kind, data, label="Release Session"))
     await asyncio.wait_for(sent.wait(), 2)
     buttons = controls["reply_markup"]["inline_keyboard"][0]
     assert [button["text"] for button in buttons] == ["Approve", "Reject"]
     assert all(len(button["callback_data"].encode()) <= 64 for button in buttons)
     assert controls["message_thread_id"] == 55
     assert "Choose Approve or Reject below" in controls["text"]
+    if kind == "plan":
+        assert "<b>Plan approval</b>" in controls["text"]
+        assert "Session <code>Release Session</code>" in controls["text"]
+        assert len(messages) > 2
+        assert all("reply_markup" not in page for page in messages[:-1])
+        assert all(page["parse_mode"] == "HTML" and len(page["text"]) <= MAX_MESSAGE for page in messages)
+        assert all(page["message_thread_id"] == 55 for page in messages)
+        assert "<b>Proposed changes</b>" in messages[0]["text"]
+        assert "1. Fix <code>parser.py</code>\n2. <b>Run tests</b>" in messages[0]["text"]
+        assert "assert x &lt; 42" in messages[1]["text"]
+        assert "# End of plan</code></pre>" in messages[-2]["text"]
+        assert all("(JSON)" not in page["text"] for page in messages)
     button = next(button for button in buttons if button["text"].lower() == choice)
     callback = {
         "id": "click",
@@ -79,14 +99,18 @@ async def test_native_buttons_resolve_once_for_original_sender(choice: str, kind
     assert "No matching approval" in replay.reply_fn.call_args.args[0]
 
 
-async def test_failed_prompt_delivery_retracts_details_and_rejects() -> None:
+@pytest.mark.parametrize("kind", ["tool", "plan"])
+async def test_failed_prompt_delivery_retracts_details_and_rejects(kind: str) -> None:
     bot, target = await telegram_target("incoming", private=False)
     bot._send_html = AsyncMock(side_effect=[{"result": {"message_id": 10}}, None])
     bot._delete_messages = AsyncMock()
     broker = RemoteApprovalBroker()
     data = {"action_requests": [{"name": "shell", "args": {"command": "x" * 5000}}]}
-    result = await broker.request(target, "tool", data)
-    assert result["any_rejected"]
+    if kind == "plan":
+        data = {"plan": "# Plan\n\n" + "Do a check. " * 600}
+    result = await broker.request(target, kind, data)
+    assert result["any_rejected"] if kind == "tool" else not result["response"]["approved"]
+    assert all("reply_markup" not in call.args[1] for call in bot._send_html.await_args_list)
     assert not broker._pending
     bot._delete_messages.assert_any_await(-100, [10])
 

@@ -3974,7 +3974,7 @@ wheels = [
 
 [[package]]
 name = "novacode-cli"
-version = "1.2.38"
+version = "1.2.39"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
@@ -4031,6 +4031,7 @@ dependencies = [
     { name = "textual" },
     { name = "textual-image", extra = ["textual"] },
     { name = "tomli-w" },
+    { name = "watchfiles" },
 ]
 
 [package.optional-dependencies]
@@ -4166,6 +4167,7 @@ requires-dist = [
     { name = "textual-image", extras = ["textual"], specifier = "==0.12.0" },
     { name = "tomli-w", specifier = ">=1.0.0" },
     { name = "uvicorn", marker = "extra == 'server'", specifier = ">=0.34.0" },
+    { name = "watchfiles", specifier = ">=1.2.0" },
 ]
 provides-extras = ["browser", "voice", "voice-orpheus", "voice-parakeet", "voice-pocket", "bedrock", "server", "agents-server", "voice-whistle", "voice-kokoro", "voice-sano", "computer"]
 
