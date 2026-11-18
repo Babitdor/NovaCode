@@ -517,6 +517,7 @@ TUI_COMMANDS: dict[str, SlashCommand] = {
     ),
     "rooms": SlashCommand("_run_rooms", "project channels, agent DMs and shared task board"),
     "teammates": SlashCommand("_run_teammates", "persistent local assistant and input approvals"),
+    "proactive": SlashCommand("_run_proactive", "create and manage proactive agents"),
     "ui": SlashCommand(
         "_run_ui", "inspect / patch / preview / commit / rollback / reset UI panels"
     ),
@@ -2911,6 +2912,9 @@ class NovaApp(App):
         self._apply_saved_theme()
         self.set_interval(5, self._schedule_session_autosave)
         from novacode_cli.config.config import settings
+        from novacode_cli.tui.proactive import start_proactive
+
+        await start_proactive(self)
 
         self._ui_harness = await asyncio.to_thread(
             lambda: UIHarness(self, settings.get_workspace_root() or Path.cwd())
@@ -3522,6 +3526,9 @@ class NovaApp(App):
         from novacode_cli.tui.loop_commands import close_loops
 
         close_loops(self)
+        proactive = getattr(self, "_proactive_runtime", None)
+        if proactive is not None:
+            await proactive.close()
         # Unmount also runs after failed/interrupted tasks and run_test exits,
         # where action_quit may never have been reached.
         self._release_output_observers()
@@ -14071,6 +14078,14 @@ class NovaApp(App):
             # Reuse capacity, workspace approval and saved-identity checks.
             # A saved conversation opens in its own tab, preserving this turn.
             await self._resume_tab(selected.session_id)
+
+    async def _run_proactive(self, _text: str) -> None:
+        from novacode_cli.prime_memory import session_directory
+        from novacode_cli.tui.proactive import ProactiveScreen, start_proactive
+
+        runtime = await start_proactive(self, create=True)
+        if runtime is not None:
+            self.push_screen(ProactiveScreen(runtime.store, session_directory(self.session_state)))
 
     async def _run_loop(self, text: str) -> None:
         from novacode_cli.tui.loop_commands import run_loop_command

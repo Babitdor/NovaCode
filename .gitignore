@@ -22,6 +22,7 @@ docs/*
 !docs/github-issue-review.md
 !docs/command-center.md
 !docs/session-loops.md
+!docs/proactive.md
 !docs/prompt-audit.md
 !docs/mcp-code-mode.md
 !docs/code-mode-benchmark.md
