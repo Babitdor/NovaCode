@@ -86,6 +86,7 @@ async def test_search_uses_current_inventory_and_excludes_direct_control_tools(
             action="search",
             query="*",
         ),
+        {},
     )
     assert [hit["name"] for hit in result["tools"]] == ["echo"]
     assert indexed == ["echo"]
@@ -99,6 +100,7 @@ async def test_search_uses_current_inventory_and_excludes_direct_control_tools(
                 action="search",
                 query="*",
             ),
+            {},
         )
     )["tools"] == []
 

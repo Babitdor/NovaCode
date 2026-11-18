@@ -6,14 +6,16 @@ import tomllib
 from importlib.metadata import version
 from pathlib import Path
 
+import pytest
 from packaging.requirements import Requirement
 
 
-def test_quickjs_requirement_matches_the_tested_private_runtime() -> None:
+@pytest.mark.parametrize("package", ["langchain-quickjs", "quickjs-rs"])
+def test_quickjs_requirement_matches_the_tested_private_runtime(package: str) -> None:
     project = tomllib.loads((Path(__file__).parents[1] / "pyproject.toml").read_text("utf-8"))
     requirement = next(
         Requirement(value)
         for value in project["project"]["dependencies"]
-        if Requirement(value).name == "langchain-quickjs"
+        if Requirement(value).name == package
     )
-    assert str(requirement.specifier) == f"=={version('langchain-quickjs')}"
+    assert str(requirement.specifier) == f"=={version(package)}"

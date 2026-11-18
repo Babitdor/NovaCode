@@ -13,6 +13,7 @@ from dataclasses import replace
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, Literal
 from uuid import uuid4
+from weakref import WeakValueDictionary
 
 from langchain_core.messages import ToolMessage
 from langchain_core.tools import BaseTool, StructuredTool
@@ -41,6 +42,8 @@ if TYPE_CHECKING:
 
 MAX_ARGUMENT_CHARS = 100000
 MAX_OUTPUT_CHARS = 12000
+MAX_CHECKPOINTS = 8
+MAX_CHECKPOINT_BYTES = 4096
 logger = logging.getLogger(__name__)
 
 
@@ -60,6 +63,29 @@ def _failure_kind(exc: Exception) -> str:
     return "tool_error"
 
 
+def _recovery_hint(exc: Exception, outcomes: list[dict], *, omitted: bool) -> str:
+    """Tell the next attempt what it can safely resume."""
+    if not outcomes and "SyntaxError" in str(exc):
+        return (
+            "JavaScript syntax error with no host tool calls. For Markdown, use quoted "
+            "strings or join an array of lines with '\\n'. Escape template backticks once."
+        )
+    hints = []
+    if _failure_kind(exc) == "timeout" or any("timeout_seconds" in step for step in outcomes):
+        hints.append("Use a smaller snippet or run long local commands as background jobs.")
+    if any(step.get("task_id") for step in outcomes):
+        hints.append("Check recorded task IDs with wait_for_task or tools.call for get_task_logs.")
+    if any(step.get("dispatched") for step in outcomes) or omitted:
+        hints.append(
+            "Completed side effects remain in place. Resume unstarted work. "
+            "Skip completed steps and verify the state of any "
+            "interrupted operation before repeating it."
+        )
+    elif outcomes or not hints:
+        hints.append("No host tools started. Fix the reported error before retrying.")
+    return " ".join(hints)
+
+
 CODE_MODE_GUIDANCE = """
 ## Code Mode
 Use eval as your primary control surface for ordinary operations. Compose discovery,
@@ -76,6 +102,12 @@ elsewhere), or shell:'bash' for Bash syntax. Always include the shell selector i
 new calls. shell/bash names and execute calls without a selector are legacy paths.
 Explicit shell selection never retries a command in another dialect automatically.
 Tool calls return native data, often plain text; do not assume an execute result has .stdout.
+For local builds, test suites and other commands expected to take more than a few seconds,
+call execute with background:true and return its job receipt immediately. Use the reported
+task_id with the direct wait_for_task tool. Use tools.call('get_task_logs', {task_id})
+in a new snippet to read output. Verify the exit status before claiming success. If
+launch was interrupted and no ID was returned, use tools.call('list_background_tasks')
+before starting another copy. Other backends may run synchronously.
 Use task({description, subagentType, responseSchema?}) for configured subagents,
 including explicit @agent requests. Call task(...) inside eval, never tools.call('task', ...).
 Before choosing an unfamiliar agent, inspect await tools.describe('task') for valid names.
@@ -126,9 +158,18 @@ For Markdown edits, use quoted strings with newline escapes or arrays joined wit
 backticks inside JavaScript template literals must be escaped exactly once. Never replay a
 whole script after a runtime failure without checking which side effects already completed.
 Every response includes ordered outcomes for dispatched calls. Inspect their tool names,
-statuses and concise errors before retrying. Only dispatched calls have records; check
-outcomes_omitted before assuming all records are visible. Failed or cancelled operations
-may still have side effects. In model context, complete successful responses may use
+statuses and concise errors before retrying. Queued calls may have records with status
+not_started; sequential calls never reached have no record. Check outcomes_omitted.
+For independent checks, use Promise.allSettled and checkpoint each useful result as it
+finishes, for example promise.then(value => tools.checkpoint('short-name', value)).
+For sequential work, await the checkpoint before starting the next operation. Use unique
+names made of letters, digits, dots, underscores or hyphens. Keep selected JSON values
+small and free of secrets. A snippet can save up to eight checkpoints, 4 KiB combined.
+The result or error receipt includes these under checkpoints. Read that receipt in the
+next snippet's context and continue from the saved data. A checkpoint is an observation,
+so confirm current state when freshness matters.
+Continue with unstarted work and retry only known safe reads. Check actual state before
+repeating a dispatched write, command, or browser action. Successful responses may use
 `completed` instead: an ordered list of operation identities, all completed successfully.
 The full outcomes remain in the session audit trail. Arguments and tool outputs are
 not copied into these records; select the data you need in your JavaScript result.
@@ -209,6 +250,27 @@ DIRECT_ONLY_TOOLS = frozenset(
         "computer_action",
     }
 )
+
+
+class CheckpointInput(BaseModel):
+    """A small, explicitly selected observation for the current snippet receipt."""
+
+    model_config = ConfigDict(extra="forbid", strict=True, hide_input_in_errors=True)
+    namespace: Literal["checkpoint"]
+    name: str = Field(min_length=1, max_length=48, pattern=r"^[A-Za-z0-9_.-]+$")
+    value: Any
+
+    def save(self, checkpoints: dict[str, Any]) -> str:
+        """Record the value after validating the entire receipt budget."""
+        if self.name in checkpoints:
+            raise ValueError("Code Mode checkpoint names must be unique within a snippet.")
+        if len(checkpoints) >= MAX_CHECKPOINTS:
+            raise ValueError("Code Mode checkpoint count budget exceeded.")
+        candidate = {**checkpoints, self.name: self.value}
+        if len(json.dumps(candidate, allow_nan=False).encode("utf-8")) > MAX_CHECKPOINT_BYTES:
+            raise ValueError("Code Mode checkpoint size limit exceeded.")
+        checkpoints[self.name] = self.value
+        return self.name
 
 
 class NativeInput(BaseModel):
@@ -303,8 +365,7 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
         self._memory_limit = memory_limit
         self._offload_dir = offload_dir
         self._state_warnings: dict[str, str] = {}
-        self._execution_locks: dict[str, asyncio.Lock] = {}
-        self._registry_access = asyncio.Lock()
+        self._execution_locks: WeakValueDictionary[str, asyncio.Lock] = WeakValueDictionary()
 
         def unavailable(code: str) -> str:  # noqa: ARG001 -- public tool schema.
             return "MCPCode requires its owning agent middleware."
@@ -358,7 +419,7 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
         if not payload:
             return None
         thread = _resolve_thread_id(self._fallback_thread_id)
-        async with self._registry_access:
+        async with self._execution_locks.setdefault(thread, asyncio.Lock()):
             try:
                 repl = await open_repl(self._registry, thread)
                 await repl.arestore_snapshot(payload, inject_globals=True)
@@ -378,12 +439,10 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
 
     async def aafter_agent(self, state: Any, runtime: Any) -> dict[str, Any] | None:
         """Keep the installed snapshot lifecycle and surface snapshot loss."""
-        # Upstream's snapshot hook looks up the slot under the registry's threading lock.
-        async with self._registry_access:
+        thread = _resolve_thread_id(self._fallback_thread_id)
+        async with self._execution_locks.setdefault(thread, asyncio.Lock()):
             update = await super().aafter_agent(state, runtime)
-        self._execution_locks.pop(_resolve_thread_id(self._fallback_thread_id), None)
         if update is not None and update.get("_quickjs_snapshot_payload") is None:
-            thread = _resolve_thread_id(self._fallback_thread_id)
             self._state_warnings[thread] = (
                 "JavaScript state could not be saved; variables were cleared."
             )
@@ -469,8 +528,7 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
                 try:
                     return await self._execute(request, handler, params.code)
                 except asyncio.CancelledError:
-                    async with self._registry_access:
-                        await self._registry.aevict(thread)
+                    await self._registry.aevict(thread)
                     raise
 
         # Execute inside ToolNode, so tool callbacks and downstream wrappers see
@@ -490,6 +548,7 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
 
         calls = failures = 0
         outcomes: list[dict[str, Any]] = []
+        checkpoints: dict[str, Any] = {}
         semaphore = asyncio.Semaphore(self._concurrency)
         updates: dict[str, Any] = {}
 
@@ -515,11 +574,15 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
                     )
                 async with semaphore:
                     step["status"] = "running"
-                    if isinstance(payload, dict) and payload.get("namespace") == "task":
-                        value = await self._task(request, handler, payload, updates)
-                    elif isinstance(payload, dict) and payload.get("namespace") == "tools":
+                    namespace = payload.get("namespace") if isinstance(payload, dict) else None
+                    if namespace == "checkpoint":
+                        checkpoint = CheckpointInput.model_validate(payload)
+                        value = checkpoint.save(checkpoints)
+                    elif namespace == "task":
+                        value = await self._task(request, handler, payload, updates, step)
+                    elif namespace == "tools":
                         native = NativeInput.model_validate(payload)
-                        value = await self._native(request, handler, native)
+                        value = await self._native(request, handler, native, step)
                     else:
                         params = MCPInput.model_validate(payload, strict=True)
                         if get_policy().tool_default("MCPTool") == "deny":
@@ -529,7 +592,7 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
                         if params.action != "call":
                             value = self._catalog.invoke(params.model_dump())
                         else:
-                            value = await self._call(request, handler, params)
+                            value = await self._call(request, handler, params, step)
                     # The operation completed even if serialization subsequently fails.
                     step["status"] = "completed"
                     encoded = json.dumps(value, ensure_ascii=False, allow_nan=False)
@@ -555,8 +618,7 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
 
         try:
             thread = _resolve_thread_id(self._fallback_thread_id)
-            async with self._registry_access:
-                repl = await open_repl(self._registry, thread)
+            repl = await open_repl(self._registry, thread)
             result, error = await run_script(
                 code,
                 dispatch,
@@ -582,6 +644,8 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
                     "Do not replay completed calls. Failed/cancelled calls may have side effects."
                 ),
             }
+            if checkpoints:
+                body["checkpoints"] = checkpoints
             if truncated:
                 saved = await asyncio.to_thread(
                     save_tool_result,
@@ -608,22 +672,7 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
                 return Command(update={**updates, "messages": [message]})
             return message  # noqa: TRY300 -- same error boundary covers output serialization.
         except Exception as exc:
-            timeout_hint = (
-                "Execution timed out. Use a smaller batch or fewer parallel operations. "
-                "Inspect completed calls before retrying; "
-                "external side effects are not rolled back."
-            )
-            hint = (
-                "JavaScript syntax error with no host tool calls. For Markdown, prefer quoted "
-                "strings or an array of lines joined with '\\n'; escape template backticks "
-                "exactly once."
-                if calls == 0 and "SyntaxError" in str(exc)
-                else timeout_hint
-                if isinstance(exc, (TimeoutError, QuickJSTimeoutError))
-                or "timeout" in str(exc).lower()
-                else "Inspect completed calls before retrying; "
-                "external side effects are not rolled back."
-            )
+            hint = _recovery_hint(exc, outcomes, omitted=calls > len(outcomes))
             body = {
                 "error": f"{type(exc).__name__}: {exc}"[:4000],
                 "calls": calls,
@@ -632,6 +681,8 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
                 "outcomes_omitted": calls - len(outcomes),
                 "hint": hint,
             }
+            if checkpoints:
+                body["checkpoints"] = checkpoints
             warning = self._state_warnings.pop(_resolve_thread_id(self._fallback_thread_id), None)
             if warning is not None:
                 body["state_warning"] = warning
@@ -642,7 +693,7 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
             return Command(update={**updates, "messages": [message]}) if updates else message
 
     async def _native(
-        self, request: ToolCallRequest, handler: Callable, params: NativeInput
+        self, request: ToolCallRequest, handler: Callable, params: NativeInput, step: dict
     ) -> Any:
         available = _native_tools(request)
         from novacode_cli.shell.tool_surface import execution_tools
@@ -676,7 +727,7 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
                 "schema": convert_to_openai_tool(target)["function"],
                 "returns": native_returns(target),
             }
-        return await self._invoke(request, handler, target, params.arguments)
+        return await self._invoke(request, handler, target, params.arguments, step)
 
     async def _search(
         self, request: ToolCallRequest, available: dict, query: str, limit: int
@@ -748,7 +799,7 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
         }
 
     async def _task(
-        self, request: ToolCallRequest, handler: Callable, payload: dict, updates: dict
+        self, request: ToolCallRequest, handler: Callable, payload: dict, updates: dict, step: dict
     ) -> Any:
         """Delegate through the same guards, retaining only supported parent updates."""
         import time
@@ -798,6 +849,7 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
                         "description": params.description,
                         "subagent_type": params.subagent_type,
                     },
+                    step,
                     updates=updates,
                     call_id=task_id,
                 )
@@ -824,13 +876,15 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
             )
             raise
 
-    async def _call(self, request: ToolCallRequest, handler: Callable, params: MCPInput) -> Any:
+    async def _call(
+        self, request: ToolCallRequest, handler: Callable, params: MCPInput, step: dict
+    ) -> Any:
         if self._mcp is not None:
             await asyncio.shield(self._mcp.start_background_discovery())
         target = resolve_target(self._mcp, params)
         if target is None:
             raise ValueError("Unknown or disabled MCP tool; use mcp.list().")
-        return await self._invoke(request, handler, target, params.arguments, mcp=True)
+        return await self._invoke(request, handler, target, params.arguments, step, mcp=True)
 
     async def _invoke(  # noqa: PLR0912 -- validate and execute at the common trust boundary.
         self,
@@ -838,6 +892,7 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
         handler: Callable,
         target: BaseTool,
         arguments: dict,
+        step: dict,
         *,
         mcp: bool = False,
         updates: dict | None = None,
@@ -870,19 +925,13 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
             runtime=replace(request.runtime, tool_call_id=call_id),
         )
         with capture_file_read(enabled=target.name == "read_file" and not mcp) as capture:
-            async with asyncio.timeout(
-                None if updates is not None else self._call_timeout
-            ) as deadline:
-                try:
-                    result = await handler(nested)
-                except ValueError as exc:
-                    if updates is not None and "matching ToolMessage in Command.update" in str(exc):
-                        # ToolNode's diagnostic includes the child messages verbatim.
-                        raise TypeError("Subagent returned unsupported messages.") from None
-                    raise
-        # Some MCP adapters convert cancellation into a textual tool result.
-        if deadline.expired():
-            raise TimeoutError("MCP tool call timeout.")
+            result = await self._invoke_with_deadline(handler, nested, target.name, step, updates)
+        if (
+            not mcp
+            and isinstance(result, ToolMessage)
+            and isinstance(task_id := result.additional_kwargs.get("nova_shell_task_id"), str)
+        ):
+            step["task_id"] = task_id
         if isinstance(result, Command) and updates is not None:
             if result.goto or result.graph or not isinstance(result.update, dict):
                 raise TypeError("Subagent returned unsupported graph mutation.")
@@ -915,6 +964,47 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
         if capture is not None and (raw := capture.source_text(value)) is not None:
             value = raw
         return value
+
+    async def _invoke_with_deadline(
+        self,
+        handler: Callable,
+        nested: ToolCallRequest,
+        name: str,
+        step: dict,
+        updates: dict | None,
+    ) -> Any:
+        from novacode_cli.core.code_approvals import current_code_approvals
+
+        broker = current_code_approvals.get()
+        if broker is not None:
+            broker.ensure_active()
+        deadline = asyncio.timeout(None if updates is not None else self._call_timeout)
+        step["dispatched"] = True
+        step.setdefault("tool_name", name)
+        failure = None
+        result = None
+        try:
+            async with deadline:
+                result = await handler(nested)
+        except Exception as exc:
+            if not deadline.expired():
+                if (
+                    updates is not None
+                    and isinstance(exc, ValueError)
+                    and ("matching ToolMessage in Command.update" in str(exc))
+                ):
+                    # ToolNode's diagnostic includes the child messages verbatim.
+                    raise TypeError("Subagent returned unsupported messages.") from None
+                raise
+            failure = exc
+        if deadline.expired():
+            step["timeout_seconds"] = self._call_timeout
+            if failure is not None and not isinstance(failure, TimeoutError):
+                step["timeout_detail"] = f"{type(failure).__name__}: {failure}"[:300]
+            raise TimeoutError(
+                f"{name} exceeded its {self._call_timeout:g}s Code Mode tool timeout."
+            ) from failure
+        return result
 
     def _auto_approval_enabled(self) -> bool:
         from novacode_cli.config.plan_mode import active_plan_session

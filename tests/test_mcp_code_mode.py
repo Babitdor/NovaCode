@@ -395,6 +395,34 @@ async def test_nested_timeout_cancels_pending_tool(tmp_path):
     assert outcome["tool_name"] == "read"
     assert outcome["status"] == "failed"
     assert outcome["error"]["kind"] == "timeout"
+    assert outcome["dispatched"]
+    assert outcome["timeout_seconds"] == 0.05
+    assert "0.05s Code Mode tool timeout" in outcome["error"]["message"]
+
+
+async def test_tool_deadline_remains_primary_when_transport_cleanup_fails(tmp_path):
+    @tool("db_read")
+    async def read(value: int) -> int:
+        """Raise a transport error while handling cancellation."""
+        try:
+            await asyncio.sleep(20)
+        except asyncio.CancelledError as exc:
+            raise ValueError("transport closed during cleanup") from exc
+        return value
+
+    messages = await execute(
+        graph(
+            inventory(tmp_path, read),
+            'return await mcp.call("db","read",{value:1});',
+            call_timeout=0.1,
+        )
+    )
+    body = json.loads(messages[0].content)
+    step = body["outcomes"][0]
+    assert messages[0].status == "error"
+    assert step["error"]["kind"] == "timeout"
+    assert step["timeout_seconds"] == 0.1
+    assert step["timeout_detail"] == "ValueError: transport closed during cleanup"
 
 
 async def test_outer_cancellation_stops_pending_calls_and_worker(tmp_path):

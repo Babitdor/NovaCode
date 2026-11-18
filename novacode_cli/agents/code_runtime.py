@@ -7,22 +7,24 @@ import asyncio
 import contextvars
 import json
 import logging
-from contextlib import contextmanager
+from contextlib import asynccontextmanager, contextmanager
 from typing import TYPE_CHECKING, Any
 
 from langchain_core.tools import StructuredTool
 from langchain_quickjs._repl import _Registry
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Iterator
+    from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
+
+    from langchain_quickjs._repl import _Slot
+    from quickjs_rs.handle import Handle
 
 logger = logging.getLogger(__name__)
 
 HOST_CANCEL_GRACE = 0.5
+REPL_START_TIMEOUT = 30
 
 BOOTSTRAP = """
-// The library reuses its bridge when the registered tool names haven't changed.
-globalThis.__nova_mcp = tools.novaDispatch ?? globalThis.__nova_mcp;
 globalThis.tools = Object.freeze({
   search: (options = {}) => __nova_mcp({raw:JSON.stringify({
     limit:5, ...options, namespace:'tools', action:'search'
@@ -35,6 +37,9 @@ globalThis.tools = Object.freeze({
   })}).then(JSON.parse),
   call: (tool_name, args = {}) => __nova_mcp({raw:JSON.stringify({
     namespace:'tools', action:'call', tool_name, arguments:args
+  })}).then(JSON.parse),
+  checkpoint: (name, value) => __nova_mcp({raw:JSON.stringify({
+    namespace:'checkpoint', name, value
   })}).then(JSON.parse)
 });
 globalThis.mcp = Object.freeze({
@@ -87,21 +92,96 @@ execution_deadline: contextvars.ContextVar[ExecutionDeadline | None] = contextva
 )
 
 
-async def open_repl(registry: _Registry, thread: str) -> Any:
-    """Let the worker initialize without blocking asyncio or outliving cancellation."""
-    startup = asyncio.create_task(asyncio.to_thread(registry.get, thread))
+def _close_unused_slot(registry: _Registry, slot: _Slot) -> None:
     try:
-        return await asyncio.shield(startup)
+        registry._close_slot(slot)
+    except Exception:  # noqa: BLE001 - Cleanup runs outside the turn.
+        logger.warning("QuickJS discarded-slot cleanup failed", exc_info=True)
+
+
+async def open_repl(registry: _Registry, thread: str) -> Any:
+    """Publish a fresh worker only after its cancellable startup succeeds."""
+    existing = registry.get_if_exists(thread)
+    if existing is not None:
+        return existing
+    loop = asyncio.get_running_loop()
+    # The upstream builder only constructs a slot. Inserting it separately keeps
+    # the registry lock free and prevents a cancelled startup publishing late.
+    startup = loop.run_in_executor(None, registry._build_slot_locked, thread)
+
+    def discard(finished: asyncio.Future[_Slot]) -> None:
+        if not finished.cancelled() and finished.exception() is None:
+            loop.run_in_executor(None, _close_unused_slot, registry, finished.result())
+
+    timeout = asyncio.timeout(REPL_START_TIMEOUT)
+    try:
+        async with timeout:
+            slot = await asyncio.shield(startup)
     except asyncio.CancelledError:
-        # A cancelled await cannot stop a thread already creating the slot.
-        while not startup.done():
-            try:
-                await asyncio.wait((startup,))
-            except asyncio.CancelledError:
-                continue
-        if not startup.cancelled():
-            startup.exception()
+        startup.add_done_callback(discard)
         raise
+    except TimeoutError as exc:
+        if not timeout.expired():
+            raise
+        startup.add_done_callback(discard)
+        message = f"QuickJS startup exceeded its {REPL_START_TIMEOUT:g}s timeout."
+        raise TimeoutError(message) from exc
+    with registry._lock:
+        current = registry._slots.setdefault(thread, slot)
+    if current is not slot:
+        loop.run_in_executor(None, _close_unused_slot, registry, slot)
+    return current.repl
+
+
+async def _eval_snippet(
+    repl: Any, source: str, runtime: Any, outer_loop: asyncio.AbstractEventLoop
+) -> Any:
+    """Cancel orphaned calls on settlement before QuickJS joins its TaskGroup."""
+    ctx = repl._require_ctx()
+    drive = ctx._run_inside_task_group
+
+    def cancel_orphans() -> None:
+        if not ctx._pending_tasks:
+            return
+        # Drain cancellation reactions on the owning worker. A settled snippet
+        # must never dispatch another tool through a later snippet's bridge.
+        ctx._engine_ctx.set_async_host_dispatcher(lambda *_: -1)
+        try:
+            ctx._reject_pending_with_cancellation()
+            for task in ctx._pending_tasks.values():
+                task.cancel()
+            ctx._pending_tasks.clear()
+            ctx._engine_ctx.run_pending_jobs()
+        finally:
+            ctx._engine_ctx.set_async_host_dispatcher(ctx._dispatch_async_host_call)
+
+    async def drive_until_settled(get_handle: Callable[[], Handle], deadline: float) -> Handle:
+        def tracked_handle() -> Handle:
+            handle = get_handle()
+            if not handle.is_promise():
+                cancel_orphans()
+                return handle
+            dispose = handle.dispose
+
+            def settle() -> None:
+                del handle.__dict__["dispose"]
+                fulfilled = ctx._engine_ctx.promise_state(handle._require_live()) == 1
+                dispose()
+                if fulfilled:
+                    cancel_orphans()
+
+            handle.__dict__["dispose"] = settle
+            return handle
+
+        return await drive(tracked_handle, deadline)
+
+    # The pinned engine disposes the top-level promise as soon as it settles,
+    # before joining pending host calls. Keep the hook local to this eval.
+    ctx._run_inside_task_group = drive_until_settled
+    try:
+        return await repl._aeval_async(source, outer_runtime=runtime, outer_loop=outer_loop)
+    finally:
+        del ctx._run_inside_task_group
 
 
 async def _cancel_host_calls(pending: set[asyncio.Task[str]]) -> None:
@@ -117,6 +197,23 @@ async def _cancel_host_calls(pending: set[asyncio.Task[str]]) -> None:
             "Code Mode ended while %d nested tool call(s) were still cleaning up",
             len(lingering),
         )
+
+
+@asynccontextmanager
+async def _script_deadline(seconds: float) -> AsyncIterator[None]:
+    timeout = asyncio.timeout(seconds)
+    try:
+        async with timeout:
+            token = execution_deadline.set(ExecutionDeadline(timeout))
+            try:
+                yield
+            finally:
+                execution_deadline.reset(token)
+    except TimeoutError as exc:
+        if not timeout.expired():
+            raise
+        message = f"Script exceeded its {seconds:g}s Code Mode wall timeout."
+        raise TimeoutError(message) from exc
 
 
 async def run_script(
@@ -165,32 +262,31 @@ async def run_script(
     try:
         if registry is not None:
             repl = await open_repl(registry, "call")
-        async with asyncio.timeout(wall_timeout) as timeout:
-            token = execution_deadline.set(ExecutionDeadline(timeout))
+        async with _script_deadline(wall_timeout):
             parent = contextvars.copy_context()
-            try:
-                await asyncio.to_thread(repl.install_tools, [proxy])
-                setup = await repl.eval_async(BOOTSTRAP)
-                if setup.error_type:
-                    return None, setup.error_message
-                source = (
-                    code
-                    if expression
-                    else ("JSON.stringify(await (async () => {\n" + code + "\n})())")
-                )
-                outcome = await repl.eval_async(
-                    source, outer_runtime=runtime, outer_loop=asyncio.get_running_loop()
-                )
-                if outcome.error_type:
-                    return None, f"{outcome.error_type}: {outcome.error_message}"
-                result = outcome.result
-                if not expression:
-                    result = None if result == "undefined" else json.loads(result)
-                if outcome.stdout:
-                    result = {"value": result, "stdout": outcome.stdout[:12000]}
-                return result, None
-            finally:
-                execution_deadline.reset(token)
+            await asyncio.to_thread(repl.install_tools, [proxy])
+            symbol = json.dumps(repl._bridge_symbols["novaDispatch"])
+            setup = await repl.eval_async(
+                f"globalThis.__nova_mcp = globalThis[{symbol}];{BOOTSTRAP}"
+            )
+            if setup.error_type:
+                return None, setup.error_message
+            source = (
+                code if expression else ("JSON.stringify(await (async () => {\n" + code + "\n})())")
+            )
+            outcome = await repl._worker.run_async(
+                _eval_snippet(repl, source, runtime, asyncio.get_running_loop())
+            )
+            if outcome.error_type:
+                if outcome.error_type == "Timeout":
+                    return None, f"QuickJS exceeded its {cpu_timeout:g}s interpreter timeout."
+                return None, f"{outcome.error_type}: {outcome.error_message}"
+            result = outcome.result
+            if not expression:
+                result = None if result == "undefined" else json.loads(result)
+            if outcome.stdout:
+                result = {"value": result, "stdout": outcome.stdout[:12000]}
+            return result, None
     finally:
         active = False
         try:

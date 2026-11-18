@@ -63,13 +63,13 @@ async def invoke(graph, thread="chat"):
 async def test_variables_survive_snippets_turns_and_compatibility_but_not_other_chats(monkeypatch):
     mode = CodeModeMiddleware()
     loop_thread = threading.get_ident()
-    original_get = mode._registry.get
+    original_build = mode._registry._build_slot_locked
 
-    def get(thread):
+    def build(thread):
         assert threading.get_ident() != loop_thread
-        return original_get(thread)
+        return original_build(thread)
 
-    monkeypatch.setattr(mode._registry, "get", get)
+    monkeypatch.setattr(mode._registry, "_build_slot_locked", build)
     graph = scripted(
         [
             ("eval", "let kept = 41; kept"),
@@ -86,31 +86,141 @@ async def test_variables_survive_snippets_turns_and_compatibility_but_not_other_
     assert json.loads((await invoke(graph, "new-chat")).content)["result"] == "undefined"
 
 
-async def test_cancel_during_cold_start_keeps_the_loop_responsive_and_evicts_the_slot(monkeypatch):
+async def test_cancelled_cold_start_never_publishes_its_slot(monkeypatch):
     mode = CodeModeMiddleware()
-    entered, release = threading.Event(), threading.Event()
-    original_get = mode._registry.get
+    entered, release, discarded = threading.Event(), threading.Event(), threading.Event()
+    original_build = mode._registry._build_slot_locked
+    original_close = mode._registry._close_slot
 
-    def get(thread):
-        entered.set()
-        assert release.wait(5)
-        return original_get(thread)
+    def build(thread):
+        if thread == "slow":
+            entered.set()
+            assert release.wait(15)
+        return original_build(thread)
 
-    monkeypatch.setattr(mode._registry, "get", get)
+    def close(slot):
+        original_close(slot)
+        discarded.set()
+
+    monkeypatch.setattr(mode._registry, "_build_slot_locked", build)
+    monkeypatch.setattr(mode._registry, "_close_slot", close)
     graph = scripted([("eval", "1 + 1")], middleware=[mode])
-    turn = asyncio.create_task(
-        graph.ainvoke({"messages": [HumanMessage(content="Run the snippet")]})
-    )
+    turn = asyncio.create_task(invoke(graph, "slow"))
     try:
         assert await asyncio.to_thread(entered.wait, 4)
         turn.cancel()
-        await asyncio.sleep(0)
-        assert not turn.done()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(turn, 2)
+        fresh = scripted([("eval", "6 * 7")], middleware=[mode])
+        result = await asyncio.wait_for(invoke(fresh, "fresh"), 8)
+        assert json.loads(result.content)["result"] == "42"
+        assert not discarded.is_set()
     finally:
         release.set()
-    with pytest.raises(asyncio.CancelledError):
-        await asyncio.wait_for(turn, 5)
-    assert mode._registry.get_if_exists(mode._fallback_thread_id) is None
+        await asyncio.gather(turn, return_exceptions=True)
+    assert await asyncio.to_thread(discarded.wait, 6)
+    assert mode._registry.get_if_exists("slow") is None
+
+
+async def test_settled_race_cancels_loser_and_returns_winner():
+    started, stopped = asyncio.Event(), asyncio.Event()
+    late_calls = []
+
+    @tool
+    async def slow_read() -> str:
+        """Wait for cancellation."""
+        started.set()
+        try:
+            await asyncio.sleep(10)
+            return "slow"
+        finally:
+            stopped.set()
+
+    @tool
+    async def fast_read() -> str:
+        """Return after the other read starts."""
+        await started.wait()
+        return "fast"
+
+    @tool
+    def late_read() -> str:
+        """Track calls made by the loser's cleanup."""
+        late_calls.append(True)
+        return "late"
+
+    get_policy().tool_tiers.update(dict.fromkeys(("slow_read", "fast_read", "late_read"), "allow"))
+    graph = scripted(
+        [
+            (
+                "eval",
+                "await Promise.race(["
+                "tools.call('slow_read').catch(() => tools.call('late_read').catch(() => null)), "
+                "tools.call('fast_read')]);",
+            )
+        ],
+        tools=[slow_read, fast_read, late_read],
+        middleware=[CodeModeMiddleware(wall_timeout=3, call_timeout=20)],
+    )
+    response = await invoke(graph)
+    result = json.loads(response.content)
+    assert response.status == "success", result
+    assert result["result"] == "fast"
+    assert [item["status"] for item in result["outcomes"]] == ["cancelled", "completed"]
+    assert stopped.is_set()
+    assert not late_calls
+
+
+async def test_bootstrap_recovers_reassigned_tools_in_same_turn():
+    messages = [
+        AIMessage(
+            content="",
+            tool_calls=[{"id": f"step-{i}", "name": "eval", "args": {"code": code}}],
+        )
+        for i, code in enumerate(("var kept = 41; tools = null; __nova_mcp = null;", "kept + 1"))
+    ]
+    graph = create_agent(
+        ScriptedModel(messages=iter([*messages, AIMessage(content="done")])),
+        middleware=[CodeModeMiddleware()],
+    )
+    result = await invoke(graph)
+    assert result.status == "success", result.content
+    assert json.loads(result.content)["result"] == "42"
+
+
+async def test_thread_change_during_approval_evaluation_prevents_dispatch(monkeypatch):
+    from novacode_cli.ui import hitl_approval
+
+    thread = "original"
+    calls = []
+
+    @tool
+    def fixture_action(value: int) -> int:
+        """Record a fixture value."""
+        calls.append(value)
+        return value
+
+    def evaluate(*args, **kwargs):
+        nonlocal thread
+        thread = "replacement"
+        return [{"type": "approve"}]
+
+    monkeypatch.setattr(hitl_approval, "evaluate_tool_actions", evaluate)
+    broker = CodeApprovals(lambda: thread == "original")
+    token = current_code_approvals.set(broker)
+    try:
+        graph = scripted(
+            [("eval", "await tools.call('fixture_action', {value:3});")],
+            tools=[fixture_action],
+            middleware=[CodeModeMiddleware()],
+        )
+        result = await invoke(graph)
+        assert thread == "replacement"
+        assert not calls
+        assert not broker.active
+        assert result.status == "error"
+    finally:
+        broker.close()
+        current_code_approvals.reset(token)
 
 
 async def test_host_bridge_survives_multiple_snippets_in_one_turn():
@@ -485,7 +595,8 @@ async def test_runtime_syntax_error_does_not_claim_an_earlier_write_was_skipped(
     )
     body = json.loads((await invoke(graph)).content)
     assert body["calls"] == 1
-    assert "not rolled back" in body["hint"]
+    assert "Completed side effects remain in place" in body["hint"]
+    assert body["outcomes"][0]["dispatched"]
     assert "no host tool calls" not in body["hint"]
     assert writes == ["/guide.md"]
 

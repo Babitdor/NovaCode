@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "novacode-cli"
-version = "1.2.41"
+version = "1.2.42"
 description = "Agentic Coding Tool that runs in your terminal"
 authors = [{ name = "Babitdor", email = "babitdorbryan14@gmail.com" }]
 readme = {file = "README.md", content-type = "text/markdown"}
@@ -90,6 +90,7 @@ dependencies = [
     "python-telegram-bot>=21.0.0",
     # Code Mode uses private REPL/snapshot APIs; upgrade only with compatibility proof.
     "langchain-quickjs==0.3.2",
+    "quickjs-rs==0.2.4",
     # Persistent Python kernel snapshots (pickle superset: lambdas, classes).
     "dill>=0.3.8",
     # TypeSafe classifier for /router. Pre-1.0 (0.0.1a3): only the stable

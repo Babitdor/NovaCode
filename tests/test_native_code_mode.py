@@ -86,6 +86,7 @@ async def test_caught_nested_failure_keeps_structured_outcomes():
     assert body["failed_calls"] == 1
     assert body["outcomes"][0]["status"] == "failed"
     assert body["outcomes"][0]["tool_name"] == "does_not_exist"
+    assert not body["outcomes"][0].get("dispatched")
 
 
 async def test_wall_timeout_distinguishes_running_and_queued_calls():
@@ -101,6 +102,7 @@ async def test_wall_timeout_distinguishes_running_and_queued_calls():
     get_policy().tool_tiers["slow"] = "allow"
     messages = await execute(
         native_graph(
+            "await tools.checkpoint('setup', {ready:true}); "
             "return await Promise.all([1,2].map(value => tools.call('slow', {value})));",
             [slow],
             concurrency=1,
@@ -110,7 +112,32 @@ async def test_wall_timeout_distinguishes_running_and_queued_calls():
     )
     body = json.loads(messages[0].content)
     assert started == [1]
-    assert [step["status"] for step in body["outcomes"]] == ["cancelled", "not_started"]
+    assert "1s Code Mode wall timeout" in body["error"]
+    assert [step["status"] for step in body["outcomes"]] == [
+        "completed",
+        "cancelled",
+        "not_started",
+    ]
+    assert body["outcomes"][1]["dispatched"]
+    assert not body["outcomes"][2].get("dispatched")
+    assert body["checkpoints"] == {"setup": {"ready": True}}
+    assert "Skip completed steps" in body["hint"]
+
+
+async def test_checkpoint_limits_preserve_successful_independent_results():
+    messages = await execute(
+        native_graph(
+            "await tools.checkpoint('first', {value:1}); "
+            "const outcomes = await Promise.allSettled(["
+            "tools.checkpoint('second', [2, null]), "
+            "tools.checkpoint('first', 7), "
+            "tools.checkpoint('large', 'x'.repeat(4096))]); "
+            "return outcomes.map(item => item.status);"
+        )
+    )
+    body = data(messages)
+    assert body["result"] == ["fulfilled", "rejected", "rejected"]
+    assert body["checkpoints"] == {"first": {"value": 1}, "second": [2, None]}
 
 
 def native_graph(

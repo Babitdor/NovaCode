@@ -1660,6 +1660,7 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
             bad = job.exit_code not in (0, None)
             return ToolMessage(
                 content=f"[{job.task_id}] `{command}` exited during startup (exit {job.exit_code}):\n{tail}",
+                additional_kwargs={"nova_shell_task_id": job.task_id},
                 tool_call_id=tool_call_id,
                 name=self._tool_name,
                 status="error" if bad else "success",
@@ -1674,6 +1675,7 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
                 f"get_task_logs('{job.task_id}') / get_task_status('{job.task_id}'), "
                 f"or stop it with terminate_task('{job.task_id}')."
             ),
+            additional_kwargs={"nova_shell_task_id": job.task_id},
             tool_call_id=tool_call_id,
             name=self._tool_name,
             status="success",

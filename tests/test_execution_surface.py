@@ -34,7 +34,7 @@ def execution(tmp_path):
     return fs, shell
 
 
-async def run(execution, name, arguments, code=False):
+async def run(execution, name, arguments, code=False, *, tools=()):
     fs, shell = execution
     calls = [{"id": "execution", "name": name, "args": arguments}]
     graph = create_agent(
@@ -46,6 +46,7 @@ async def run(execution, name, arguments, code=False):
                 ]
             )
         ),
+        tools=list(tools),
         middleware=[*([CodeModeMiddleware()] if code else []), fs, shell, HardDenyMiddleware()],
     )
     result = await graph.ainvoke({"messages": [HumanMessage("Run the isolated command")]})
@@ -273,6 +274,44 @@ async def test_background_and_interactive_flags_reach_the_existing_engine(execut
     )
     assert result.status == "success"
     assert calls == [("execute", True, True)]
+
+
+async def test_code_mode_recovers_original_background_job_after_later_failure(
+    execution, monkeypatch
+):
+    from novacode_cli.shell import jobs
+    from novacode_cli.tools.waiter_tools import wait_for_task
+
+    registry = jobs.JobRegistry()
+    monkeypatch.setattr(jobs, "get_registry", lambda: registry)
+    result = await run(
+        execution,
+        "MCPCode",
+        {
+            "code": (
+                "const launch = await tools.call('execute', "
+                "{command:'echo background-ok', shell:'native', background:true}); "
+                "const job = launch.match(/task_[0-9]+/)[0]; "
+                "await tools.checkpoint('build', {task_id:job}); "
+                "throw new Error('later step failed');"
+            )
+        },
+        code=True,
+    )
+    assert result.status == "error"
+    body = json.loads(result.content)
+    assert "later step failed" in body["error"]
+    (job,) = registry.list_jobs()
+    assert body["outcomes"][0]["task_id"] == job.task_id
+    assert body["outcomes"][0]["status"] == "completed"
+    assert "get_task_logs" in body["hint"]
+    assert job.exit_code == 0
+    saved = body["checkpoints"]["build"]["task_id"]
+    assert saved == job.task_id
+    resumed = await run(execution, "wait_for_task", {"task_id": saved}, tools=(wait_for_task,))
+    assert "exit 0" in resumed.content
+    assert "background-ok" in resumed.content
+    assert registry.list_jobs() == [job]
 
 
 @pytest.mark.parametrize("selector", [None, "native", "bash"])

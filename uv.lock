@@ -3974,7 +3974,7 @@ wheels = [
 
 [[package]]
 name = "novacode-cli"
-version = "1.2.41"
+version = "1.2.42"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
@@ -4021,6 +4021,7 @@ dependencies = [
     { name = "python-telegram-bot" },
     { name = "pywinpty", marker = "sys_platform == 'win32'" },
     { name = "pyyaml" },
+    { name = "quickjs-rs" },
     { name = "referencing" },
     { name = "regex" },
     { name = "requests" },
@@ -4152,6 +4153,7 @@ requires-dist = [
     { name = "python-telegram-bot", specifier = ">=21.0.0" },
     { name = "pywinpty", marker = "sys_platform == 'win32'", specifier = ">=2.0.15,<3" },
     { name = "pyyaml", specifier = ">=6.0" },
+    { name = "quickjs-rs", specifier = "==0.2.4" },
     { name = "referencing", specifier = ">=0.28.4" },
     { name = "regex", specifier = ">=2024.11.6" },
     { name = "requests" },
