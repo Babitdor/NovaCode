@@ -10507,15 +10507,19 @@ class NovaApp(App):
         tracker = self.token_tracker
         if tracker is None or not getattr(tracker, "model_name", None):
             return
+        revision = tracker.context_revision
+        thread_id = self.session_state.thread_id
         try:
             from novacode_cli.context import ContextManager
             from novacode_cli.context.history import effective_messages
 
             ag, _ = self._active_agent()
-            config = {"configurable": {"thread_id": self.session_state.thread_id}}
+            config = {"configurable": {"thread_id": thread_id}}
             state = await self._read_state(ag, config)
             values = (state.values if state else None) or {}
-            tracker.context_snapshot = values.get("_context_snapshot")
+            snapshot = values.get("_context_snapshot")
+            if not isinstance(snapshot, dict):
+                snapshot = None
             self._refresh_router_model_from_state(values)
             msgs = effective_messages(values) if state else []
             # Count what is sent: the same snip and collapse the model sees.
@@ -10537,11 +10541,13 @@ class NovaApp(App):
             baseline = getattr(tracker, "baseline_context", 0)
             breakdown.system_prompt_tokens += baseline
             breakdown.total_tokens += baseline
-            snapshot = getattr(tracker, "context_snapshot", None)
             if snapshot and isinstance(snapshot.get("estimated_input_tokens"), int):
                 # The request's measured system prompt (with the MCP section)
                 # and tool schemas; only the conversation is scaled.
                 breakdown = breakdown.anchored_to(snapshot)
+                estimate = snapshot["estimated_input_tokens"]
+                if estimate > 0 and breakdown.total_tokens != estimate:
+                    breakdown = breakdown.scaled_to(estimate)
             from dataclasses import replace as _replace
 
             from novacode_cli.context.snapshot import (
@@ -10570,6 +10576,13 @@ class NovaApp(App):
                         system_prompt_tokens=breakdown.system_prompt_tokens + last - system,
                         total_tokens=breakdown.total_tokens + last - system,
                     )
+            if (
+                self.token_tracker is not tracker
+                or self.session_state.thread_id != thread_id
+                or tracker.context_revision != revision
+            ):
+                return
+            tracker.apply_context_snapshot(snapshot)
             tracker.model_name = model
             tracker.context_window_size = breakdown.context_window_size
             tracker.set_breakdown(breakdown)
@@ -19253,14 +19266,14 @@ class NovaApp(App):
                         # the input they are a share of has to be as well: with
                         # only the last call's input the hit rate passed 100%.
                         session_input_tokens=e.session_input_tokens,
+                        update_context=not e.context_reported,
                     )
                 except Exception:  # noqa: BLE001
                     pass
                 self._refresh_usage_metrics()
         elif isinstance(e, ev.ContextUsage):
             if self.token_tracker is not None and e.input_tokens > 0:
-                self.token_tracker.current_context = e.input_tokens
-                self.token_tracker.has_api_data = True
+                self.token_tracker.record_context_usage(e.input_tokens)
                 self._refresh_usage_metrics()
         elif isinstance(e, ev.InterruptRequest):
             if getattr(self, "_accumulated_reply", None):

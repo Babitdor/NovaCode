@@ -152,6 +152,7 @@ def test_usage_sums_calls_but_context_uses_latest_call():
     updates = [e for e in events if isinstance(e, ev.UsageUpdate)]
     assert len(updates) == 1
     assert updates[0].input_tokens == 500
+    assert updates[0].context_reported
     assert updates[0].output_tokens == 40
     assert updates[0].cache_read_tokens == 100
     assert updates[0].session_tokens == 2570

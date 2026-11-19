@@ -514,6 +514,8 @@ class TokenTracker:
 
         # Whether we've received at least one real API response
         self.has_api_data = False
+        self.context_snapshot: dict[str, object] | None = None
+        self.context_revision = 0
 
         # Model information for context window calculation
         self.model_name: str | None = None
@@ -538,6 +540,8 @@ class TokenTracker:
         if self.model_name != model_name:
             self._last_breakdown = None
             self.has_api_data = False
+            self.context_snapshot = None
+            self.context_revision += 1
         self.model_name = model_name
         self.context_window_size = ContextManager(model_name).window_size()
 
@@ -549,6 +553,7 @@ class TokenTracker:
         """
         self.baseline_context = tokens
         self.current_context = tokens
+        self.context_revision += 1
 
     def reset(self, *, reset_session: bool = False) -> None:
         """Reset to baseline (for /clear and /compact commands).
@@ -563,6 +568,8 @@ class TokenTracker:
         self.last_cache_read = 0
         self.last_cache_creation = 0
         self.has_api_data = False
+        self.context_snapshot = None
+        self.context_revision += 1
         self.user_message_count = 0
         self.assistant_message_count = 0
         self.tool_call_count = 0
@@ -582,6 +589,7 @@ class TokenTracker:
         cache_creation_tokens: int = 0,
         session_tokens: int | None = None,
         session_input_tokens: int | None = None,
+        update_context: bool = True,
     ) -> None:
         """Add tokens from an API response.
 
@@ -593,12 +601,13 @@ class TokenTracker:
             cache_creation_tokens: Tokens written to the prompt cache (Anthropic only).
             session_tokens: Total input plus output across this turn's model calls;
                 defaults to the supplied input plus output for older callers.
+            update_context: Whether this event also supplies the latest request size.
         """
-        self.current_context = input_tokens
+        if update_context:
+            self.record_context_usage(input_tokens)
         self.last_output = output_tokens
         self.last_cache_read = cache_read_tokens
         self.last_cache_creation = cache_creation_tokens
-        self.has_api_data = True
         self.session_input_tokens += (
             input_tokens if session_input_tokens is None else session_input_tokens
         )
@@ -609,6 +618,29 @@ class TokenTracker:
         self.session_total_tokens += (
             input_tokens + output_tokens if session_tokens is None else session_tokens
         )
+
+    def record_context_usage(self, input_tokens: int) -> None:
+        """Keep the provider count for the latest live model request."""
+        if input_tokens > 0:
+            self.current_context = input_tokens
+            self.has_api_data = True
+            self.context_revision += 1
+
+    def apply_context_snapshot(self, snapshot: dict[str, object] | None) -> None:
+        """Reconcile a newly read request with the shared display count."""
+        if snapshot == self.context_snapshot:
+            return
+        self.context_snapshot = snapshot
+        self.context_revision += 1
+        if snapshot is None:
+            return
+        exact = snapshot.get("provider_input_tokens")
+        estimate = snapshot.get("estimated_input_tokens")
+        if type(exact) is int and exact > 0:
+            self.record_context_usage(exact)
+        elif type(estimate) is int and estimate > 0:
+            self.current_context = estimate
+            self.has_api_data = False
 
     @property
     def cache_hit_percentage(self) -> int | None:

@@ -492,7 +492,7 @@ async def _iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
     _streamed_pending = False  # whether TextDelta(s) were emitted for the buffer
 
     captured = ev.UsageUpdate()
-    context_shown = 0  # last request size sent to the UI as ContextUsage
+    context_shown = None  # last call and count sent to the UI as ContextUsage
     usage_calls: dict[object, tuple[int, int, int, int]] = {}
     compacted = False
     compaction_finished = False
@@ -1172,9 +1172,10 @@ async def _iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
                                 captured.session_input_tokens = sum(
                                     i for i, _, _, _ in usage_calls.values()
                                 )
-                                if captured.input_tokens != context_shown:
-                                    context_shown = captured.input_tokens
-                                    yield ev.ContextUsage(context_shown)
+                                context = (call_id, captured.input_tokens)
+                                if captured.input_tokens > 0 and context != context_shown:
+                                    context_shown = context
+                                    yield ev.ContextUsage(captured.input_tokens)
 
                     _is_completed_msg = type(message).__name__ == "AIMessage"
                     reasoning_key = (str(_namespace), getattr(message, "id", None))
@@ -1661,6 +1662,7 @@ async def _iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
             current_handoff.reset(handoff_token)
 
     if captured.input_tokens or captured.output_tokens:
+        captured.context_reported = context_shown is not None
         yield captured
     if compacted:
         yield ev.CompactionNotice(preserve_api_context=usage_after_compaction)

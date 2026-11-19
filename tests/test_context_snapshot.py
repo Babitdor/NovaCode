@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
+from novacode_cli import ui_events as ev
 from novacode_cli.tui.app import NovaApp
 from novacode_cli.ui.execution import _bound_tools
 from novacode_cli.ui.ui_elements import TokenTracker
@@ -85,6 +86,63 @@ async def test_compaction_snapshot_counts_only_summary_and_retained_tail():
     assert breakdown.assistant_message_tokens > 0
     assert breakdown.tool_result_tokens > 0
     assert breakdown.total_tokens == breakdown.baseline_tokens + breakdown.conversation_tokens
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider_count", "live_count", "expected", "exact"),
+    [
+        (8000, None, 8000, True),
+        (None, None, 7400, False),
+        (8000, 9300, 9300, True),
+        (None, 2000, 2000, True),
+    ],
+)
+async def test_context_refresh_uses_latest_request(provider_count, live_count, expected, exact):
+    tracker = TokenTracker()
+    tracker.model_name = "gpt-4o"
+    tracker.add(2000, 40)
+    paints = []
+    snapshot = {
+        "generation": "next",
+        "estimated_input_tokens": 7400,
+        "estimated_system_tokens": 0,
+        "provider_input_tokens": provider_count,
+    }
+
+    async def read_state(_agent, _config):
+        if live_count is not None:
+            await NovaApp._render(app, ev.ContextUsage(live_count))
+        return SimpleNamespace(values={
+            "_context_snapshot": snapshot,
+            "messages": [HumanMessage("inspect the workspace")],
+        })
+
+    app = SimpleNamespace(
+        token_tracker=tracker,
+        session_state=SimpleNamespace(thread_id="code-mode-thread"),
+        _active_agent=lambda: (None, None),
+        _read_state=read_state,
+        _refresh_router_model_from_state=lambda _: None,
+        _context_strategies=NovaApp._context_strategies,
+        _routed_model_name=None,
+        model_name="gpt-4o",
+        _maybe_warn_ollama_offload=AsyncMock(),
+        _refresh_usage_metrics=lambda: paints.append(tracker.get_breakdown().total_tokens),
+    )
+    await NovaApp._update_context_breakdown(app)
+
+    assert tracker.current_context == expected
+    assert tracker.get_breakdown().total_tokens == expected
+    assert tracker.has_api_data is exact
+    assert tracker.session_total_tokens == 2040
+    assert paints[-1] == expected
+
+    await NovaApp._render(app, ev.UsageUpdate(
+        input_tokens=2000, output_tokens=40, context_reported=True,
+    ))
+    assert tracker.get_breakdown().total_tokens == expected
+    assert tracker.session_total_tokens == 4080
 
 
 def test_tool_schemas_are_available_from_a_real_compiled_agent():

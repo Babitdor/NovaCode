@@ -206,6 +206,7 @@ class UsageUpdate:
     cache_creation_tokens: int = 0
     session_tokens: int | None = None
     session_input_tokens: int | None = None
+    context_reported: bool = False
 
 
 @dataclass
