@@ -19,13 +19,13 @@ def saved_tool_card(message: HarnessMessage) -> CodeModePanel:
     name = message.tool_name or "tool"
     args = message.metadata.get("arguments")
     if isinstance(args, dict):
-        card = CodeModePanel.for_call(name, args)
+        card = CodeModePanel.for_call(name, args, live=False)
     else:
         display = message.metadata.get("display")
         if not isinstance(display, str) and name not in CODE_MODE_TOOLS:
             display = name
         source = message.metadata.get("source", "(arguments unavailable)")
-        card = CodeModePanel.from_source(name, source, display)
+        card = CodeModePanel.from_source(name, source, display, live=False)
     card.restore_result(
         message.content, is_error=bool(message.metadata.get("is_error")),
         preview=message.metadata.get("preview"),
@@ -34,7 +34,7 @@ def saved_tool_card(message: HarnessMessage) -> CodeModePanel:
         card.heading.update(Text.assemble(("Interrupted ", "bold"), card.display_str or name))
     if isinstance(card.output, DiffPreview) and (diff := message.metadata.get("diff")):
         card.output.restore(diff)
-    if "collapsed" in message.metadata:
+    if "collapsed" in message.metadata and not isinstance(card.output, OutputLog):
         card.collapsed = message.metadata["collapsed"]
     return card
 

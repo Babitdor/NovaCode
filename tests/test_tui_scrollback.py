@@ -195,3 +195,41 @@ async def test_pruned_edit_keeps_its_diff_preview():
         assert preview._classic.spans == classic.spans
         assert preview._rows == live.output._rows
         assert preview._path == "test.py"
+
+
+async def test_restored_shell_cards_are_compact_and_expand_to_the_output_size():
+    class ShellTranscriptApp(TranscriptApp):
+        CSS = NovaApp.CSS
+
+    app = ShellTranscriptApp()
+    async with app.run_test(size=(110, 40)) as pilot:
+        tr = app.query_one(TranscriptScroll)
+        short = "first line\nsecond line"
+        long = "\n".join(f"output line {i}" for i in range(80))
+        records = [
+            HarnessMessage(
+                "tool", output, tool_name="shell",
+                metadata={"arguments": {"command": command}, "collapsed": False},
+            )
+            for command, output in (("short", short), ("long", long))
+        ]
+        tr.set_older_history(lambda: records)
+        await pilot.pause()
+        tr.action_page_up()
+        await _settle(tr._scrollback, pilot)
+
+        first, second = tr.query(CodeModePanel)
+        assert first.collapsed and second.collapsed
+        assert not first.output.is_mounted and not second.output.is_mounted
+        assert second.region.y - first.region.bottom <= 1
+
+        first.collapsed = False
+        await pilot.pause()
+        assert first.output.region.height == len(short.splitlines())
+        assert "\n".join(line.text for line in first.output.lines) == short
+        assert second.region.y - first.region.bottom <= 1
+
+        second.collapsed = False
+        await pilot.pause()
+        assert second.output.region.height <= 16
+        assert second.output.max_scroll_y > 0

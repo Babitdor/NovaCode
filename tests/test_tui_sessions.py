@@ -319,6 +319,9 @@ async def test_child_jump_button_and_per_tab_scroll_intent(height):
         assert app.query_one("#jump-latest-row").has_class("active")
         button = app.query_one("#jump-latest", Button)
         assert "lines below" in button.label.plain
+        assert button.content_region.width >= len(button.label.plain)
+        row = button.parent.region
+        assert abs((2 * button.region.x + button.region.width) - (2 * row.x + row.width)) <= 1
         position = child.scroll.scroll_y
         await app._switch_to(app._root_pane)
         await pilot.pause()

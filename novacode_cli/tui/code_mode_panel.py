@@ -191,7 +191,9 @@ class CodeModePanel(Collapsible):
         )
 
     @classmethod
-    def for_call(cls, name: str, args: dict, display: str | None = None) -> CodeModePanel:
+    def for_call(
+        cls, name: str, args: dict, display: str | None = None, *, live: bool = True
+    ) -> CodeModePanel:
         """Build the same tool row for live events and saved calls."""
         if name in CODE_MODE_TOOLS:
             code = args.get("code", "")
@@ -204,10 +206,14 @@ class CodeModePanel(Collapsible):
             except (AttributeError, TypeError, ValueError):
                 # Invalid arguments are still useful in the recorded call.
                 display = name
-        return cls.from_source(name, json.dumps(args, indent=2, ensure_ascii=False), display)
+        return cls.from_source(
+            name, json.dumps(args, indent=2, ensure_ascii=False), display, live=live
+        )
 
     @classmethod
-    def from_source(cls, name: str, source: str, display: str | None) -> CodeModePanel:
+    def from_source(
+        cls, name: str, source: str, display: str | None, *, live: bool = True
+    ) -> CodeModePanel:
         """Build a tool row from its already formatted arguments or script."""
         from novacode_cli.tui.diff_preview import DiffPreview
         from novacode_cli.tui.widgets import OutputLog
@@ -221,7 +227,7 @@ class CodeModePanel(Collapsible):
             body = DiffPreview(classes="toolbody")
         panel = cls(
             source, tool_name=name, display_str=display, output_widget=body,
-            streaming=isinstance(body, OutputLog),
+            streaming=live and isinstance(body, OutputLog),
         )
         panel.add_class("tool")
         return panel
@@ -259,15 +265,15 @@ class CodeModePanel(Collapsible):
         if self.output.parent is contents:
             await contents.mount(drawer, before=self.output)
         else:
+            from novacode_cli.tui.widgets import OutputLog
+
+            if isinstance(self.output, OutputLog) and not self.has_class("tool-active"):
+                self.output.write(Text(self._output_text))
             await contents.mount(drawer, self.output)
 
     def restore_result(self, output: str, *, is_error: bool, preview: str | None = None) -> None:
         """Paint a completed record without registering it as a live tool."""
-        from novacode_cli.tui.widgets import OutputLog
-
         self.finish(output, is_error=is_error, preview=preview or _line(output, 110))
-        if isinstance(self.output, OutputLog):
-            self.output.write(Text(self._output_text))
 
     def finish(self, output: str, *, is_error: bool, preview: str) -> None:
         """Update this run alone and surface failures without opening raw output."""

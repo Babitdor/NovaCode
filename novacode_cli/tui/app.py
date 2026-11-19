@@ -1553,6 +1553,10 @@ class NovaApp(App):
         padding: 0 1;
         scrollbar-gutter: stable;
     }
+    CodeModePanel .terminal-log {
+        height: auto; min-height: 0; border: none;
+        background: transparent; padding: 0; scrollbar-gutter: auto;
+    }
     #tool-group-log, #subagent-log {
         display: none;
     }
@@ -1858,26 +1862,14 @@ class NovaApp(App):
         color: $accent;
     }
     #tasks-bar.active { display: block; }
-    /* "Jump to latest" — shown only while the transcript is scrolled away from
-       the bottom, so a long scrollback never traps the user. Sits at the
-       top-right of the footer, directly above the status/skills bar.
-       The row is transparent and right-aligns its child; the child shrinks to
-       its text (width: auto), so ONLY the words are a click target — the empty
-       space to their left is not part of the button. */
+    /* The centered button is visible only while reading earlier messages. */
     #jump-latest-row {
         display: none;
         height: 1;
-        align: right middle;
+        align: center middle;
         background: transparent;
     }
     #jump-latest-row.active { display: block; }
-    /* Shrink to the text: the box is only as wide as the label, so the row is
-       not a full-width bar. */
-    #jump-latest-box {
-        width: auto;
-        height: 1;
-        background: transparent;
-    }
     #jump-latest {
         width: auto;
         height: 1;
@@ -2581,15 +2573,7 @@ class NovaApp(App):
             # only appeared after a resize forced a reflow.
             with VerticalScroll(id="todo-scroll"):
                 yield Static("", id="todo-dock")
-            # "Jump to latest" sits at the top-right of the footer, directly above
-            # the status/skills bar. The outer row is a transparent, right-aligning
-            # strip; the inner Horizontal shrinks to the text (width: auto) and the
-            # Static inside it is the only click target — the empty space to the
-            # left of the words is not part of the button.
-            with (
-                Horizontal(id="jump-latest-row"),
-                Horizontal(id="jump-latest-box"),
-            ):
+            with Horizontal(id="jump-latest-row"):
                 yield Button(
                     "↓ Jump to latest",
                     id="jump-latest",
@@ -2891,7 +2875,6 @@ class NovaApp(App):
             ("#prompt-hint-bar", Static),
             ("#status-counts", Static),
             ("#jump-latest-row", Horizontal),
-            ("#jump-latest-box", Horizontal),
             ("#jump-latest", Button),
             ("#info-workspace", Static),
             ("#info-branch", Static),
@@ -4905,7 +4888,10 @@ class NovaApp(App):
                 button = self._w("#jump-latest", Button)
                 if label != self._jump_latest_label or button.label.plain != label:
                     self._jump_latest_label = label
+                    width_changed = len(label) != len(button.label.plain)
                     button.label = Text(label, style="bold")
+                    if width_changed:
+                        button.refresh(layout=True)
             row.set_class(not self._follow_tail, "active")
         except NoMatches:
             pass
