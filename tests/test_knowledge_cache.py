@@ -358,6 +358,7 @@ async def test_local_embedding_loader_never_falls_back_to_repo_id(monkeypatch: p
     download.assert_called_once_with(retrieval.MODEL_NAME, local_files_only=True)
 
 
+@pytest.mark.timeout(45)
 @pytest.mark.parametrize("restricted", [False, True])
 def test_core_tool_stays_out_of_delegated_rosters(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, restricted: bool
@@ -371,10 +372,14 @@ def test_core_tool_stays_out_of_delegated_rosters(
     from novacode_cli.agents.tool_search import CORE_TOOLS
     from novacode_cli.mcp.config import MCPConfig
 
+    def plain_tool() -> str:
+        """Exercise a callable registered without a LangChain wrapper."""
+        return "available"
+
     roster_tools = []
 
     def roster(**kwargs: object) -> list:
-        roster_tools.extend(tool.name for tool in kwargs["tools"])
+        roster_tools.extend(core_agent._tool_name(tool) for tool in kwargs["tools"])
         return []
 
     monkeypatch.setattr(MCPConfig, "load", lambda _self: {})
@@ -384,6 +389,7 @@ def test_core_tool_stays_out_of_delegated_rosters(
     )
     monkeypatch.setattr(core_agent, "_build_middleware_stack", lambda **_kw: [])
     monkeypatch.setattr(core_agent, "_build_subagent_roster", roster)
+    monkeypatch.setattr("novacode_cli.context.ContextManager.window_size", lambda _self: 32768)
     monkeypatch.setattr("novacode_cli.plugins.loader.discover_enabled_plugins", list)
     monkeypatch.setattr("novacode_cli.agents.invocation.definition_signature", lambda: "test")
     build = Mock(wraps=core_agent.create_deep_agent)
@@ -391,14 +397,15 @@ def test_core_tool_stays_out_of_delegated_rosters(
     core_agent.create_agent_with_config(
         FakeListChatModel(responses=["unused"]),
         "knowledge-test",
-        [],
+        [plain_tool],
         system_prompt="Offline",
         workspace_root=str(tmp_path),
         extra_middleware=[AgentMiddleware()] if restricted else None,
     )
-    tools = {tool.name for tool in build.call_args.kwargs["tools"]}
+    tools = [core_agent._tool_name(tool) for tool in build.call_args.kwargs["tools"]]
+    assert "plain_tool" in tools
     assert ("knowledge_lookup" in tools) is not restricted
-    assert ("image_gen" in tools) is not restricted
+    assert tools.count("image_gen") == int(not restricted)
     assert {"knowledge_lookup", "image_gen"}.isdisjoint(roster_tools)
     assert "knowledge_lookup" in CORE_TOOLS
 

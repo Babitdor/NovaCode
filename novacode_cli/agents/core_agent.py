@@ -2526,7 +2526,7 @@ This file stores your preferences and context that persist across sessions.
         from novacode_cli.tools.image_gen import build_image_gen_tool
         from novacode_cli.tools.knowledge_tools import build_knowledge_tool
 
-        if not any(tool.name == "image_gen" for tool in tools):
+        if not any(_tool_name(tool) == "image_gen" for tool in tools):
             tools.append(build_image_gen_tool(lambda: worktree_middleware.session.root))
         tools = [*tools, build_knowledge_tool(
             lambda: worktree_middleware.session.root, assistant_id, composite_backend, model
