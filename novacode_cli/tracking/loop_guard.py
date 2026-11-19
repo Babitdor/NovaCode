@@ -37,7 +37,7 @@ from typing import TYPE_CHECKING
 
 from langchain.agents.middleware.types import AgentMiddleware, hook_config
 from langchain.tools.tool_node import ToolCallRequest
-from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.types import Command
 
 from novacode_cli.core.tool_results import append_display_note
@@ -48,6 +48,7 @@ if TYPE_CHECKING:
 
 #: Temperature used for a model call made while the model is repeating itself.
 _UNSTICK_TEMPERATURE = 0.7
+_TODO_LOOP_BLOCKED = "nova_todo_loop_blocked"
 
 #: How alike two calls' arguments must be to count as one call restated, when
 #: both returned the same result. A long identical result is strong evidence on
@@ -243,6 +244,26 @@ class LoopGuardMiddleware(AgentMiddleware):
         """(async) End the turn if the last tool step hit the hard stop."""
         return self.before_model(state, runtime)
 
+    @staticmethod
+    def _todo_loop_active(messages) -> bool:  # noqa: ANN001
+        """Keep todo writes paused across model calls until work or a new turn."""
+        from novacode_cli.context.strategies import is_user_turn
+
+        for message in reversed(messages):
+            if isinstance(message, HumanMessage) and is_user_turn(message):
+                break
+            if not isinstance(message, ToolMessage):
+                continue
+            if message.additional_kwargs.get(_TODO_LOOP_BLOCKED):
+                return True
+            if (
+                message.status != "error"
+                and message.name
+                and message.name not in {"write_todos", "think", "think_tool"}
+            ):
+                break
+        return False
+
     def _unstick(self, request):  # noqa: ANN001, ANN202
         """Let a model that is repeating itself sample its way out.
 
@@ -252,6 +273,13 @@ class LoopGuardMiddleware(AgentMiddleware):
         Only applied to a model configured with a low temperature, which shows
         it accepts the setting at all.
         """
+        if self._todo_loop_active(request.messages):
+            request = request.override(
+                tools=[
+                    tool for tool in request.tools
+                    if (tool.get("name") if isinstance(tool, dict) else tool.name) != "write_todos"
+                ],
+            )
         stuck = self._block_streak or self._repeats >= 2  # noqa: PLR2004
         base = getattr(request.model, "temperature", None)
         if not stuck or base is None or base >= _UNSTICK_TEMPERATURE:
@@ -260,11 +288,11 @@ class LoopGuardMiddleware(AgentMiddleware):
         return request.override(model_settings=settings)
 
     def wrap_model_call(self, request, handler):  # noqa: ANN001, ANN201
-        """Raise the temperature for this call if the model is repeating itself."""
+        """Change the model request to help it escape a tool loop."""
         return handler(self._unstick(request))
 
     async def awrap_model_call(self, request, handler):  # noqa: ANN001, ANN201
-        """(async) Raise the temperature if the model is repeating itself."""
+        """Apply the same loop recovery to asynchronous calls."""
         return await handler(self._unstick(request))
 
     def _near_loop(self, sig: str) -> str | None:
@@ -363,8 +391,8 @@ class LoopGuardMiddleware(AgentMiddleware):
         if name == "write_todos":
             guidance = (
                 "The plan has made no status progress. Rewording tasks is not progress. "
-                "Do the current task or report the blocker; update todos only after "
-                "meaningful work or a status change."
+                "Use a work tool to do the current task, or report the blocker. "
+                "The todo tool is paused until a work tool succeeds or the user starts a new turn."
             )
         return ToolMessage(
             content=(
@@ -375,6 +403,8 @@ class LoopGuardMiddleware(AgentMiddleware):
             ),
             tool_call_id=tool_call.get("id", ""),
             status="error",
+            name=tool_call.get("name"),
+            additional_kwargs={_TODO_LOOP_BLOCKED: True} if name == "write_todos" else {},
         )
 
     def _terminate(self, request: ToolCallRequest, count: int) -> ToolMessage:

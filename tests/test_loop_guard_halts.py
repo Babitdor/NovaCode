@@ -10,13 +10,13 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
 from langchain.agents import create_agent
+from langchain.tools.tool_node import ToolCallRequest
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, ToolMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.tools import tool
-
-from langchain.tools.tool_node import ToolCallRequest
 
 from novacode_cli.tracking.loop_guard import LoopGuardMiddleware
 
@@ -67,6 +67,63 @@ def test_a_stuck_model_is_stopped_not_left_to_hit_the_recursion_limit() -> None:
     results = [m.content for m in out["messages"] if isinstance(m, ToolMessage)]
     assert "[note:" not in results[0] and "2 in a row" in results[1]
     assert model.temperatures[:2] == [None, None] and set(model.temperatures[2:]) == {0.7}
+
+
+class StuckTodoModel(StuckModel):
+    """Keep rewriting the plan until the request offers only work tools."""
+
+    offered_tools: list[set[str]] = []
+
+    def bind_tools(self, tools: Any, **kwargs: Any) -> StuckTodoModel:  # noqa: ARG002
+        self.offered_tools.append({tool.name for tool in tools})
+        return self
+
+    def _generate(self, messages: Any, stop: Any = None, run_manager: Any = None, **kwargs: Any) -> ChatResult:  # noqa: ARG002
+        self.calls += 1
+        worked = any(isinstance(m, ToolMessage) and m.name == "eval" for m in messages)
+        completed = (
+            worked and isinstance(messages[-1], ToolMessage) and messages[-1].name == "write_todos"
+        )
+        if completed:
+            message = AIMessage("Checker written.")
+        else:
+            if "write_todos" in self.offered_tools[-1]:
+                name = "write_todos"
+                args = {"todos": [
+                    {"content": "Write the checker", "status": "completed" if worked else "pending"}
+                ]}
+            else:
+                name, args = "eval", {}
+            message = AIMessage(
+                content="", tool_calls=[{"name": name, "args": args, "id": f"c{self.calls}"}]
+            )
+        return ChatResult(generations=[ChatGeneration(message=message)])
+
+
+@pytest.mark.asyncio
+async def test_todo_loop_hides_the_tool_until_code_mode_work_succeeds() -> None:
+    from novacode_cli.agents.todos import NovaTodoListMiddleware
+
+    @tool("eval")
+    def run_code() -> str:
+        """Write the checker module."""
+        return "Created checker module."
+
+    model = StuckTodoModel()
+    agent = create_agent(
+        model, tools=[run_code], middleware=[NovaTodoListMiddleware(), LoopGuardMiddleware()]
+    )
+    out = await agent.ainvoke(
+        {"messages": [("user", "Write the structural checker")]}, {"recursion_limit": 50}
+    )
+
+    results = [m for m in out["messages"] if isinstance(m, ToolMessage)]
+    assert [m.name for m in results] == ["write_todos"] * 4 + ["eval", "write_todos"]
+    assert sum(m.status == "error" for m in results) == 1
+    assert model.offered_tools[4] == {"eval"}
+    assert "write_todos" in model.offered_tools[5]
+    assert out["todos"] == [{"content": "Write the checker", "status": "completed"}]
+    assert out["messages"][-1].content == "Checker written."
 
 
 def _request(command: str) -> ToolCallRequest:
