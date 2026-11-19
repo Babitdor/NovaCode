@@ -96,10 +96,28 @@ def test_only_unanswered_calls_get_a_synthetic_result():
         AIMessage(content="", tool_calls=[_call("done"), _call("pending")]),
         ToolMessage(content="real result", tool_call_id="done"),
     ]
-    # Not the cancel-mid-tool shape (last message is a tool result), so the
-    # helper writes only the notice and leaves repair to the middleware.
     out = _cancel(history)
-    assert sum(1 for m in out if getattr(m, "tool_call_id", None) == "done") == 1
+    assert _strict(out) == []
+    assert [m.tool_call_id for m in out if isinstance(m, ToolMessage)] == ["done", "pending"]
+
+
+@pytest.mark.parametrize("saved", [False, True])
+def test_code_mode_receipt_is_attached_to_the_original_parallel_call(saved):
+    pending = _call("pending", "eval")
+    receipt = ToolMessage("Interrupted receipt", name="eval", tool_call_id="pending")
+    history = [HumanMessage("go")]
+    if saved:
+        history.extend(
+            [
+                AIMessage(content="", tool_calls=[_call("done"), pending]),
+                ToolMessage("real result", tool_call_id="done"),
+            ]
+        )
+    agent = _FakeAgent(history)
+    asyncio.run(_record_cancellation(agent, {}, {"pending": (pending, receipt)}))
+    assert _strict(agent.messages) == []
+    assert sum(isinstance(m, AIMessage) for m in agent.messages) == 1
+    assert agent.messages[-2] is receipt
 
 
 def test_a_cancel_with_no_tool_in_flight_just_writes_the_notice():

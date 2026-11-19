@@ -180,10 +180,9 @@ async def _record_cancellation(
     4 of the 5 were followed by exactly this notice. So each unanswered call
     now gets an honest "cancelled" result first, then the notice.
 
-    Only the final message is patched: that is precisely the cancel-mid-tool
-    shape, and appending directly after it keeps each result adjacent to its
-    call. A dangling call anywhere else is left to RepairToolCallsEachStep,
-    which rewrites in place rather than appending.
+    Complete the final tool-call group, including groups that already contain
+    some parallel results. Older dangling calls belong to RepairToolCallsEachStep.
+    Exit-only checkpoints may require recreating the interrupted Code Mode call.
     """
     from langchain_core.messages import AIMessage
 
@@ -198,7 +197,9 @@ async def _record_cancellation(
     answered = {
         getattr(m, "tool_call_id", None) for m in history if getattr(m, "type", "") == "tool"
     }
-    last = history[-1] if history else None
+    last = next(
+        (message for message in reversed(history) if not isinstance(message, ToolMessage)), None
+    )
     if isinstance(last, AIMessage) and last.tool_calls:
         results = []
         for call in last.tool_calls:
