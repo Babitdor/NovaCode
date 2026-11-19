@@ -153,6 +153,10 @@ jobs:
           uv run --no-sync pytest -q --tb=short
           tests/test_image_gen.py
           tests/test_knowledge_cache.py::test_core_tool_stays_out_of_delegated_rosters
+      - name: Verify conversation scrollback
+        run: >-
+          uv run --no-sync pytest -q --tb=short
+          tests/test_tui_scrollback.py tests/test_tab_resume.py
       - name: Verify approvals and background MCP startup
         run: >-
           uv run --no-sync pytest -q --tb=short --junitxml=test-results/approval-startup.xml

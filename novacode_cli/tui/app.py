@@ -4330,15 +4330,14 @@ class NovaApp(App):
         saved = None
         history = None
         if resume_id:
-            from novacode_cli.session.adapters.harness_native import NativeAdapter
             from novacode_cli.sessions.resume import resolve_saved_tab
 
             saved = await asyncio.to_thread(resolve_saved_tab, self.session_manager, resume_id)
             if Path(saved.project_root).resolve() != info.path.resolve():
                 raise ValueError("Saved project changed while resuming; retry /tabs resume.")
-            history = await asyncio.to_thread(
-                NativeAdapter(self.session_manager).load, saved.session_id
-            )
+            history = await asyncio.to_thread(self.session_manager.load_session, saved.session_id)
+            if history is None:
+                raise ValueError("Nova session was not found.")
 
         # Mount the pane immediately: agent build takes seconds and the UI must
         # never block on it.
@@ -4382,9 +4381,29 @@ class NovaApp(App):
         self._bind_notification_source(pane)
         self._panes.append(pane)
         if history is not None:
-            from novacode_cli.tui.session_transcript import SessionTranscript
+            from novacode_cli.session.adapters.harness_native import normalize_messages
+            from novacode_cli.tui.scrollback import PAGE_ROWS, saved_rows
+            from novacode_cli.tui.session_transcript import history_card
 
-            await scroll.mount(SessionTranscript(history, latest=True, heading="Resumed history"))
+            messages = history.messages
+            rows = await asyncio.to_thread(normalize_messages, messages)
+            older, recent = rows[:-PAGE_ROWS], rows[-PAGE_ROWS:]
+            manager = self.session_manager
+            session_id, thread_id = history.meta.session_id, history.meta.thread_id
+            historical = bool(older or any(m.additional_kwargs.get("history_files") for m in messages))
+            if not historical:
+                historical = await asyncio.to_thread(
+                    (manager.sessions_dir / session_id / "history.jsonl").is_file
+                )
+            if historical:
+                scroll.set_older_history(
+                    lambda: [
+                        *saved_rows(manager, session_id, messages, messages, thread_id=thread_id),
+                        *older,
+                    ]
+                )
+            if recent:
+                await scroll.mount(*(history_card(message) for message in recent))
         self._refresh_tabs()
         self._pending_task_for = getattr(self, "_pending_task_for", {})
         if task:
@@ -4784,7 +4803,9 @@ class NovaApp(App):
             tr = self._transcript()
         except NoMatches:
             return
-        children = list(tr.children)
+        from novacode_cli.tui.scrollback import Scrollback
+
+        children = [child for child in tr.children if not isinstance(child, Scrollback)]
         # A widget-count cap alone permits hundreds of large output/markdown
         # bodies. Bound display history by content size as well; agent context
         # and persisted session history are independent of these widgets.
@@ -4840,6 +4861,11 @@ class NovaApp(App):
         # transcript reached 800+ widgets against a 400 cap, and Textual could
         # not drain its pending messages. remove_children() does the whole batch
         # in one operation (measured: an 800-line burst 7.4 s -> 2.9 s).
+        if isinstance(tr, TranscriptScroll):
+            try:
+                tr.archive_removed(to_remove)
+            except OSError:
+                logger.warning("Could not archive transcript scrollback", exc_info=True)
         try:
             tr.remove_children(to_remove)
         except Exception:  # noqa: BLE001 — pruning must never break rendering
@@ -6198,9 +6224,24 @@ class NovaApp(App):
             default=-1,
         )
         summary = restored[last] if last >= 0 else None
-        # Everything after it the chat can hold, newest first: it keeps ~200
-        # items, and older ones would be mounted just to be pruned.
-        msgs = replay_window(restored[last + 1 :], _MAX_TRANSCRIPT_WIDGETS - 10)
+        # The initial view is small. Earlier turns and compaction originals
+        # are read separately when this pane asks for older scrollback.
+        msgs = replay_window(restored[last + 1 :], 40)
+        prefix = restored[: len(restored) - len(msgs)]
+        manager = self.session_manager
+        transcript = self._transcript()
+        thread_id = getattr(self.session_state, "thread_id", None)
+        historical = bool(prefix)
+        if not historical and sessions_dir and session_id:
+            historical = await asyncio.to_thread(
+                (Path(sessions_dir) / str(session_id) / "history.jsonl").is_file
+            )
+        if historical and isinstance(transcript, TranscriptScroll) and transcript.is_mounted:
+            from novacode_cli.tui.scrollback import saved_rows
+
+            transcript.set_older_history(
+                lambda: saved_rows(manager, session_id, prefix, msgs, thread_id=thread_id)
+            )
 
         if sessions_dir and session_id:
             journal = await asyncio.to_thread(
@@ -14413,7 +14454,10 @@ class NovaApp(App):
                 pass
 
         # Replace the transcript with the resumed session's recent history.
-        await self._transcript().remove_children()
+        transcript = self._transcript()
+        if isinstance(transcript, TranscriptScroll):
+            transcript.reset_scrollback()
+        await transcript.remove_children()
         self._restored_messages = list(session_data.messages or recent_messages or [])
         self._replay_history()
         if compact:
@@ -15114,7 +15158,10 @@ class NovaApp(App):
                 self.session_state.reset_conversation()
                 if session_id is not None:
                     self.session_state.session_id = session_id
-                await self._transcript().remove_children()
+                transcript = self._transcript()
+                if isinstance(transcript, TranscriptScroll):
+                    transcript.reset_scrollback()
+                await transcript.remove_children()
                 self._show_home_banner()
                 self._log(Text("● Plan approved — starting fresh execution…", style="cyan"))
                 _tid = getattr(self.session_state, "thread_id", "?")
@@ -16122,7 +16169,10 @@ class NovaApp(App):
             except Exception:  # noqa: BLE001
                 pass
 
-        await self._transcript().remove_children()
+        transcript = self._transcript()
+        if isinstance(transcript, TranscriptScroll):
+            transcript.reset_scrollback()
+        await transcript.remove_children()
 
         # Re-baseline context/token accounting for the fresh chat.
         if self.token_tracker is not None:
@@ -17868,7 +17918,10 @@ class NovaApp(App):
         """Redraw the transcript for ``kept`` and put ``prompt_text`` in the composer."""
         self._reset_streaming()
         self._seen.clear()
-        await self._transcript().remove_children()
+        transcript = self._transcript()
+        if isinstance(transcript, TranscriptScroll):
+            transcript.reset_scrollback()
+        await transcript.remove_children()
         self._restored_messages = kept
         self._replay_history()  # a @work method: starts the replay worker
         composer = self.query_one("#prompt", PromptInput)

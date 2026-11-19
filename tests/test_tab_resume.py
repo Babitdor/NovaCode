@@ -98,21 +98,21 @@ def prepare_app(monkeypatch, manager, *, approved=True):
 async def test_resume_opens_saved_project_history_without_replacing_root(
     monkeypatch, saved_session, compact,
 ):
-    from novacode_cli.tui.session_transcript import SessionTranscript
+    from novacode_cli.tui.widgets import ChatMessage
 
     manager, project = saved_session
     app, supervisor = prepare_app(monkeypatch, manager)
     root_agent, root_state = app.agent, app.session_state
     async with app.run_test() as pilot:
         await app._resume_tab("saved-123", compact_on_resume=compact)
+        await pilot.pause()
         pane = app._active_pane
         assert pane.kind == "child" and pane.worktree == project.resolve()
         assert pane.sid != "saved-12345678"
         assert app.session_state.session_id == "saved-12345678"
         assert app.session_state.auto_approve is False
         assert app.model_name == "saved-model" and app.assistant_id == "saved-agent"
-        history = pane.scroll.query_one(SessionTranscript)
-        assert [message.content for message in history.session.messages] == [
+        assert [message.raw_text for message in pane.scroll.query(ChatMessage)] == [
             "Question",
             "## Answer",
         ]
@@ -139,6 +139,46 @@ async def test_resume_opens_saved_project_history_without_replacing_root(
         await app._run_tabs_command("/tabs resume saved-12345678")
         assert app._active_pane is pane
         assert supervisor.spawn.await_count == 1
+
+
+@pytest.mark.timeout(45)
+async def test_resumed_tab_pages_back_past_compaction(monkeypatch, saved_session, tmp_path):
+    from novacode_cli.context.archives import RecoveryStore
+    from novacode_cli.tui.widgets import ChatMessage
+
+    manager, project = saved_session
+    store = RecoveryStore(tmp_path / "recovery")
+    monkeypatch.setattr("novacode_cli.context.archives.default_recovery_store", lambda: store)
+    older = HumanMessage("Before compaction", id="older")
+    recent = AIMessage("Recent reply", id="recent")
+    archive = store.archive("old-thread", [older, recent])
+    marker = HumanMessage(
+        "Compacted",
+        additional_kwargs={"lc_source": "summarization", "history_files": [str(archive)]},
+    )
+    manager.save_session(
+        "saved-12345678",
+        "old-thread",
+        [marker, recent],
+        "saved-agent",
+        project_root=project,
+    )
+
+    app, _ = prepare_app(monkeypatch, manager)
+    async with app.run_test() as pilot:
+        await app._resume_tab("saved-123")
+        await pilot.pause()
+        scroll = app._active_pane.scroll
+        assert "Before compaction" not in [card.raw_text for card in scroll.query(ChatMessage)]
+        scroll.scroll_home(animate=False, immediate=True)
+        await pilot.pause()
+        scroll.action_page_up()
+        await scroll._scrollback.workers.wait_for_complete()
+        await pilot.pause(0.05)
+        cards = [card.raw_text for card in scroll.query(ChatMessage)]
+        assert cards.count("Before compaction") == 1
+        assert cards.count("Recent reply") == 1
+        assert app._root_pane.scroll._scrollback is None
 
 
 @pytest.mark.parametrize("choice", [None, 0])

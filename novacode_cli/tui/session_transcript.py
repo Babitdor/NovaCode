@@ -6,8 +6,38 @@ from rich.text import Text
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Collapsible, Static
 
-from novacode_cli.session.adapters import ImportedSession
+from novacode_cli.session.adapters import HarnessMessage, ImportedSession
 from novacode_cli.tui.widgets import ChatMessage, OutputLog
+
+_TEXT_LIMIT = 16000
+
+
+def history_card(message: HarnessMessage, provider: str = "nova") -> ChatMessage | Collapsible:
+    """Create a read-only historical message or tool card."""
+    content = message.content[:_TEXT_LIMIT]
+    if len(message.content) > _TEXT_LIMIT:
+        content += "\n\n[Display excerpt; complete text is retained in the source session.]"
+    if message.tool_name or message.role == "tool":
+        kind = "Call" if message.metadata.get("kind") == "tool_call" else "Result"
+        status = " · error" if message.metadata.get("is_error") else ""
+        log = OutputLog(wrap=True, markup=False, max_lines=17000, max_chars=20000)
+        log.write(Text(content))
+        return Collapsible(
+            log,
+            title=escape(f"{kind} · {message.tool_name or 'tool'}{status} · historical"),
+            collapsed=True,
+        )
+    else:
+        label = (
+            "User"
+            if message.role == "user"
+            else (provider.title() if message.role == "assistant" else "System")
+        )
+        label = str(message.metadata.get("label") or label)
+        header = label + (f" · {message.timestamp}" if message.timestamp else "")
+        card = ChatMessage(Text(header), "user" if message.role == "user" else "nova")
+        card.update_body(Markdown(content))
+        return card
 
 
 class SessionTranscript(Vertical):
@@ -59,37 +89,7 @@ class SessionTranscript(Vertical):
         await body.remove_children()
         start = self.page * self.PAGE_SIZE
         messages = self.session.messages[start : start + self.PAGE_SIZE]
-        widgets = []
-        for message in messages:
-            content = message.content[: self.TEXT_LIMIT]
-            if len(message.content) > self.TEXT_LIMIT:
-                content += "\n\n[Display excerpt; complete text is retained in the source session.]"
-            if message.tool_name or message.role == "tool":
-                kind = "Call" if message.metadata.get("kind") == "tool_call" else "Result"
-                status = " · error" if message.metadata.get("is_error") else ""
-                log = OutputLog(wrap=True, markup=False, max_lines=17000, max_chars=20000)
-                log.write(Text(content))
-                widgets.append(
-                    Collapsible(
-                        log,
-                        title=escape(
-                            f"{kind} · {message.tool_name or 'tool'}{status} · historical"
-                        ),
-                        collapsed=True,
-                    )
-                )
-            else:
-                label = (
-                    "User"
-                    if message.role == "user"
-                    else (
-                        self.session.provider.title() if message.role == "assistant" else "System"
-                    )
-                )
-                header = label + (f" · {message.timestamp}" if message.timestamp else "")
-                card = ChatMessage(Text(header), "user" if message.role == "user" else "nova")
-                card.update_body(Markdown(content))
-                widgets.append(card)
+        widgets = [history_card(message, self.session.provider) for message in messages]
         if widgets:
             await body.mount(*widgets)
         self.query_one(".history-prev", Button).disabled = self.page == 0

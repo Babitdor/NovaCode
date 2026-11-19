@@ -31,9 +31,11 @@ from textual.message import Message
 from textual.widgets import Input, Static, TextArea
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Callable, Iterable
 
+    from novacode_cli.session.adapters import HarnessMessage
     from novacode_cli.tui.app import NovaApp
+    from novacode_cli.tui.scrollback import Scrollback
 
 from novacode_cli.image_utils import ImageData
 from novacode_cli.input_utils import (
@@ -1073,8 +1075,64 @@ class TranscriptScroll(VerticalScroll):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         """Build the scroll region and seed the at-the-bottom state."""
         super().__init__(*args, **kwargs)
+        self._scrollback: Scrollback | None = None
         self._at_end: bool | None = None
         self._styled_classes: frozenset[str] | None = None
+
+    def _scrollback_widget(self) -> Scrollback:
+        from novacode_cli.tui.scrollback import Scrollback
+
+        if self._scrollback is None:
+            self._scrollback = Scrollback(self)
+            self.mount(self._scrollback, before=self.children[0] if self.children else None)
+        else:
+            self._scrollback.display = True
+        return self._scrollback
+
+    def set_older_history(self, source: Callable[[], list[HarnessMessage]]) -> None:
+        """Provide saved history to this pane without loading it on startup."""
+        self._scrollback_widget().set_source(source)
+
+    def archive_removed(self, widgets: Iterable[Widget]) -> None:
+        """Archive rows before the live transcript releases their widgets."""
+        from novacode_cli.tui.scrollback import archived_row
+
+        for widget in widgets:
+            if (row := archived_row(widget)) is not None:
+                self._scrollback_widget().append(row)
+
+    def reset_scrollback(self) -> None:
+        """Discard this pane's display history when its conversation changes."""
+        if self._scrollback is not None:
+            self._scrollback.close()
+            self._scrollback = None
+
+    def pause_following(self) -> None:
+        """Keep app-global follow state scoped to this pane."""
+        active = getattr(self.app, "_active_pane", None)
+        if active is not None and active.scroll is self:
+            self.app._follow_tail = False
+            self.app._update_jump_latest(measure=True)
+
+    def _request_history_at_top(self) -> bool:
+        return (
+            self.scroll_y <= 1
+            and self._scrollback is not None
+            and self._scrollback.request()
+        )
+
+    def _on_mouse_scroll_up(self, event: events.MouseScrollUp) -> None:
+        if not (event.ctrl or event.shift) and self._request_history_at_top():
+            event.prevent_default()
+            event.stop()
+
+    def action_scroll_up(self) -> None:
+        if not self._request_history_at_top():
+            super().action_scroll_up()
+
+    def action_page_up(self) -> None:
+        if not self._request_history_at_top():
+            super().action_page_up()
 
     def update_node_styles(self, animate: bool = True) -> None:
         """Restyle this container alone when only its focus or hover changed.

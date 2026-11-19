@@ -5,6 +5,8 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
+    from langchain_core.messages import BaseMessage
+
     from novacode_cli.session.session_persistence import SessionManager
 
 from . import HarnessMessage, ImportedSession, SessionInfo, text_content
@@ -42,34 +44,41 @@ class NativeAdapter:
         if data is None:
             message = "Nova session was not found."
             raise ValueError(message)
-        roles: dict[str, Literal["user", "assistant", "tool", "system"]] = {
-            "human": "user",
-            "ai": "assistant",
-            "tool": "tool",
-            "system": "system",
-        }
-        messages = []
-        names: dict[str, str] = {}
-        for message in data.messages:
-            content = text_content(message.content)
-            call_id = getattr(message, "tool_call_id", None)
-            if content or message.type == "tool":
-                messages.append(
-                    HarnessMessage(
-                        roles.get(message.type, "system"),
-                        content,
+        return ImportedSession(
+            self.provider, session_id, data.meta.project_root, normalize_messages(data.messages)
+        )
+
+
+def normalize_messages(source: list["BaseMessage"]) -> list[HarnessMessage]:
+    """Project saved messages as read-only transcript rows."""
+    roles: dict[str, Literal["user", "assistant", "tool", "system"]] = {
+        "human": "user",
+        "ai": "assistant",
+        "tool": "tool",
+        "system": "system",
+    }
+    messages = []
+    names: dict[str, str] = {}
+    for message in source:
+        content = text_content(message.content)
+        call_id = getattr(message, "tool_call_id", None)
+        if content or message.type == "tool":
+            messages.append(
+                HarnessMessage(
+                    roles.get(message.type, "system"),
+                    content,
                     tool_name=getattr(message, "name", None) or names.get(call_id or ""),
-                        metadata={"call_id": call_id} if call_id else {},
-                    )
+                    metadata={"call_id": call_id} if call_id else {},
                 )
-            for call in getattr(message, "tool_calls", []):
-                names[call["id"]] = call["name"]
-                messages.append(
-                    HarnessMessage(
-                        "assistant",
-                        json.dumps(call["args"], ensure_ascii=False),
-                        tool_name=call["name"],
-                        metadata={"kind": "tool_call", "call_id": call["id"]},
-                    )
+            )
+        for call in getattr(message, "tool_calls", []):
+            names[call["id"]] = call["name"]
+            messages.append(
+                HarnessMessage(
+                    "assistant",
+                    json.dumps(call["args"], ensure_ascii=False),
+                    tool_name=call["name"],
+                    metadata={"kind": "tool_call", "call_id": call["id"]},
                 )
-        return ImportedSession(self.provider, session_id, data.meta.project_root, messages)
+            )
+    return messages
