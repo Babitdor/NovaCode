@@ -148,6 +148,8 @@ jobs:
         run: uv run --no-sync python scripts/verify_prime.py --mutations
       - name: Verify native and MCP Code Mode boundaries
         run: uv run --no-sync python scripts/verify_mcp_code_mode.py
+      - name: Verify Codex image generation integration
+        run: uv run --no-sync pytest -q --tb=short tests/test_image_gen.py
       - name: Verify approvals and background MCP startup
         run: >-
           uv run --no-sync pytest -q --tb=short --junitxml=test-results/approval-startup.xml

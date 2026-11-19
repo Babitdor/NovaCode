@@ -124,6 +124,7 @@ User preferences live in `~/.nova/Nova.config.json`. Project instructions can be
 ## Integrations and automation
 
 - **MCP:** discovery runs after the interface opens. Cached schemas are available early; MCP operations wait for discovery when needed. Failures appear as notifications. Select a server in `/mcp` and choose **Retry** to reconnect it. A cached schema does not establish a live connection.
+- **Image generation:** ask Nova to create a PNG using the local Codex CLI and its `$imagegen` skill. Install Codex with `npm install -g @openai/codex`, then run `codex login` with an active ChatGPT subscription that includes image generation. Nova saves the PNG in the current project. [Codex image generation](https://developers.openai.com/codex/image-generation).
 - **Code Mode:** the composer toggle lets the agent combine eligible native and MCP tools in bounded JavaScript workflows. Nested calls retain approval checks. [Code Mode guide](docs/mcp-code-mode.md).
 - **Skills and plugins:** reuse instructions and install namespaced skills, commands, agents, hooks, and MCP definitions through `/plugin`, `nova plugin`, or supported skill commands.
 - **Remote and web:** use `/remote` for Telegram, Discord, or Rootapp; `/cowork` for a local visual workspace; `/council web` for multi-model discussions; and `/create` to edit skills and agents.

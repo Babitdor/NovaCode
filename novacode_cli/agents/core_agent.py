@@ -2518,13 +2518,16 @@ This file stores your preferences and context that persist across sessions.
         team_middleware.backend = composite_backend
         agent_middleware.append(team_middleware)
 
-    # The root owns its desktop. Attach after delegation rosters are captured so
-    # background agents and restricted sessions cannot inherit this capability.
+    # Attach local tools after delegation rosters are captured so background
+    # agents and restricted sessions cannot inherit these capabilities.
     computer_instructions = ""
     knowledge_instructions = ""
     if sandbox is None and not extra_middleware and team_binding is None:
+        from novacode_cli.tools.image_gen import build_image_gen_tool
         from novacode_cli.tools.knowledge_tools import build_knowledge_tool
 
+        if not any(tool.name == "image_gen" for tool in tools):
+            tools.append(build_image_gen_tool(lambda: worktree_middleware.session.root))
         tools = [*tools, build_knowledge_tool(
             lambda: worktree_middleware.session.root, assistant_id, composite_backend, model
         )]

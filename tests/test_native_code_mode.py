@@ -815,6 +815,8 @@ async def test_core_registers_code_mode_without_mcp(
         auto_approve=auto_approve,
     )
     assert "execute" in build.call_args.kwargs["interrupt_on"]
+    assert "image_gen" in build.call_args.kwargs["interrupt_on"]
+    assert any(tool.name == "image_gen" for tool in build.call_args.kwargs["tools"])
     first_middleware = build.call_args.kwargs["middleware"][0]
     assert isinstance(first_middleware, CodeModeMiddleware)
     from langchain_core.messages import HumanMessage

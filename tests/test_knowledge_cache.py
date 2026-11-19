@@ -398,7 +398,8 @@ def test_core_tool_stays_out_of_delegated_rosters(
     )
     tools = {tool.name for tool in build.call_args.kwargs["tools"]}
     assert ("knowledge_lookup" in tools) is not restricted
-    assert "knowledge_lookup" not in roster_tools
+    assert ("image_gen" in tools) is not restricted
+    assert {"knowledge_lookup", "image_gen"}.isdisjoint(roster_tools)
     assert "knowledge_lookup" in CORE_TOOLS
 
 

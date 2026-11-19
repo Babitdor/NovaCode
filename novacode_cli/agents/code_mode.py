@@ -176,6 +176,7 @@ not copied into these records; select the data you need in your JavaScript resul
 MCPCode is a compatibility async-function body using the same guarded runtime.
 Human approvals pause the live script. Never retry completed side effects after failure.
 Interaction, planning, workspace transitions and media fallbacks remain direct tools.
+Call image_gen directly for image generation so its own approval and deadline apply.
 Call write_todos directly (never inside eval or Promise.all), at most once per response and
 only when the plan actually changed — do not re-state an unchanged list. Accidental parallel
 direct snapshots are merged by task text; the last status for the same text wins. Use one
@@ -246,6 +247,7 @@ DIRECT_ONLY_TOOLS = frozenset(
         "exit_plan_mode",
         "EnterWorktreeTool",
         "ExitWorktreeTool",
+        "image_gen",  # Generation uses its own deadline and approval.
         "computer_screenshot",  # Image results need the direct multimodal tool path.
         "computer_action",
     }

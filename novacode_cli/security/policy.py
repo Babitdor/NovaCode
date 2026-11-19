@@ -64,7 +64,7 @@ _SHELL_TOOLS = frozenset(
 #: none, so gating them buys nothing and costs approval fatigue.
 _DAEMON_READONLY_ACTIONS = frozenset({"list", "status", "logs"})
 
-_PATH_TOOLS = frozenset({"write_file", "edit_file", "NotebookEditTool", "write_memory"})
+_PATH_TOOLS = frozenset({"write_file", "edit_file", "NotebookEditTool", "write_memory", "image_gen"})
 _URL_TOOLS = frozenset({"fetch_url"})
 
 # Per-tool default tier (the fallback when no specific rule matches).
@@ -323,7 +323,8 @@ class ApprovalPolicy:
     def _eval_path(self, tool_name: str, args: dict[str, Any]) -> ApprovalDecision:
         from novacode_cli.sessions.scratchpad import is_under_scratchpad
 
-        raw = str(args.get("file_path") or (args.get("path") if tool_name == "write_memory" else "") or "")
+        path_arg = {"image_gen": "output_path", "write_memory": "path"}.get(tool_name, "file_path")
+        raw = str(args.get("file_path") or args.get(path_arg) or "")
         if not raw and tool_name == "write_memory":
             from novacode_cli.tools.memory_tools import _resolve_memory_path
 
