@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from novacode_cli.session.session_persistence import SessionManager
 from novacode_cli.sessions.resume import resolve_saved_tab
@@ -154,7 +154,9 @@ async def test_resumed_tab_pages_back_past_compaction(monkeypatch, saved_session
     recent = AIMessage("Recent reply", id="recent")
     call = AIMessage("", tool_calls=[{"name": "grep", "args": {"pattern": "old"}, "id": "old-tool"}])
     result = ToolMessage("Earlier output", tool_call_id="old-tool")
-    archive = store.archive("old-thread", [older, call, result, recent])
+    archive = store.archive(
+        "old-thread", [SystemMessage("Archived system prompt"), older, call, result, recent]
+    )
     marker = HumanMessage(
         "Compacted",
         additional_kwargs={"lc_source": "summarization", "history_files": [str(archive)]},
@@ -162,7 +164,12 @@ async def test_resumed_tab_pages_back_past_compaction(monkeypatch, saved_session
     manager.save_session(
         "saved-12345678",
         "old-thread",
-        [marker, recent],
+        [
+            marker,
+            SystemMessage("Current system prompt"),
+            HumanMessage("Injected context", id="nova-imported-context"),
+            recent,
+        ],
         "saved-agent",
         project_root=project,
     )
@@ -172,15 +179,14 @@ async def test_resumed_tab_pages_back_past_compaction(monkeypatch, saved_session
         await app._resume_tab("saved-123")
         await pilot.pause()
         scroll = app._active_pane.scroll
-        assert "Before compaction" not in [card.raw_text for card in scroll.query(ChatMessage)]
+        assert [card.raw_text for card in scroll.query(ChatMessage)] == ["Recent reply"]
         scroll.scroll_home(animate=False, immediate=True)
         await pilot.pause()
         scroll.action_page_up()
         await scroll._scrollback.workers.wait_for_complete()
         await pilot.pause(0.05)
         cards = [card.raw_text for card in scroll.query(ChatMessage)]
-        assert cards.count("Before compaction") == 1
-        assert cards.count("Recent reply") == 1
+        assert cards == ["Before compaction", "Recent reply"]
         tool = scroll.query_one(CodeModePanel)
         assert tool.tool_name == "grep" and tool._output_text == "Earlier output"
         assert not app._tool_components

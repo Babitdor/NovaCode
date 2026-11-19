@@ -22,7 +22,7 @@ def test_update_accepts_legacy_windows_output_encoding(monkeypatch, check_only):
     output = io.TextIOWrapper(raw, encoding="cp1252", errors="strict")
     monkeypatch.setattr(updates.sys, "stdout", output)
     monkeypatch.setattr(
-        updates, "check_for_update", lambda **kwargs: updates.UpdateStatus(True, "old", "new")
+        updates, "check_for_update", lambda **kwargs: updates.UpdateStatus(True, "1.0", "1.1")
     )
     monkeypatch.setattr(updates, "detect_installation", lambda: updates.Installation("1.0", "uv-tool"))
     install = Mock(return_value=True)
@@ -82,7 +82,7 @@ def test_an_interrupted_stage_is_marked_failed():
 def test_cli_success_reads_updated_version_after_install(monkeypatch, capsys):
     installed = False
     monkeypatch.setattr(
-        updates, "check_for_update", lambda **kwargs: updates.UpdateStatus(True, "old", "new")
+        updates, "check_for_update", lambda **kwargs: updates.UpdateStatus(True, "9.8.6", "9.8.7")
     )
     monkeypatch.setattr(updates, "detect_installation", lambda: updates.Installation("9.8.6", "uv-tool"))
 

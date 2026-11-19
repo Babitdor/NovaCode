@@ -4340,12 +4340,11 @@ class NovaApp(App):
         self._bind_notification_source(pane)
         self._panes.append(pane)
         if history is not None:
-            from novacode_cli.session.adapters.harness_native import normalize_messages
-            from novacode_cli.tui.scrollback import PAGE_ROWS, saved_rows
+            from novacode_cli.tui.scrollback import PAGE_ROWS, conversation_rows, saved_rows
             from novacode_cli.tui.session_transcript import history_card
 
             messages = history.messages
-            rows = await asyncio.to_thread(normalize_messages, messages, pair_tools=True)
+            rows = await asyncio.to_thread(conversation_rows, messages)
             older, recent = rows[:-PAGE_ROWS], rows[-PAGE_ROWS:]
             manager = self.session_manager
             session_id, thread_id = history.meta.session_id, history.meta.thread_id

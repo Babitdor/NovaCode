@@ -263,7 +263,7 @@ def test_the_clean_updater_waits_then_updates_then_restarts(
 
 def test_restarting_update_says_it_restarts(monkeypatch, capsys):
     monkeypatch.setattr(
-        updates, "check_for_update", lambda **_kw: updates.UpdateStatus(True, "a", "b")
+        updates, "check_for_update", lambda **_kw: updates.UpdateStatus(True, "1.0", "1.1")
     )
     monkeypatch.setattr(updates, "detect_installation", lambda: updates.Installation("1.0", "uv-tool"))
     monkeypatch.setattr(updates, "install_update", lambda progress: True)

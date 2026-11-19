@@ -312,7 +312,7 @@ def test_windows_locked_entrypoint_is_success_when_uv_installed_the_package(
     progress.done.assert_any_call("uv installed the package; the running nova.exe is still in use")
 
 
-def test_windows_locked_entrypoint_is_success_even_when_package_version_is_unchanged(
+def test_windows_locked_entrypoint_raises_when_package_version_is_unchanged(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     _windows_tool(monkeypatch, tmp_path, "", rewrites=False)
@@ -333,8 +333,9 @@ def test_windows_locked_entrypoint_is_success_even_when_package_version_is_uncha
     )
 
     progress = Mock()
-    assert U.install_update(progress) is True
-    progress.done.assert_any_call("uv installed the package; the running nova.exe is still in use")
+    with pytest.raises(subprocess.CalledProcessError):
+        U.install_update(progress)
+    progress.done.assert_not_called()
 
 
 def test_update_command_reports_success_for_installed_package_with_locked_launcher(
@@ -346,7 +347,7 @@ def test_update_command_reports_success_for_installed_package_with_locked_launch
         "check_for_update",
         lambda **_kwargs: U.UpdateStatus(True, "1.0", "1.1"),
     )
-    monkeypatch.setattr(U, "installed_version", lambda _python: "1.0")
+    monkeypatch.setattr(U, "installed_version", lambda _python: "1.1")
     monkeypatch.setattr(
         U,
         "_run",
@@ -367,6 +368,22 @@ def test_update_command_reports_success_for_installed_package_with_locked_launch
     assert "NovaCode updated" in captured.out
     assert "uv installed the package; the running nova.exe is still in use" in captured.out
     assert "Update failed" not in captured.err
+
+
+@pytest.mark.parametrize("changed", [True, False])
+def test_update_command_rejects_a_version_below_the_advertised_release(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture, changed: bool
+) -> None:
+    monkeypatch.setattr(U, "detect_installation", lambda: U.Installation("1.0", "uv-tool"))
+    monkeypatch.setattr(U, "check_for_update", lambda **_: U.UpdateStatus(True, "1.0", "1.2"))
+    monkeypatch.setattr(U, "install_update", lambda _progress: changed)
+    monkeypatch.setattr(U, "installed_version", lambda _python: "1.1" if changed else "1.0")
+
+    assert U.update_main([]) == 1
+    captured = capsys.readouterr()
+    assert "Expected NovaCode 1.2 or newer" in captured.err
+    assert "NovaCode updated" not in captured.out
+    assert "NovaCode is up to date" not in captured.out
 
 
 def test_a_failed_step_prints_its_output_then_the_error(

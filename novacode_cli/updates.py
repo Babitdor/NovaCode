@@ -352,6 +352,20 @@ def _install_update(progress: Progress | None = None) -> bool:
             except subprocess.CalledProcessError as error:
                 if not _uv_entrypoint_is_locked(error):
                     raise
+                if installation.revision:
+                    revision = detect_installation().revision
+                    advanced = bool(revision and revision != installation.revision)
+                else:
+                    from packaging.version import InvalidVersion, Version
+
+                    try:
+                        advanced = Version(installed_version(sys.executable)) > Version(
+                            installation.version
+                        )
+                    except InvalidVersion:
+                        advanced = False
+                if not advanced:
+                    raise
                 progress.done("uv installed the package; the running nova.exe is still in use")
                 output = "Updated novacode-cli"
         finally:
@@ -431,7 +445,8 @@ def _update_with_progress(*, restarting: bool = False) -> int:
     _configure_update_output()
     hint = "Restarting Nova…" if restarting else "Run nova to start the new version."
     try:
-        old = detect_installation().version
+        installation = detect_installation()
+        old = installation.version
         with Progress() as progress:
             progress.stage("Checking for updates")
             status = check_for_update(force=True)
@@ -444,11 +459,22 @@ def _update_with_progress(*, restarting: bool = False) -> int:
                 else f"{status.current[:12]} → {status.latest[:12]}"
             )
             changed = install_update(progress)
+        verify_target = status.available and not status.error and not installation.revision
+        new = installed_version(sys.executable) if changed or verify_target else old
+        if verify_target:
+            from packaging.version import InvalidVersion, Version
+
+            try:
+                reached_target = Version(new) >= Version(status.latest)
+            except InvalidVersion:
+                reached_target = False
+            if not reached_target:
+                _fail(f"Expected NovaCode {status.latest} or newer, but found {new}.")
         if changed:
             from novacode_cli.brand import wordmark
 
             show_success(
-                old, installed_version(sys.executable), wordmark(),
+                old, new, wordmark(),
                 note=status.release_title, hint=hint,
             )
         else:

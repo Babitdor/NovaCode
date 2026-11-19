@@ -39,6 +39,27 @@ PAGE_ROWS = 20
 _VISIBLE_PAGES = 2
 
 
+def conversation_rows(messages: list[BaseMessage]) -> list[HarnessMessage]:
+    """Restore only user-visible messages and tool calls from a Nova checkpoint."""
+    from novacode_cli.compaction import is_compaction_summary
+    from novacode_cli.core.streaming import is_internal_context_text
+    from novacode_cli.session.imported_context import MESSAGE_ID
+
+    visible = [
+        message
+        for message in messages
+        if message.type in {"human", "ai", "tool"}
+        and message.id != MESSAGE_ID
+        and message.additional_kwargs.get("lc_source") not in ("summarization", "pinned_skill")
+    ]
+    return [
+        row
+        for row in normalize_messages(visible, pair_tools=True)
+        if row.role == "tool"
+        or not (is_compaction_summary(row.content) or is_internal_context_text(row.content))
+    ]
+
+
 def saved_rows(
     manager: SessionManager | None,
     session_id: str | None,
@@ -89,7 +110,7 @@ def saved_rows(
 
     append(previous)
     append(source)
-    return normalize_messages(original, pair_tools=True)
+    return conversation_rows(original)
 
 
 def archived_row(widget: Widget) -> HarnessMessage | None:
