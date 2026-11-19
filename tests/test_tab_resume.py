@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from novacode_cli.session.session_persistence import SessionManager
 from novacode_cli.sessions.resume import resolve_saved_tab
@@ -144,6 +144,7 @@ async def test_resume_opens_saved_project_history_without_replacing_root(
 @pytest.mark.timeout(45)
 async def test_resumed_tab_pages_back_past_compaction(monkeypatch, saved_session, tmp_path):
     from novacode_cli.context.archives import RecoveryStore
+    from novacode_cli.tui.code_mode_panel import CodeModePanel
     from novacode_cli.tui.widgets import ChatMessage
 
     manager, project = saved_session
@@ -151,7 +152,9 @@ async def test_resumed_tab_pages_back_past_compaction(monkeypatch, saved_session
     monkeypatch.setattr("novacode_cli.context.archives.default_recovery_store", lambda: store)
     older = HumanMessage("Before compaction", id="older")
     recent = AIMessage("Recent reply", id="recent")
-    archive = store.archive("old-thread", [older, recent])
+    call = AIMessage("", tool_calls=[{"name": "grep", "args": {"pattern": "old"}, "id": "old-tool"}])
+    result = ToolMessage("Earlier output", tool_call_id="old-tool")
+    archive = store.archive("old-thread", [older, call, result, recent])
     marker = HumanMessage(
         "Compacted",
         additional_kwargs={"lc_source": "summarization", "history_files": [str(archive)]},
@@ -178,6 +181,9 @@ async def test_resumed_tab_pages_back_past_compaction(monkeypatch, saved_session
         cards = [card.raw_text for card in scroll.query(ChatMessage)]
         assert cards.count("Before compaction") == 1
         assert cards.count("Recent reply") == 1
+        tool = scroll.query_one(CodeModePanel)
+        assert tool.tool_name == "grep" and tool._output_text == "Earlier output"
+        assert not app._tool_components
         assert app._root_pane.scroll._scrollback is None
 
 

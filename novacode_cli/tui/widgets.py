@@ -1085,8 +1085,6 @@ class TranscriptScroll(VerticalScroll):
         if self._scrollback is None:
             self._scrollback = Scrollback(self)
             self.mount(self._scrollback, before=self.children[0] if self.children else None)
-        else:
-            self._scrollback.display = True
         return self._scrollback
 
     def set_older_history(self, source: Callable[[], list[HarnessMessage]]) -> None:
@@ -1156,6 +1154,8 @@ class TranscriptScroll(VerticalScroll):
     def watch_scroll_y(self, old_value: float, new_value: float) -> None:
         """Announce scroll changes so the jump-to-latest affordance can react."""
         super().watch_scroll_y(old_value, new_value)
+        if self._scrollback is not None:
+            self._scrollback.scroll_changed(old_value, new_value)
         # Record intent before queued layout callbacks can auto-scroll again.
         # A posted message alone arrives too late when both run in one refresh.
         track = getattr(self.app, "_track_transcript_scroll", None)

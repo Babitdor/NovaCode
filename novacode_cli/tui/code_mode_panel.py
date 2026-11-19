@@ -15,6 +15,12 @@ if TYPE_CHECKING:
     from textual.widget import Widget
 
 CODE_MODE_TOOLS = frozenset({"eval", "MCPCode"})
+_SHELL_TOOLS = frozenset({
+    "shell", "bash", "execute", "execute_bash", "run_command", "run_tests", "start_dev_server",
+})
+_DIFF_TOOLS = frozenset({
+    "write_file", "edit_file", "create_file", "multi_edit", "str_replace", "apply_patch",
+})
 _MAX_TOOL_NAMES = 3
 _PREVIEW_LINES = 3
 _PREVIEW_WIDTH = 160
@@ -137,6 +143,8 @@ class CodeModePanel(Collapsible):
     CodeModePanel > CollapsibleTitle {
         color: $text-muted; padding: 0 0 0 2; text-style: none;
     }
+    CodeModePanel.tool > CollapsibleTitle:hover,
+    CodeModePanel.tool > CollapsibleTitle:focus { color: $accent; }
     CodeModePanel > Contents { padding-left: 2; }
     CodeModePanel .code-mode-note { height: auto; padding-left: 2; color: $text-muted; }
     CodeModePanel .code-mode-preview {
@@ -146,7 +154,7 @@ class CodeModePanel(Collapsible):
     CodeModePanel Collapsible {
         border: none; background: transparent; padding: 0;
     }
-    CodeModePanel.failed .code-mode-note { color: $error; }
+    CodeModePanel.failed .code-mode-note, CodeModePanel.failed .terminal-log { color: $error; }
     """
 
     def __init__(
@@ -160,7 +168,7 @@ class CodeModePanel(Collapsible):
     ) -> None:
         """Keep the exact script and result behind separate disclosure controls."""
         self.status = Static("•", classes="code-mode-status")
-        self.heading = Static(Text(f"Running {tool_name}"), classes="code-mode-label")
+        self.heading = Static(Text(f"Running {display_str or tool_name}"), classes="code-mode-label")
         self.preview = Static("", classes="code-mode-preview", markup=False)
         self.preview.display = False
         self.note = Static("", classes="code-mode-note", markup=False)
@@ -169,6 +177,7 @@ class CodeModePanel(Collapsible):
         self.display_str = display_str
         self._source_text = code or "(script unavailable)"
         self._output_text = "Waiting for output."
+        self.result_preview = ""
         self.source: Static | None = None
         self.output = output_widget
         self._source_title = "JavaScript" if display_str is None else "Arguments"
@@ -180,8 +189,42 @@ class CodeModePanel(Collapsible):
             expanded_symbol="",
             classes="tool-active",
         )
-        if display_str is not None:
-            self.heading.update(Text(f"Running {display_str}"))
+
+    @classmethod
+    def for_call(cls, name: str, args: dict, display: str | None = None) -> CodeModePanel:
+        """Build the same tool row for live events and saved calls."""
+        if name in CODE_MODE_TOOLS:
+            code = args.get("code", "")
+            return cls.from_source(name, code if isinstance(code, str) else "", None)
+        if display is None:
+            from novacode_cli.ui.ui_elements import format_tool_display
+
+            try:
+                display = format_tool_display(name, args)
+            except (AttributeError, TypeError, ValueError):
+                # Invalid arguments are still useful in the recorded call.
+                display = name
+        return cls.from_source(name, json.dumps(args, indent=2, ensure_ascii=False), display)
+
+    @classmethod
+    def from_source(cls, name: str, source: str, display: str | None) -> CodeModePanel:
+        """Build a tool row from its already formatted arguments or script."""
+        from novacode_cli.tui.diff_preview import DiffPreview
+        from novacode_cli.tui.widgets import OutputLog
+
+        body = None
+        if name in _SHELL_TOOLS:
+            body = OutputLog(
+                classes="terminal-log", highlight=True, markup=False, max_lines=2_000,
+            )
+        elif name in _DIFF_TOOLS:
+            body = DiffPreview(classes="toolbody")
+        panel = cls(
+            source, tool_name=name, display_str=display, output_widget=body,
+            streaming=isinstance(body, OutputLog),
+        )
+        panel.add_class("tool")
+        return panel
 
     def compose(self) -> ComposeResult:
         """Keep the summary visible while the disclosure hides only full details."""
@@ -218,6 +261,14 @@ class CodeModePanel(Collapsible):
         else:
             await contents.mount(drawer, self.output)
 
+    def restore_result(self, output: str, *, is_error: bool, preview: str | None = None) -> None:
+        """Paint a completed record without registering it as a live tool."""
+        from novacode_cli.tui.widgets import OutputLog
+
+        self.finish(output, is_error=is_error, preview=preview or _line(output, 110))
+        if isinstance(self.output, OutputLog):
+            self.output.write(Text(self._output_text))
+
     def finish(self, output: str, *, is_error: bool, preview: str) -> None:
         """Update this run alone and surface failures without opening raw output."""
         try:
@@ -232,6 +283,7 @@ class CodeModePanel(Collapsible):
         # Rich Text keeps tool-provided brackets literal in the summary and result.
         self.heading.update(Text.assemble(("Failed " if failed else "Ran ", "bold"), title))
         self._output_text = output or preview or "(no output)"
+        self.result_preview = preview
         selected = (
             data.get("error") or data.get("result", preview)
             if isinstance(data, dict)

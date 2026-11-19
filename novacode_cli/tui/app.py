@@ -124,7 +124,7 @@ from novacode_cli.tui.animations import (
     animate_entrance,
 )
 from novacode_cli.tui import motion
-from novacode_cli.tui.code_mode_panel import CODE_MODE_TOOLS, CodeModePanel
+from novacode_cli.tui.code_mode_panel import CodeModePanel
 from novacode_cli.tui.output_buffer import MAX_PENDING_CALLS, OutputTail
 
 # Widgets and modal screens were extracted verbatim into widgets.py /
@@ -253,22 +253,6 @@ def _router_model_display(
 
 
 # Tools whose result is a code change worth seeing in full: these keep their own
-# Collapsible with a colored diff body so the user can review what the agent
-# changed. Every other tool (reads, search, exec, MCP, …) condenses into the
-# shared tool group. Keep in sync with the file-write tools that emit a FileOp
-# record with a diff (see tracking/file_tracker.py).
-_DETAILED_TOOL_NAMES = frozenset(
-    {
-        "write_file",
-        "edit_file",
-        "create_file",
-        "multi_edit",
-        "str_replace",
-        "apply_patch",
-    }
-)
-
-
 # Tool calls are grouped under a category heading in the condensed tool panel
 # (e.g. "Explored — 3 reads"), so a long run of tools reads as a few labelled
 # sections instead of one flat list. Order here drives the section order.
@@ -1079,14 +1063,11 @@ _REPLAY_MAX_MESSAGES = 150  # kept for callers; replay now fits by items (replay
 def replay_window(messages: list, budget: int) -> list:
     """The newest messages whose replay fits ``budget`` transcript items.
 
-    A message count was the wrong unit: in a tool-heavy session 150 messages
-    were three or four turns, while each turn's tool calls draw as one group.
-    This counts what is drawn -- a user message, an answer, a run of tool calls
-    -- and starts at a user turn, so the chat never opens mid-turn.
+    Count visible messages and individual tool cards. Start at a turn
+    boundary when a complete recent turn fits.
     """
     items = 0
     start = len(messages)
-    in_tools = False
     for index in range(len(messages) - 1, -1, -1):
         message = messages[index]
         kind = getattr(message, "type", "")
@@ -1094,20 +1075,18 @@ def replay_window(messages: list, budget: int) -> list:
         has_text = bool(content.strip() if isinstance(content, str) else content)
         if kind == "human":
             items += 1
-            in_tools = False
         elif kind == "ai":
-            if has_text:
-                items += 1
-                in_tools = False
-            if getattr(message, "tool_calls", None) and not in_tools:
-                items += 1
-                in_tools = True
+            items += int(has_text) + len(getattr(message, "tool_calls", None) or ())
         if items > budget:
             break
         start = index
-    while start < len(messages) and getattr(messages[start], "type", "") != "human":
-        start += 1
-    return messages[start:] if start < len(messages) else messages[-1:] if messages else []
+    turn_start = next(
+        (i for i in range(start, len(messages)) if getattr(messages[i], "type", "") == "human"),
+        start,
+    )
+    while turn_start < len(messages) and getattr(messages[turn_start], "type", "") == "tool":
+        turn_start += 1
+    return messages[turn_start:] if turn_start < len(messages) else messages[-1:]
 
 
 def _display_tail(text: str) -> str:
@@ -1558,12 +1537,9 @@ class NovaApp(App):
         margin: 1 0; background: $surface;
     }
     #transcript > .tool { color: $warning; padding: 0 2; margin: 1 0; background: $background; }
-    #transcript > CodeModePanel.tool {
-        margin: 0 0 1 0; padding: 0; background: transparent;
+    TranscriptScroll CodeModePanel.tool {
+        color: $warning; margin: 0 0 1 0; padding: 0; background: transparent;
     }
-    #transcript > CodeModePanel.tool > CollapsibleTitle { color: $text-muted; }
-    #transcript > CodeModePanel.tool > CollapsibleTitle:hover,
-    #transcript > CodeModePanel.tool > CollapsibleTitle:focus { color: $accent; }
     .toolbody { color: $text-muted; margin: 0; height: auto; }
     .terminal-log {
         /* Scale with terminal height; floor at the old fixed 5 rows so small
@@ -4386,7 +4362,7 @@ class NovaApp(App):
             from novacode_cli.tui.session_transcript import history_card
 
             messages = history.messages
-            rows = await asyncio.to_thread(normalize_messages, messages)
+            rows = await asyncio.to_thread(normalize_messages, messages, pair_tools=True)
             older, recent = rows[:-PAGE_ROWS], rows[-PAGE_ROWS:]
             manager = self.session_manager
             session_id, thread_id = history.meta.session_id, history.meta.thread_id
@@ -4403,7 +4379,9 @@ class NovaApp(App):
                     ]
                 )
             if recent:
-                await scroll.mount(*(history_card(message) for message in recent))
+                await scroll.mount(*(
+                    history_card(message, native_scrollback=True) for message in recent
+                ))
         self._refresh_tabs()
         self._pending_task_for = getattr(self, "_pending_task_for", {})
         if task:
@@ -6343,8 +6321,7 @@ class NovaApp(App):
                 )
                 shown += 1
             elif role == "ai":
-                # Tool calls ride on the AIMessage; replay them into the
-                # condensed tool group before the (possibly empty) prose.
+                # Draw saved calls using the same cards as live events.
                 for tc in getattr(m, "tool_calls", None) or []:
                     await self._replay_tool_call(tc, results)
                 if text:
@@ -6407,32 +6384,11 @@ class NovaApp(App):
                 await self._add_message(self._agent_label("Nova"), "nova", Markdown(summary))
 
     async def _replay_tool_call(self, tc: dict, results: dict[str, Any]) -> None:
-        """Render one restored tool call (and its result) into the tool group.
+        """Mount a saved call without registering it as a live tool."""
+        from novacode_cli.session.adapters.harness_native import tool_row
+        from novacode_cli.tui.session_transcript import saved_tool_card
 
-        Mirrors the live path: a condensed line per call under its category
-        heading, marked done/failed from the paired ToolMessage.
-        """
-        name = tc.get("name", "") or "tool"
-        args = tc.get("args", {}) or {}
-        call_id = tc.get("id") or None
-        try:
-            from novacode_cli.ui.ui_elements import format_tool_display
-
-            base = format_tool_display(name, args)
-        except Exception:  # noqa: BLE001 — a display helper must never break replay
-            base = name
-        await self._ensure_tool_group()
-        self._add_tool_group_call(call_id, base, name)
-        result = results.get(call_id) if call_id else None
-        if result is None:
-            # No paired result (e.g. the turn was interrupted) — leave it done
-            # rather than showing a perpetual spinner.
-            self._mark_tool_group_result(call_id, is_error=False, detail="")
-            return
-        status = getattr(result, "status", "success")
-        is_error = status != "success"
-        detail = self._oneline(self._message_text(result))
-        self._mark_tool_group_result(call_id, is_error=is_error, detail=detail)
+        await self._mount(saved_tool_card(tool_row(tc, results.get(tc.get("id")))))
 
     def _reset_streaming(self) -> None:
         """Drop any in-progress streaming/reasoning widgets at a turn boundary."""
@@ -19120,29 +19076,8 @@ class NovaApp(App):
         elif isinstance(e, ev.ToolCall):
             self._set_status(f"running {e.name}…")
             base = e.display_str
-            if e.name in CODE_MODE_TOOLS:
-                code = e.args.get("code", "")
-                comp = CodeModePanel(code if isinstance(code, str) else "", tool_name=e.name)
-                body = comp.output
-            else:
-                if e.name in {
-                    "shell", "bash", "execute", "execute_bash", "run_command",
-                    "run_tests", "start_dev_server",
-                }:
-                    body = OutputLog(
-                        classes="terminal-log", highlight=True, markup=False,
-                        max_lines=_LOG_MAX_LINES,
-                    )
-                elif e.name in _DETAILED_TOOL_NAMES:
-                    body = DiffPreview(classes="toolbody")
-                else:
-                    body = None
-                comp = CodeModePanel(
-                    json.dumps(e.args, indent=2, ensure_ascii=False), tool_name=e.name,
-                    display_str=e.display_str, output_widget=body,
-                    streaming=isinstance(body, OutputLog),
-                )
-            comp.add_class("tool", "tool-active")
+            comp = CodeModePanel.for_call(e.name, e.args, e.display_str)
+            body = comp.output
             await self._mount(comp)
             if isinstance(body, OutputLog):
                 await comp.mount(Static(

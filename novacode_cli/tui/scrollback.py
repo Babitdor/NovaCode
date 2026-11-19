@@ -15,12 +15,13 @@ from typing import TYPE_CHECKING, Literal
 from langchain_core.messages import messages_from_dict
 from rich.markdown import Markdown
 from rich.text import Text
-from textual.containers import Horizontal, Vertical
-from textual.widgets import Button, Static
+from textual.containers import Vertical
+from textual.widgets import Static
 
 from novacode_cli.session.adapters import HarnessMessage
 from novacode_cli.session.adapters.harness_native import normalize_messages
 from novacode_cli.tui.code_mode_panel import CodeModePanel
+from novacode_cli.tui.diff_preview import DiffPreview
 from novacode_cli.tui.session_transcript import history_card
 from novacode_cli.tui.widgets import ChatMessage, OutputLog
 
@@ -28,7 +29,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
 
     from langchain_core.messages import BaseMessage
-    from textual.app import ComposeResult
     from textual.widget import Widget
 
     from novacode_cli.session.session_persistence import SessionManager
@@ -89,7 +89,7 @@ def saved_rows(
 
     append(previous)
     append(source)
-    return normalize_messages(original)
+    return normalize_messages(original, pair_tools=True)
 
 
 def archived_row(widget: Widget) -> HarnessMessage | None:
@@ -105,7 +105,18 @@ def archived_row(widget: Widget) -> HarnessMessage | None:
         return None
     if isinstance(widget, CodeModePanel):
         return HarnessMessage(
-            "tool", f"{widget._source_text}\n\n{widget._output_text}", tool_name=widget.tool_name
+            "tool",
+            "No recorded result." if widget.has_class("tool-active") else widget._output_text,
+            tool_name=widget.tool_name,
+            metadata={
+                "source": widget._source_text,
+                "display": widget.display_str,
+                "preview": widget.result_preview,
+                "is_error": widget.has_class("failed"),
+                "interrupted": widget.has_class("tool-active"),
+                "collapsed": widget.collapsed,
+                "diff": widget.output.archive() if isinstance(widget.output, DiffPreview) else None,
+            },
         )
 
     parts = []
@@ -156,13 +167,12 @@ class _ArchivedRows:
 
 
 class Scrollback(Vertical):
-    """Keep at most two historical pages mounted above the live transcript."""
+    """Keep the visible history and a small page buffer above the live transcript."""
 
     DEFAULT_CSS = """
     Scrollback { height: auto; }
-    Scrollback > Horizontal { height: 3; }
     Scrollback > Vertical { height: auto; }
-    Scrollback Button { width: auto; min-width: 9; }
+    Scrollback > .history-gap { height: 100vh; }
     """
 
     def __init__(self, scroll: TranscriptScroll) -> None:
@@ -175,15 +185,30 @@ class Scrollback(Vertical):
         self._pages: list[tuple[int, int, Vertical]] = []
         self._loading = False
         self._store_closed = False
-        self._older = Button("Load older messages")
-        self._newer = Button("Load newer messages")
-        self._newer_row = Horizontal(self._newer)
-        self._newer_row.display = False
+        self._gap = Static(classes="history-gap")
+        self._gap.display = False
 
-    def compose(self) -> ComposeResult:
-        """Surround mounted history pages with their navigation controls."""
-        yield Horizontal(self._older)
-        yield self._newer_row
+    def compose(self):
+        """Keep the live tail outside the viewport while newer pages are missing."""
+        yield self._gap
+
+    def _update_gap(self) -> None:
+        self._gap.display = bool(
+            self._pages and self._pages[-1][1] < len(self._saved) + len(self._live)
+        )
+
+    def scroll_changed(self, old_y: float, new_y: float) -> None:
+        """Page in the direction of travel when the viewport reaches a seam."""
+        if new_y < old_y and new_y <= 1:
+            self.request()
+        elif new_y > old_y and self._gap.display:
+            seam = self._transcript_y(self._gap)
+            # Explicit jumps can land directly in the live tail.
+            if (
+                seam <= new_y + self.scroll.scrollable_content_region.height
+                and new_y < seam + self._gap.virtual_region.height
+            ):
+                self.request(older=False)
 
     def set_source(self, source: Callable[[], list[HarnessMessage]]) -> None:
         """Supply archived disk history to read only on the first older request."""
@@ -192,9 +217,7 @@ class Scrollback(Vertical):
     def append(self, row: HarnessMessage) -> None:
         """Append a retired live row without keeping its content in memory."""
         self._live.append(row)
-        if self._pages:
-            self._newer_row.display = True
-        self._older.disabled = bool(self._pages and self._pages[0][0] == 0)
+        self._update_gap()
 
     def close(self) -> None:
         """Release the backing store on session reset or tab close."""
@@ -229,12 +252,6 @@ class Scrollback(Vertical):
         self.run_worker(self._load_page(older=older), group="scrollback")
         return True
 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        """Navigate within this pane without invoking the agent."""
-        if event.button in (self._older, self._newer):
-            event.stop()
-            self.request(older=event.button is self._older)
-
     async def _load_page(self, *, older: bool) -> None:
         try:
             if self._source:
@@ -255,8 +272,6 @@ class Scrollback(Vertical):
                 start = self._pages[-1][1]
                 end = min(start + PAGE_ROWS, total)
             if start == end:
-                self._older.disabled = True
-                self.display = bool(self._pages)
                 return
 
             await self._show_page(start, end, older=older)
@@ -277,32 +292,54 @@ class Scrollback(Vertical):
         )
         if not older:
             anchor = self._pages[-1][2]
-        old_top = anchor.region.y if anchor is not None else 0
+        old_top = self._transcript_y(anchor) if anchor is not None else 0
         position = self.scroll.scroll_y
         self.scroll.pause_following()
-        page = Vertical(*(history_card(row) for row in self._read_page(start, end)))
+        page = Vertical(*(
+            history_card(row, native_scrollback=True) for row in self._read_page(start, end)
+        ))
         if older and self._pages:
             await self.mount(page, before=self._pages[0][2])
         else:
-            await self.mount(page, before=self._newer_row)
+            await self.mount(page, before=self._gap)
         if self._store_closed:
             return
         if older:
             self._pages.insert(0, (start, end, page))
         else:
             self._pages.append((start, end, page))
-        if len(self._pages) > _VISIBLE_PAGES:
-            await self._pages.pop(-1 if older else 0)[2].remove()
-        self._older.disabled = self._pages[0][0] == 0
-        self._newer_row.display = self._pages[-1][1] < len(self._saved) + len(self._live)
-
+        self._update_gap()
         self.scroll.refresh(layout=True)
         await self.wait_for_refresh()
         if self._store_closed or not self.scroll.display:
             return
-        if anchor is None or not anchor.is_attached:
-            self.scroll.scroll_to(y=0, animate=False, immediate=True)
-        else:
-            target_top = old_top if older else self.scroll.region.y
-            offset = position + anchor.region.y - target_top
+
+        offset = self._transcript_y(anchor) + position - old_top if anchor is not None else 0
+        if not older:
+            # A page-down or scrollbar drag may have landed inside the gap.
+            offset = min(offset, self._transcript_y(page))
+        # Retire only pages outside the viewport we are about to restore.
+        # Keeping a partial page prevents a line jump when reversing direction.
+        retire = []
+        viewport = self.scroll.scrollable_content_region.height
+        while len(self._pages) > _VISIBLE_PAGES:
+            edge = self._pages[-1 if older else 0][2]
+            top = self._transcript_y(edge)
+            if older and top < offset + viewport:
+                break
+            if not older and top + edge.region.height > offset:
+                break
+            retire.append(self._pages.pop(-1 if older else 0)[2])
+            if not older:
+                offset -= edge.region.height
+        if retire:
+            await self.remove_children(retire)
+            self._update_gap()
+            self.scroll.refresh(layout=True)
+            await self.wait_for_refresh()
+        if not self._store_closed and self.scroll.display:
             self.scroll.scroll_to(y=offset, animate=False, immediate=True, force=True)
+
+    def _transcript_y(self, widget: Widget) -> int:
+        top = widget.virtual_region.y
+        return top + self.virtual_region.y if widget.parent is self else top

@@ -44,16 +44,16 @@ def test_replay_fits_by_what_is_drawn_not_by_message_count():
     msgs = []
     for turn in range(30):
         msgs.append(HumanMessage(f"turn {turn}", id=f"h{turn}"))
-        for k in range(10):  # ten tool calls a turn: one drawn group
+        for k in range(10):  # ten tool calls a turn: ten cards
             call = {"id": f"c{turn}-{k}", "name": "read_file", "args": {}, "type": "tool_call"}
             msgs.append(AIMessage("", tool_calls=[call], id=f"a{turn}-{k}"))
             msgs.append(ToolMessage("x", tool_call_id=f"c{turn}-{k}", id=f"t{turn}-{k}"))
         msgs.append(AIMessage(f"answer {turn}", id=f"r{turn}"))
-    # 630 messages, 3 drawn items a turn: all 30 turns fit 190 items.
-    assert replay_window(msgs, 190)[0].id == "h0"
+    # 630 stored messages, 12 visible rows per turn.
+    assert replay_window(msgs, 360)[0].id == "h0"
     window = replay_window(msgs, 30)
     assert window[0].type == "human", "never opens mid-turn"
-    assert 9 <= sum(m.type == "human" for m in window) <= 10
+    assert sum(m.type == "human" for m in window) == 2
     assert window[-1].id == "r29"
 
 

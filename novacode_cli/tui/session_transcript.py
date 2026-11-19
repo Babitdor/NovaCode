@@ -7,13 +7,44 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Collapsible, Static
 
 from novacode_cli.session.adapters import HarnessMessage, ImportedSession
+from novacode_cli.tui.code_mode_panel import CODE_MODE_TOOLS, CodeModePanel
+from novacode_cli.tui.diff_preview import DiffPreview
 from novacode_cli.tui.widgets import ChatMessage, OutputLog
 
 _TEXT_LIMIT = 16000
 
 
-def history_card(message: HarnessMessage, provider: str = "nova") -> ChatMessage | Collapsible:
+def saved_tool_card(message: HarnessMessage) -> CodeModePanel:
+    """Rehydrate the live tool widget using only the saved record."""
+    name = message.tool_name or "tool"
+    args = message.metadata.get("arguments")
+    if isinstance(args, dict):
+        card = CodeModePanel.for_call(name, args)
+    else:
+        display = message.metadata.get("display")
+        if not isinstance(display, str) and name not in CODE_MODE_TOOLS:
+            display = name
+        source = message.metadata.get("source", "(arguments unavailable)")
+        card = CodeModePanel.from_source(name, source, display)
+    card.restore_result(
+        message.content, is_error=bool(message.metadata.get("is_error")),
+        preview=message.metadata.get("preview"),
+    )
+    if message.metadata.get("interrupted"):
+        card.heading.update(Text.assemble(("Interrupted ", "bold"), card.display_str or name))
+    if isinstance(card.output, DiffPreview) and (diff := message.metadata.get("diff")):
+        card.output.restore(diff)
+    if "collapsed" in message.metadata:
+        card.collapsed = message.metadata["collapsed"]
+    return card
+
+
+def history_card(
+    message: HarnessMessage, provider: str = "nova", *, native_scrollback: bool = False
+) -> ChatMessage | Collapsible:
     """Create a read-only historical message or tool card."""
+    if native_scrollback and (message.tool_name or message.role == "tool"):
+        return saved_tool_card(message)
     content = message.content[:_TEXT_LIMIT]
     if len(message.content) > _TEXT_LIMIT:
         content += "\n\n[Display excerpt; complete text is retained in the source session.]"

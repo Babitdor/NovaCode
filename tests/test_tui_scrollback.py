@@ -4,16 +4,19 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from langchain_core.messages import AIMessage, HumanMessage
+import pytest
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from rich.text import Text
 from textual.app import App
 from textual.events import MouseScrollUp
+from textual.widgets import Button
 
 from novacode_cli.context.archives import RecoveryStore
 from novacode_cli.session.adapters import HarnessMessage
 from novacode_cli.tui import app as app_module
 from novacode_cli.tui import scrollback
 from novacode_cli.tui.app import NovaApp
+from novacode_cli.tui.code_mode_panel import CodeModePanel
 from novacode_cli.tui.widgets import ChatMessage, TranscriptScroll
 
 
@@ -51,28 +54,30 @@ async def test_older_pages_keep_the_visible_anchor_and_bound_widgets(monkeypatch
         assert [card.raw_text for card in page.query(ChatMessage)] == ["old 12", "old 13", "old 14"]
         assert live[0].region.y == live_top
 
+        assert not page.query(Button)
         for _ in range(3):
-            tr.scroll_home(animate=False, immediate=True)
-            await pilot.pause()
             anchor = page._pages[0][2]
-            original_top = anchor.region.y
-            tr.action_page_up()
+            if tr.scroll_y <= 1:
+                tr.action_page_up()
+            else:
+                tr.scroll_home(animate=False, immediate=True)
             await _settle(page, pilot)
-            assert anchor.region.y == original_top
-            assert len(page._pages) <= 2
+            assert anchor.region.y == tr.scrollable_content_region.y
+            assert len(page._pages) <= 3
 
         assert [card.raw_text for card in page.query(ChatMessage)] == [
-            "old 3",
-            "old 4",
-            "old 5",
-            "old 6",
-            "old 7",
-            "old 8",
+            f"old {i}" for i in range(3, 12)
         ]
-        assert page._newer_row.display
-        assert page.request(older=False)
+        assert page._gap.display
+        seam = page._gap.virtual_region.y
+        anchor = page._pages[-1][2]
+        target = seam - tr.scrollable_content_region.height + 1
+        expected_top = anchor.virtual_region.y - target
+        tr.scroll_to(y=target, animate=False, immediate=True)
         await _settle(page, pilot)
-        assert [card.raw_text for card in page.query(ChatMessage)][-1] == "old 11"
+        assert anchor.region.y == expected_top
+        assert [card.raw_text for card in page.query(ChatMessage)][-1] == "old 14"
+        assert not page._gap.display
         assert all(card.parent is tr for card in live)
 
 
@@ -124,3 +129,69 @@ def test_saved_scrollback_reaches_before_compaction_and_deduplicates(tmp_path, m
     )
     rows = scrollback.saved_rows(None, None, [marker, older], [visible], thread_id="current")
     assert [row.content for row in rows] == ["old prompt"]
+
+
+@pytest.mark.parametrize("name,args", [
+    ("grep", {"pattern": "test"}),
+    ("eval", {"code": "console.log('test')"}),
+])
+async def test_saved_and_pruned_tools_use_the_live_card_with_exact_details(name, args):
+    from novacode_cli.session.adapters.harness_native import normalize_messages
+
+    result = '[red]failed[/red]\nexact output'
+    call = {"name": name, "id": "call", "args": args}
+    records = normalize_messages([
+        AIMessage("", tool_calls=[call]),
+        ToolMessage(result, name=name, tool_call_id="call", status="error"),
+    ], pair_tools=True)
+    assert len(records) == 1
+    app = TranscriptApp()
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        live = CodeModePanel.for_call(name, args)
+        live.finish(result, is_error=True, preview="failed")
+        tr = app.query_one(TranscriptScroll)
+        tr.set_older_history(lambda: records)
+        tr.archive_removed([live])
+        await pilot.pause()
+        tr.action_page_up()
+        await _settle(tr._scrollback, pilot)
+
+        restored = list(tr.query(CodeModePanel))
+        assert len(restored) == 2
+        for card in restored:
+            assert card.heading.content == live.heading.content
+            assert card.preview.content == live.preview.content
+            assert card.has_class("tool", "failed")
+            assert card.collapsed and card.output is None
+            card.collapsed = False
+            await pilot.pause()
+            assert card.source.content.plain == live._source_text
+            assert card.output.content.plain == result
+
+
+async def test_pruned_edit_keeps_its_diff_preview():
+    from novacode_cli.tui.diff_preview import DiffPreview
+
+    app = TranscriptApp()
+    async with app.run_test(size=(110, 30)) as pilot:
+        tr = app.query_one(TranscriptScroll)
+        live = CodeModePanel.for_call("edit_file", {"path": "test.py"})
+        live.finish("Updated test.py", is_error=False, preview="+1 / -1")
+        diff = "@@ -1 +1 @@\n-old\n+new"
+        classic = Text("-old\n+new")
+        classic.stylize("green", 5)
+        live.output.set_diff(diff, "test.py", classic, "classic")
+        live.collapsed = False
+        tr.archive_removed([live])
+        await pilot.pause()
+        tr.action_page_up()
+        await _settle(tr._scrollback, pilot)
+
+        restored = tr.query_one(CodeModePanel)
+        assert not restored.collapsed
+        preview = restored.query_one(DiffPreview)
+        assert preview._classic == classic
+        assert preview._classic.spans == classic.spans
+        assert preview._rows == live.output._rows
+        assert preview._path == "test.py"

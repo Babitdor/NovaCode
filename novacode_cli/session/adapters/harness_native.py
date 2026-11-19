@@ -49,7 +49,9 @@ class NativeAdapter:
         )
 
 
-def normalize_messages(source: list["BaseMessage"]) -> list[HarnessMessage]:
+def normalize_messages(
+    source: list["BaseMessage"], *, pair_tools: bool = False
+) -> list[HarnessMessage]:
     """Project saved messages as read-only transcript rows."""
     roles: dict[str, Literal["user", "assistant", "tool", "system"]] = {
         "human": "user",
@@ -59,19 +61,43 @@ def normalize_messages(source: list["BaseMessage"]) -> list[HarnessMessage]:
     }
     messages = []
     names: dict[str, str] = {}
+    results = {}
+    paired = set()
+    if pair_tools:
+        results = {
+            message.tool_call_id: message
+            for message in source
+            if message.type == "tool" and getattr(message, "tool_call_id", None)
+        }
+        paired = {
+            call["id"]
+            for message in source
+            for call in getattr(message, "tool_calls", [])
+            if call["id"] in results
+        }
     for message in source:
         content = text_content(message.content)
         call_id = getattr(message, "tool_call_id", None)
+        if message.type == "tool" and call_id in paired:
+            continue
+        calls = getattr(message, "tool_calls", [])
+        if pair_tools:
+            messages.extend(tool_row(call, results.get(call["id"])) for call in calls)
         if content or message.type == "tool":
             messages.append(
                 HarnessMessage(
                     roles.get(message.type, "system"),
                     content,
                     tool_name=getattr(message, "name", None) or names.get(call_id or ""),
-                    metadata={"call_id": call_id} if call_id else {},
+                    metadata={
+                        **({"call_id": call_id} if call_id else {}),
+                        **({"is_error": True} if getattr(message, "status", None) == "error" else {}),
+                    },
                 )
             )
-        for call in getattr(message, "tool_calls", []):
+        if pair_tools:
+            continue
+        for call in calls:
             names[call["id"]] = call["name"]
             messages.append(
                 HarnessMessage(
@@ -82,3 +108,17 @@ def normalize_messages(source: list["BaseMessage"]) -> list[HarnessMessage]:
                 )
             )
     return messages
+
+
+def tool_row(call: dict, result: "BaseMessage | None") -> HarnessMessage:
+    """Keep a saved invocation and its result together across page boundaries."""
+    return HarnessMessage(
+        "tool",
+        text_content(result.content) if result is not None else "No recorded result.",
+        tool_name=call.get("name") or "tool",
+        metadata={
+            "arguments": call.get("args") or {},
+            "is_error": result is not None and getattr(result, "status", "success") != "success",
+            "interrupted": result is None,
+        },
+    )

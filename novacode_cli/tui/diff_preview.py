@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from itertools import zip_longest
 from typing import TYPE_CHECKING
 
@@ -114,6 +114,29 @@ class DiffPreview(Static):
         self._path = path
         self._highlighted.clear()
         self.set_preview_style(style)
+
+    def archive(self) -> dict | None:
+        """Keep the recorded preview without retaining the removed widget."""
+        if self._classic is None:
+            return None
+        return {
+            "classic": self._classic.markup,
+            "rows": [asdict(row) for row in self._rows],
+            "path": self._path,
+        }
+
+    def restore(self, archive: dict) -> None:
+        """Rebuild a recorded preview without reading current files."""
+        self._classic = Text.from_markup(archive["classic"])
+        self._rows = [
+            DiffRow(
+                DiffLine(**row["before"]) if row["before"] else None,
+                DiffLine(**row["after"]) if row["after"] else None,
+                row["note"],
+            )
+            for row in archive["rows"]
+        ]
+        self._path = archive["path"]
 
     def set_preview_style(self, style: str) -> None:
         """Reflow this preview immediately, including previously completed edits."""
