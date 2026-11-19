@@ -122,7 +122,8 @@ async def test_cancelled_cold_start_never_publishes_its_slot(monkeypatch):
     assert mode._registry.get_if_exists("slow") is None
 
 
-async def test_settled_race_cancels_loser_and_returns_winner():
+@pytest.mark.parametrize("prefix", ["", "await "])
+async def test_settled_race_cancels_loser_and_returns_winner(prefix):
     started, stopped = asyncio.Event(), asyncio.Event()
     late_calls = []
 
@@ -153,7 +154,7 @@ async def test_settled_race_cancels_loser_and_returns_winner():
         [
             (
                 "eval",
-                "await Promise.race(["
+                prefix + "Promise.race(["
                 "tools.call('slow_read').catch(() => tools.call('late_read').catch(() => null)), "
                 "tools.call('fast_read')]);",
             )
@@ -168,6 +169,129 @@ async def test_settled_race_cancels_loser_and_returns_winner():
     assert [item["status"] for item in result["outcomes"]] == ["cancelled", "completed"]
     assert stopped.is_set()
     assert not late_calls
+
+
+@pytest.mark.parametrize(
+    ("code", "expected"),
+    [
+        ("tools.call('mock_read')", "41"),
+        ("(async () => 1 + await tools.call('mock_read'))()", "42"),
+        ("await tools.call('mock_read')", "41"),
+    ],
+)
+async def test_eval_finishes_the_final_tool_promise(code, expected):
+    @tool
+    async def mock_read() -> int:
+        """Return a delayed result."""
+        await asyncio.sleep(0.02)
+        return 41
+
+    get_policy().tool_tiers["mock_read"] = "allow"
+    graph = scripted([("eval", code)], tools=[mock_read], middleware=[CodeModeMiddleware()])
+    message = await invoke(graph)
+    receipt = json.loads(message.content)
+    assert message.status == "success", receipt
+    assert receipt["result"] == expected
+    assert receipt["outcomes"][0]["status"] == "completed"
+
+
+async def test_stop_keeps_receipt_and_defers_closing_the_worker(monkeypatch):
+    from novacode_cli import ui_events as ev
+    from novacode_cli.agents import code_runtime
+    from novacode_cli.core.agent_loop import iterate_agent_events
+    from novacode_cli.states.Session import SessionState
+    from tests.test_agent_invocation import ScriptedModel as StreamingModel
+
+    running, unwinding = asyncio.Event(), asyncio.Event()
+    release, closed = threading.Event(), threading.Event()
+    outer_loop = asyncio.get_running_loop()
+    original_eval = code_runtime._eval_snippet
+    mode = CodeModeMiddleware()
+    original_close = mode._registry._close_slot
+
+    async def slow_unwind(*args):
+        try:
+            return await original_eval(*args)
+        except asyncio.CancelledError:
+            outer_loop.call_soon_threadsafe(unwinding.set)
+            assert await asyncio.to_thread(release.wait, 10)
+            raise
+
+    def close(slot):
+        original_close(slot)
+        closed.set()
+
+    monkeypatch.setattr(code_runtime, "_eval_snippet", slow_unwind)
+    monkeypatch.setattr(mode._registry, "_close_slot", close)
+
+    @tool
+    async def mock_operation(value: int) -> str:
+        """Return a result or wait to be stopped."""
+        if value == 2:
+            running.set()
+            await asyncio.Future()
+        return "done"
+
+    get_policy().tool_tiers["mock_operation"] = "allow"
+    code = (
+        "await tools.call('mock_operation', {value: 1}); "
+        "await tools.checkpoint('first', 'done'); "
+        "await tools.call('mock_operation', {value: 2});"
+    )
+    session = SessionState()
+    call = {"id": "eval-stop", "name": "eval", "args": {"code": code}}
+    graph = create_agent(
+        StreamingModel(
+            responses=[AIMessage(content="", tool_calls=[call]), AIMessage(content="Continued")]
+        ),
+        tools=[mock_operation],
+        middleware=[mode],
+        checkpointer=InMemorySaver(),
+    )
+
+    async def consume():
+        return [
+            event async for event in iterate_agent_events("Run operations", graph, "nova", session)
+        ]
+
+    turn = asyncio.create_task(consume())
+    try:
+        await asyncio.wait_for(running.wait(), timeout=8)
+        turn.cancel()
+        events = await asyncio.wait_for(turn, timeout=5)
+        await asyncio.wait_for(unwinding.wait(), timeout=3)
+        assert isinstance(events[-1], ev.Cancelled)
+        assert mode._registry.get_if_exists(session.thread_id) is None
+        assert not closed.is_set()
+        state = await graph.aget_state({"configurable": {"thread_id": session.thread_id}})
+        messages = state.values["messages"]
+        receipt = next(message for message in messages if isinstance(message, ToolMessage))
+        assert receipt.tool_call_id == "eval-stop"
+        assert messages[messages.index(receipt) - 1].tool_calls[0]["id"] == receipt.tool_call_id
+        data = json.loads(receipt.content)
+        assert data["checkpoints"] == {"first": "done"}
+        assert [item["status"] for item in data["outcomes"]] == [
+            "completed",
+            "completed",
+            "cancelled",
+        ]
+        assert [event.full_output for event in events if isinstance(event, ev.ToolResult)] == [
+            receipt.content
+        ]
+        resumed = await graph.ainvoke(
+            {"messages": [HumanMessage("Continue")]},
+            {"configurable": {"thread_id": session.thread_id}},
+        )
+        assert resumed["messages"][-1].content == "Continued"
+        assert [m.tool_call_id for m in resumed["messages"] if isinstance(m, ToolMessage)] == [
+            "eval-stop"
+        ]
+    finally:
+        release.set()
+        if not turn.done():
+            turn.cancel()
+        await asyncio.gather(turn, return_exceptions=True)
+    assert await asyncio.to_thread(closed.wait, 6)
 
 
 async def test_bootstrap_recovers_reassigned_tools_in_same_turn():
@@ -791,6 +915,34 @@ async def test_real_deepagents_task_uses_unified_interpreter():
     result = await invoke(graph)
     assert result.status == "success", result.content
     assert json.loads(result.content)["result"] == "CHILD_RESULT"
+
+
+async def test_unknown_subagent_is_reported_as_failed():
+    from deepagents import create_deep_agent
+
+    call = {
+        "id": "delegate",
+        "name": "eval",
+        "args": {
+            "code": "await task({subagentType:'missing-reviewer', description:'Review a file'})"
+        },
+    }
+    parent = ScriptedModel(
+        messages=iter(
+            [
+                AIMessage(content="", tool_calls=[call]),
+                AIMessage(content="done"),
+            ]
+        )
+    )
+    get_policy().tool_tiers["task"] = "allow"
+    graph = create_deep_agent(model=parent, middleware=[CodeModeMiddleware()])
+    message = await invoke(graph)
+    data = json.loads(message.content)
+    assert message.status == "error", data
+    assert "missing-reviewer" in data["error"]
+    assert data["failed_calls"] == 1
+    assert data["outcomes"][0]["status"] == "failed"
 
 
 async def test_composed_native_mcp_parallel_delegation_keeps_intermediates_private(tmp_path):

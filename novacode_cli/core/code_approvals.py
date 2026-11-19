@@ -11,6 +11,9 @@ from uuid import uuid4
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from langchain_core.messages import ToolMessage
+    from langchain_core.messages.tool import ToolCall
+
 
 class CodeApprovals:
     """Keep futures in the host; custom stream events carry only opaque IDs."""
@@ -18,6 +21,7 @@ class CodeApprovals:
     def __init__(self, valid: Callable[[], bool] = lambda: True) -> None:
         """Start a broker scoped to one live invocation."""
         self.pending: dict[str, tuple[dict, asyncio.Future]] = {}
+        self.interrupted: dict[str, tuple[ToolCall, ToolMessage]] = {}
         self.active = True
         self.valid = valid
 

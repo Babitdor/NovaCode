@@ -104,7 +104,6 @@ async def verify() -> None:
     middleware = CodeModeMiddleware()
     assert {tool.name for tool in middleware.tools} == {"eval", "MCPCode"}
     thread = middleware._fallback_thread_id
-    repl = middleware._registry.get(thread)
 
     async def dispatch(raw: str) -> str:
         payload = json.loads(raw)
@@ -120,11 +119,14 @@ async def verify() -> None:
         for code, expected in (
             ("globalThis.installedValue = 40; return installedValue;", 40),
             ("return await tools.call('echo', {value: installedValue + 2});", 42),
+            ("tools.call('echo', {value: installedValue + 2})", "42"),
         ):
             result, error = await run_script(
                 code,
                 dispatch,
-                repl=repl,
+                registry=middleware._registry,
+                thread=thread,
+                expression=isinstance(expected, str),
                 cpu_timeout=2,
                 wall_timeout=30,
                 memory_limit=64 * 1024 * 1024,

@@ -72,6 +72,8 @@ from novacode_cli import ui_events as ev
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
+    from langchain_core.messages.tool import ToolCall
+
 _HITL_REQUEST_ADAPTER = TypeAdapter(HITLRequest)
 
 
@@ -159,7 +161,11 @@ def default_interrupt_response(kind: str) -> Any:
 _CANCEL_NOTICE = "[The previous request was interrupted before it finished]"
 
 
-async def _record_cancellation(agent: Any, config: Any) -> None:
+async def _record_cancellation(
+    agent: Any,
+    config: Any,
+    interrupted: dict[str, tuple[ToolCall, ToolMessage]] | None = None,
+) -> None:
     """Record a cancelled turn in the agent's history, leaving it well-formed.
 
     Cancelling while a tool runs is the common case: the model's tool-calling
@@ -188,23 +194,39 @@ async def _record_cancellation(agent: Any, config: Any) -> None:
     except Exception:  # noqa: BLE001 — recording the notice must not depend on this
         history = []
 
+    receipts = dict(interrupted or {})
+    answered = {
+        getattr(m, "tool_call_id", None) for m in history if getattr(m, "type", "") == "tool"
+    }
     last = history[-1] if history else None
     if isinstance(last, AIMessage) and last.tool_calls:
-        answered = {
-            getattr(m, "tool_call_id", None) for m in history if getattr(m, "type", "") == "tool"
-        }
-        results = [
-            ToolMessage(
-                content="Cancelled by the user before it finished; no result.",
-                tool_call_id=call["id"],
-                name=call.get("name") or "unknown",
+        results = []
+        for call in last.tool_calls:
+            call_id = call["id"]
+            if not call_id or call_id in answered:
+                continue
+            receipt = receipts.pop(call_id, None)
+            results.append(
+                receipt[1]
+                if receipt is not None
+                else ToolMessage(
+                    content="Cancelled by the user before it finished; no result.",
+                    tool_call_id=call_id,
+                    name=call.get("name") or "unknown",
+                )
             )
-            for call in last.tool_calls
-            if call.get("id") and call["id"] not in answered
-        ]
         messages = [*results, *messages]
+    missing = [
+        (call, receipt) for call_id, (call, receipt) in receipts.items() if call_id not in answered
+    ]
+    if missing:
+        # Exit-only checkpoints can lose the in-flight model message on Stop.
+        recovered = AIMessage(content="", tool_calls=[call for call, _ in missing])
+        messages[-1:-1] = [recovered, *(receipt for _, receipt in missing)]
 
-    await agent.aupdate_state(config=config, values={"messages": messages}, as_node="model")
+    # Tool receipts complete the interrupted tool step and route back to the model.
+    node = "tools" if len(messages) > 1 else "model"
+    await agent.aupdate_state(config=config, values={"messages": messages}, as_node=node)
 
 
 async def _safe_stream(stream_gen: AsyncIterator[Any]) -> AsyncIterator[Any]:
@@ -1543,15 +1565,24 @@ async def _iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
                 await asyncio.wait_for(asyncio.shield(_gen.aclose()), timeout=2.0)
             except Exception:
                 pass
+        receipts = dict(code_approvals.interrupted)
         try:
             await asyncio.wait_for(
-                asyncio.shield(
-                    _record_cancellation(agent, config)
-                ),
+                asyncio.shield(_record_cancellation(agent, config, receipts)),
                 timeout=3.0,
             )
         except Exception:
             pass
+        for _, receipt in receipts.values():
+            content = str(receipt.content)
+            if tool_pii is not None:
+                content = tool_pii.redact(content)
+            yield ev.ToolResult(
+                preview="Code Mode interrupted",
+                is_error=True,
+                full_output=content,
+                call_id=receipt.tool_call_id,
+            )
         yield ev.Cancelled()
         return
 

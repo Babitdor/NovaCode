@@ -134,10 +134,21 @@ async def open_repl(registry: _Registry, thread: str) -> Any:
 
 
 async def _eval_snippet(
-    repl: Any, source: str, runtime: Any, outer_loop: asyncio.AbstractEventLoop
-) -> Any:
+    repl: Any,
+    source: str,
+    runtime: Any,
+    outer_loop: asyncio.AbstractEventLoop,
+    proxy: StructuredTool,
+) -> tuple[Any, str | None]:
     """Cancel orphaned calls on settlement before QuickJS joins its TaskGroup."""
+    await repl._ainstall_tools([proxy])
+    symbol = json.dumps(repl._bridge_symbols["novaDispatch"])
+    setup = await repl._aeval_async(f"globalThis.__nova_mcp = globalThis[{symbol}];{BOOTSTRAP}")
+    if setup.error_type:
+        return None, setup.error_message
     ctx = repl._require_ctx()
+    # Script-mode QuickJS first resolves an envelope whose value can still be a Promise.
+    adopt = ctx.eval_handle("(async envelope => ({value: await (await envelope).value}))")
     drive = ctx._run_inside_task_group
 
     def cancel_orphans() -> None:
@@ -157,10 +168,11 @@ async def _eval_snippet(
 
     async def drive_until_settled(get_handle: Callable[[], Handle], deadline: float) -> Handle:
         def tracked_handle() -> Handle:
-            handle = get_handle()
-            if not handle.is_promise():
-                cancel_orphans()
-                return handle
+            original = get_handle()
+            try:
+                handle = adopt.call(original)
+            finally:
+                original.dispose()
             dispose = handle.dispose
 
             def settle() -> None:
@@ -179,9 +191,60 @@ async def _eval_snippet(
     # before joining pending host calls. Keep the hook local to this eval.
     ctx._run_inside_task_group = drive_until_settled
     try:
-        return await repl._aeval_async(source, outer_runtime=runtime, outer_loop=outer_loop)
+        outcome = await repl._aeval_async(source, outer_runtime=runtime, outer_loop=outer_loop)
+        return outcome, None
     finally:
         del ctx._run_inside_task_group
+        adopt.dispose()
+
+
+_background_closures: set[asyncio.Task[None]] = set()
+
+
+async def _close_after_eval(
+    registry: _Registry, slot: _Slot, evaluation: asyncio.Future[Any]
+) -> None:
+    await asyncio.gather(evaluation, return_exceptions=True)
+    await asyncio.to_thread(_close_unused_slot, registry, slot)
+
+
+async def _run_worker(
+    registry: _Registry,
+    thread: str,
+    repl: Any,
+    source: str,
+    runtime: Any,
+    proxy: StructuredTool,
+) -> tuple[Any, str | None]:
+    worker_task: asyncio.Task[Any] | None = None
+    cancel_requested = False
+    outer_loop = asyncio.get_running_loop()
+
+    async def evaluate() -> tuple[Any, str | None]:
+        nonlocal worker_task
+        worker_task = asyncio.current_task()
+        if cancel_requested:
+            raise asyncio.CancelledError
+        return await _eval_snippet(repl, source, runtime, outer_loop, proxy)
+
+    def cancel_evaluation() -> None:
+        nonlocal cancel_requested
+        cancel_requested = True
+        if worker_task is not None:
+            worker_task.cancel()
+
+    evaluation = repl._worker.run_async(evaluate())
+    try:
+        return await asyncio.shield(evaluation)
+    except asyncio.CancelledError:
+        repl._worker._loop.call_soon_threadsafe(cancel_evaluation)
+        with registry._lock:
+            slot = registry._slots.pop(thread, None)
+        if slot is not None:
+            close = asyncio.create_task(_close_after_eval(registry, slot, evaluation))
+            _background_closures.add(close)
+            close.add_done_callback(_background_closures.discard)
+        raise
 
 
 async def _cancel_host_calls(pending: set[asyncio.Task[str]]) -> None:
@@ -212,7 +275,10 @@ async def _script_deadline(seconds: float) -> AsyncIterator[None]:
     except TimeoutError as exc:
         if not timeout.expired():
             raise
-        message = f"Script exceeded its {seconds:g}s Code Mode wall timeout."
+        message = (
+            f"Script exceeded its {seconds:g}s Code Mode wall timeout. "
+            "Unsaved JavaScript state was cleared."
+        )
         raise TimeoutError(message) from exc
 
 
@@ -223,13 +289,14 @@ async def run_script(
     cpu_timeout: float,
     wall_timeout: float,
     memory_limit: int,
-    repl: Any = None,
+    registry: _Registry | None = None,
+    thread: str = "call",
     runtime: Any = None,
     expression: bool = False,
 ) -> tuple[Any, str | None]:
     """Install only a guarded proxy, never raw native or subagent tools."""
-    registry = None
-    if repl is None:
+    owns_registry = registry is None
+    if registry is None:
         registry = _Registry(
             memory_limit=memory_limit,
             timeout=cpu_timeout,
@@ -260,23 +327,15 @@ async def run_script(
         name="nova_dispatch", description="Guarded Nova host dispatch.", coroutine=guarded
     )
     try:
-        if registry is not None:
-            repl = await open_repl(registry, "call")
+        repl = await open_repl(registry, thread)
         async with _script_deadline(wall_timeout):
             parent = contextvars.copy_context()
-            await asyncio.to_thread(repl.install_tools, [proxy])
-            symbol = json.dumps(repl._bridge_symbols["novaDispatch"])
-            setup = await repl.eval_async(
-                f"globalThis.__nova_mcp = globalThis[{symbol}];{BOOTSTRAP}"
-            )
-            if setup.error_type:
-                return None, setup.error_message
             source = (
                 code if expression else ("JSON.stringify(await (async () => {\n" + code + "\n})())")
             )
-            outcome = await repl._worker.run_async(
-                _eval_snippet(repl, source, runtime, asyncio.get_running_loop())
-            )
+            outcome, error = await _run_worker(registry, thread, repl, source, runtime, proxy)
+            if error is not None:
+                return None, error
             if outcome.error_type:
                 if outcome.error_type == "Timeout":
                     return None, f"QuickJS exceeded its {cpu_timeout:g}s interpreter timeout."
@@ -292,5 +351,5 @@ async def run_script(
         try:
             await _cancel_host_calls(pending)
         finally:
-            if registry is not None:
-                await registry.aevict("call")
+            if owns_registry:
+                await registry.aevict(thread)

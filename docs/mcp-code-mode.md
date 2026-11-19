@@ -71,7 +71,10 @@ Argument-repair notices use the same separation, including when diagnostics stac
 ## JavaScript API
 
 `eval` accepts JavaScript statements and expressions, including top-level `await`.
-The final expression selects the result sent to the parent model. `console.log`,
+The final expression selects the result sent to the parent model. When it returns
+a promise, Nova waits for that promise before selecting the result. A successful
+race keeps its winning value and records cancelled operations separately.
+`console.log`,
 `console.warn` and `console.error` provide bounded explicit output. Intermediate
 tool values and child transcripts stay outside parent model history; normal
 execution traces and subagent progress remain available separately.
@@ -170,7 +173,9 @@ atomic. A failed save or unavailable store produces an explicit notice and no
 Normal read and intermediate-result limits still apply to recovery; console output
 retains its separate runtime cap. Hidden intermediate tool values are not archived.
 Inspect ordered `outcomes` (and `outcomes_omitted`) before retrying any failed script;
-never replay completed operations to recover their results.
+never replay completed operations to recover their results. When you press Stop,
+the interrupted tool card and the next turn retain the snippet's recorded outcomes
+and named checkpoints. Already-started external operations may still finish.
 For Markdown writes, arrays of quoted lines joined with `"\n"` avoid nesting
 Markdown backticks inside JavaScript template literals. Syntax failures include
 quoting guidance; Nova does not rewrite or automatically retry the script.

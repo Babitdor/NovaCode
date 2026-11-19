@@ -44,7 +44,18 @@ def summarize_run(
     return _summarize(data, is_error=is_error, preview=preview, fallback=fallback)
 
 
-def _summarize(data: object, *, is_error: bool, preview: str, fallback: str) -> tuple[str, str, bool]:
+def _cancelled_count(data: object) -> int:
+    outcomes = data.get("outcomes") if isinstance(data, dict) else None
+    return (
+        sum(isinstance(item, dict) and item.get("status") == "cancelled" for item in outcomes)
+        if isinstance(outcomes, list)
+        else 0
+    )
+
+
+def _summarize(
+    data: object, *, is_error: bool, preview: str, fallback: str
+) -> tuple[str, str, bool]:
     title = fallback
     failed = is_error
     note = ""
@@ -70,10 +81,7 @@ def _summarize(data: object, *, is_error: bool, preview: str, fallback: str) -> 
             failed
             or bool(data.get("error"))
             or (type(failures) is int and failures > 0)
-            or any(
-                item.get("status") == "failed" or item.get("status") == "cancelled"
-                for item in outcomes
-            )
+            or any(item.get("status") == "failed" for item in outcomes)
         )
         error = data.get("error")
         if isinstance(error, str):
@@ -86,6 +94,10 @@ def _summarize(data: object, *, is_error: bool, preview: str, fallback: str) -> 
                     break
         omitted = data.get("outcomes_omitted")
         notes = [note] if note else []
+        cancelled = _cancelled_count(data)
+        if cancelled:
+            noun = "operation" if cancelled == 1 else "operations"
+            notes.append(f"{cancelled} {noun} cancelled.")
         if type(omitted) is int and omitted > 0:
             notes.append(f"{omitted} operation records omitted; inspect Full output for details.")
         notes.extend(
@@ -181,9 +193,9 @@ class CodeModePanel(Collapsible):
     @property
     def unmounted_detail_chars(self) -> int:
         """Count retained text even while its disclosure widgets are absent."""
-        return (len(self._source_text) if self.source is None or not self.source.is_mounted else 0) + (
-            len(self._output_text) if self.output is None or not self.output.is_mounted else 0
-        )
+        return (
+            len(self._source_text) if self.source is None or not self.source.is_mounted else 0
+        ) + (len(self._output_text) if self.output is None or not self.output.is_mounted else 0)
 
     async def on_mount(self) -> None:
         if not self.collapsed:
@@ -248,6 +260,7 @@ class CodeModePanel(Collapsible):
         self.note.display = bool(note) and (
             failed
             or (isinstance(data, dict) and bool(data.get("truncated") or data.get("state_warning")))
+            or _cancelled_count(data) > 0
         )
         if isinstance(self.output, Static):
             self.output.update(Text(self._output_text))

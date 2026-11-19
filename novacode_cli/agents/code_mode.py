@@ -525,11 +525,7 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
             lock = self._execution_locks.setdefault(thread, asyncio.Lock())
             # One persistent VM per conversation; queue separate scripts, not their host calls.
             async with lock:
-                try:
-                    return await self._execute(request, handler, params.code)
-                except asyncio.CancelledError:
-                    await self._registry.aevict(thread)
-                    raise
+                return await self._execute(request, handler, params.code)
 
         # Execute inside ToolNode, so tool callbacks and downstream wrappers see
         # the actual duration, result and failures, not a preliminary probe.
@@ -618,14 +614,14 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
 
         try:
             thread = _resolve_thread_id(self._fallback_thread_id)
-            repl = await open_repl(self._registry, thread)
             result, error = await run_script(
                 code,
                 dispatch,
                 cpu_timeout=self._cpu_timeout,
                 wall_timeout=self._wall_timeout,
                 memory_limit=self._memory_limit,
-                repl=repl,
+                registry=self._registry,
+                thread=thread,
                 runtime=request.runtime,
                 expression=request.tool_call["name"] == "eval",
             )
@@ -671,10 +667,19 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
             if updates:
                 return Command(update={**updates, "messages": [message]})
             return message  # noqa: TRY300 -- same error boundary covers output serialization.
-        except Exception as exc:
-            hint = _recovery_hint(exc, outcomes, omitted=calls > len(outcomes))
+        except (Exception, asyncio.CancelledError) as exc:
+            failure = (
+                ValueError("Code Mode interrupted.")
+                if isinstance(exc, asyncio.CancelledError)
+                else exc
+            )
+            hint = _recovery_hint(failure, outcomes, omitted=calls > len(outcomes))
             body = {
-                "error": f"{type(exc).__name__}: {exc}"[:4000],
+                "error": (
+                    str(failure)
+                    if isinstance(exc, asyncio.CancelledError)
+                    else f"{type(failure).__name__}: {failure}"[:4000]
+                ),
                 "calls": calls,
                 "failed_calls": failures,
                 "outcomes": outcomes,
@@ -690,6 +695,13 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
                 request,
                 json.dumps(body),
             )
+            if isinstance(exc, asyncio.CancelledError):
+                from novacode_cli.core.code_approvals import current_code_approvals
+
+                broker = current_code_approvals.get()
+                if broker is not None and broker.valid() and (call_id := message.tool_call_id):
+                    broker.interrupted[call_id] = (request.tool_call, message)
+                raise
             return Command(update={**updates, "messages": [message]}) if updates else message
 
     async def _native(
@@ -814,6 +826,11 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
         target = next((t for t in request.runtime.tools if t.name == "task"), None)
         if target is None:
             raise ValueError("No subagent task tool configured.")
+        roster = (target.metadata or {}).get("nova_subagent_names")
+        if roster is not None and params.subagent_type not in roster:
+            raise ValueError(
+                f"Unknown subagent {params.subagent_type!r}; use tools.describe('task')."
+            )
         if params.response_schema is not None:
             _validate_response_schema(params.response_schema)
             runtime = _runtime_with_response_format(
@@ -853,6 +870,14 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
                     updates=updates,
                     call_id=task_id,
                 )
+            if (
+                roster is None
+                and isinstance(value, str)
+                and value.startswith(
+                    f"We cannot invoke subagent {params.subagent_type} because it does not exist,"
+                )
+            ):
+                raise ValueError(value)
             if params.response_schema is not None and isinstance(value, str):
                 value = json.loads(value)
             if params.response_schema is not None:

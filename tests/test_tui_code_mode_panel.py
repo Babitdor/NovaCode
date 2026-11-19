@@ -25,6 +25,37 @@ def test_success_title_is_only_the_recorded_tool_names():
     assert not failed
 
 
+@pytest.mark.asyncio
+async def test_successful_race_keeps_success_status_and_shows_the_cancelled_operation():
+    from textual.app import App, ComposeResult
+
+    panel = CodeModePanel("await Promise.race(...)")
+
+    class Preview(App):
+        def compose(self) -> ComposeResult:
+            yield panel
+
+    async with Preview().run_test():
+        panel.finish(
+            json.dumps(
+                {
+                    "result": "fast",
+                    "failed_calls": 0,
+                    "outcomes": [
+                        {"tool_name": "slow_read", "status": "cancelled"},
+                        {"tool_name": "fast_read", "status": "completed"},
+                    ],
+                }
+            ),
+            is_error=False,
+            preview="fast",
+        )
+        assert panel.heading.render().plain.startswith("Ran ")
+        assert not panel.has_class("failed")
+        assert panel.note.display
+        assert "1 operation cancelled." in str(panel.note.render())
+
+
 def test_summary_uses_recorded_calls_and_marks_caught_failures():
     output = json.dumps(
         {

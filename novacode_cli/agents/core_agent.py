@@ -191,12 +191,16 @@ from novacode_cli.core.subagent_tasks import TASK_ID_METADATA_KEY  # noqa: E402
 _original_build_task_tool = _dsub._build_task_tool
 
 
-def _build_task_tool_with_task_id(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+def _build_task_tool_with_task_id(subagents, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
     import functools
 
     from langchain_core.runnables.config import var_child_runnable_config
 
-    tool = _original_build_task_tool(*args, **kwargs)
+    tool = _original_build_task_tool(subagents, *args, **kwargs)
+    tool.metadata = {
+        **(tool.metadata or {}),
+        "nova_subagent_names": tuple(spec["name"] for spec in subagents),
+    }
 
     def _stamp(call_kwargs: dict):  # noqa: ANN202
         config = dict(var_child_runnable_config.get() or {})
