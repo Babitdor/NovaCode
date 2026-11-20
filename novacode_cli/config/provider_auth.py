@@ -389,6 +389,19 @@ def get_provider_auth_status(
         return ProviderAuthStatus(name=name, state=ProviderAuthState.NOT_REQUIRED,
                                   env_var=env_var, detail="optional API key")
 
+    if _store_unreadable(store):
+        # The key may well be stored: a locked or absent keychain cannot answer.
+        # Saying "not set" here would send the user to re-enter a key they have.
+        return ProviderAuthStatus(
+            name=name,
+            state=ProviderAuthState.MISSING,
+            env_var=env_var,
+            detail=(
+                "could not read the credential store; unlock it, "
+                f"or set {env_var} in the environment"
+            ),
+        )
+
     return ProviderAuthStatus(
         name=name,
         state=ProviderAuthState.MISSING,
@@ -436,3 +449,20 @@ def _preset(name: str) -> dict[str, object] | None:
 def _env_value(env_var: str) -> str | None:
     """Read an environment variable, treating empty as unset."""
     return os.environ.get(env_var) or None
+
+
+def _store_unreadable(store: object) -> bool:
+    """Whether *store* could not answer a read, when it is able to say so.
+
+    Only :class:`novacode_cli.config.credentials.CredentialStore` can tell the
+    difference between "nothing stored" and "the store could not be read"; a
+    substitute that cannot is treated as readable, keeping this a pure addition.
+
+    Args:
+        store: The credential store a status was resolved against.
+
+    Returns:
+        ``True`` only when the store reports that it could not answer.
+    """
+    unreadable = getattr(store, "store_unreadable", None)
+    return bool(unreadable()) if callable(unreadable) else False

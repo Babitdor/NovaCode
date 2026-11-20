@@ -129,6 +129,7 @@ class CredentialStore:
         """
         self._manager = manager
         self._resolved = manager is not None
+        self._read_failed = False
 
     @property
     def manager(self) -> SecretManager | None:
@@ -157,8 +158,22 @@ class CredentialStore:
             value = self.manager.get_secret(env_var_to_secret_name(env_var))
         except Exception:  # noqa: BLE001 — a broken keyring must not break the caller
             logger.warning("Could not read stored credential for %s", env_var)
+            self._read_failed = True
             return None
         return value or None
+
+    def store_unreadable(self) -> bool:
+        """Whether a read could not be answered, for callers reporting *why*.
+
+        "You have not set a key" and "the keychain could not be read" look
+        identical from :meth:`has_key` alone, and only one of them is the user's
+        configuration. Status badges consult this so a locked keychain does not
+        send the user to re-enter a key that is already stored.
+
+        Returns:
+            ``True`` when there is no store, or when the last read raised.
+        """
+        return self.manager is None or self._read_failed
 
     def has_key(self, env_var: str) -> bool:
         """Whether a credential is stored for *env_var*.

@@ -209,3 +209,70 @@ def test_provider_without_a_known_default_asks_for_a_model(monkeypatch):
     _clear(monkeypatch, *_FALLBACK_VARS)
     with pytest.raises(ValueError, match="ASYNC_AGENT_MODEL"):
         build_async_agent_model()
+
+# --- a key that exists only in the credential store --------------------------
+#
+# A key entered through /auth lives in the OS keychain and reaches os.environ
+# only during startup hydration, so on a fresh session the environment is empty.
+# Every client that reads os.environ alone therefore has to be handed the key
+# explicitly, and that hand-off is what these tests pin.
+
+
+class _KeychainOnly:
+    """SecretManager stub holding one key, exactly as /auth leaves it."""
+
+    _keys = {"minimax_api_key": "mm-from-keychain", "nvidia_api_key": "nvapi-from-keychain"}
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def get_secret(self, name):
+        return self._keys.get(name)
+
+    def store_secret(self, name, value):
+        return True
+
+    def delete_secret(self, name):
+        return True
+
+
+def test_minimax_reads_a_keychain_only_key(monkeypatch):
+    monkeypatch.setattr("novacode_cli.onboarding.SecretManager", _KeychainOnly)
+    _clear(monkeypatch, "MINIMAX_API_KEY")
+
+    model = build_chat_model("minimax", "MiniMax-M3")
+
+    assert model.anthropic_api_key.get_secret_value() == "mm-from-keychain"
+
+
+def test_nvidia_hands_a_keychain_only_key_to_the_client(monkeypatch):
+    """The NIM client takes the key as a constructor argument, not from env."""
+    from novacode_cli.config import model_create
+
+    captured = {}
+
+    class _Capturing:
+        metadata = None
+
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr("langchain_nvidia_ai_endpoints.ChatNVIDIA", _Capturing)
+    monkeypatch.setattr(model_create.settings, "nvidia_api_key", "nvapi-from-keychain")
+    _clear(monkeypatch, "NVIDIA_API_KEY")
+
+    build_chat_model("nvidia", "deepseek-ai/deepseek-v4-pro-0813")
+
+    assert captured["api_key"] == "nvapi-from-keychain"
+
+
+def test_google_oauth_selected_without_credentials_asks_to_reconnect(monkeypatch):
+    """A half-finished sign-in must not build a client that 401s on first use."""
+    from novacode_cli.config import google_oauth_auth
+
+    _clear(monkeypatch, "GOOGLE_API_KEY", "GEMINI_API_KEY")
+    monkeypatch.setattr(google_oauth_auth, "use_oauth", lambda *, has_key: True)
+    monkeypatch.setattr(google_oauth_auth, "has_credentials", lambda: False)
+
+    with pytest.raises(ValueError, match="Google sign-in is selected but missing"):
+        build_chat_model("google", "gemini-3-pro-preview")
