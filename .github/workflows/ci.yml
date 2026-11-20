@@ -283,6 +283,45 @@ jobs:
           } finally {
             Pop-Location
           }
+      - name: Check the installed updater end to end
+        run: |
+          $repoVersion = uv run --no-sync python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $root = Join-Path $env:RUNNER_TEMP 'nova-updater-check'
+          Remove-Item -Recurse -Force $root -ErrorAction SilentlyContinue
+          Push-Location $env:RUNNER_TEMP
+          try {
+            # A registry install must be able to ask GitHub and PyPI what is available.
+            $env:UV_TOOL_DIR = Join-Path $root 'registry'
+            $env:UV_TOOL_BIN_DIR = Join-Path $root 'registry-bin'
+            uv tool install --python 3.11 novacode-cli
+            if ($LASTEXITCODE -ne 0) { throw 'Registry install failed' }
+            & (Join-Path $env:UV_TOOL_BIN_DIR 'nova.exe') update --check
+            if ($LASTEXITCODE -ne 0) { throw "nova update --check failed with $LASTEXITCODE" }
+
+            # A locally built wheel cannot update itself, and must say so.
+            $env:UV_TOOL_DIR = Join-Path $root 'wheel'
+            $env:UV_TOOL_BIN_DIR = Join-Path $root 'wheel-bin'
+            $wheel = (Get-ChildItem -LiteralPath (Join-Path $env:GITHUB_WORKSPACE 'dist') -Filter *.whl).FullName
+            uv tool install --python 3.11 $wheel
+            if ($LASTEXITCODE -ne 0) { throw 'Wheel install failed' }
+            $refusal = (& (Join-Path $env:UV_TOOL_BIN_DIR 'nova.exe') update --check 2>&1) -join "`n"
+            $refusalCode = $LASTEXITCODE
+            if ($refusalCode -eq 0) { throw 'A local wheel install claimed it could update itself' }
+            if ($refusal -notmatch 'original source') { throw "Unexpected refusal: $refusal" }
+
+            # The command `nova update` uses for a Git install must reach main.
+            $env:UV_TOOL_DIR = Join-Path $root 'git'
+            $env:UV_TOOL_BIN_DIR = Join-Path $root 'git-bin'
+            uv tool install --force --reinstall --compile-bytecode "novacode-cli @ git+https://github.com/${{ github.repository }}.git@main"
+            if ($LASTEXITCODE -ne 0) { throw 'Git requirement install failed' }
+            $toolPython = Join-Path $env:UV_TOOL_DIR 'novacode-cli/Scripts/python.exe'
+            $installed = (& $toolPython -c "from importlib.metadata import version; print(version('novacode-cli'))").Trim()
+            if ($installed -ne $repoVersion) { throw "Git install left v$installed; main is v$repoVersion" }
+          } finally {
+            Pop-Location
+            Remove-Item -Recurse -Force $root -ErrorAction SilentlyContinue
+          }
       - name: Upload package and test artifacts
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

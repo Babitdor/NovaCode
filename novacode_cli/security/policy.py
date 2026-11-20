@@ -39,8 +39,8 @@ from urllib.parse import urlparse
 
 from novacode_cli.config.config import HOME_DIR
 from novacode_cli.git_safety import (
-    BLOCKED_COMMANDS,
     DANGEROUS_GIT_COMMANDS,
+    blocked_command_reason,
 )
 
 logger = logging.getLogger(__name__)
@@ -66,6 +66,50 @@ _DAEMON_READONLY_ACTIONS = frozenset({"list", "status", "logs"})
 
 _PATH_TOOLS = frozenset({"write_file", "edit_file", "NotebookEditTool", "write_memory", "image_gen"})
 _URL_TOOLS = frozenset({"fetch_url"})
+
+#: Actions whose effect has already left this machine when they finish: a pushed
+#: tag can trigger a publish, and a published version number can never be
+#: reused. ``ask`` alone is not enough for these — a remembered "always allow"
+#: rule can answer an ask, and a rule written for ``npm run build`` was never
+#: about ``npm publish``.
+_IRREVERSIBLE_COMMANDS: tuple[tuple[Pattern[str], str], ...] = (
+    (
+        _re_compile(r"\bgit\s+push\b"),
+        "pushes to a remote; a pushed tag can publish a release",
+    ),
+    (
+        _re_compile(r"\b(?:npm|pnpm|yarn|uv|cargo|poetry|gem)\s+publish\b"),
+        "publishes a package version that cannot be reused",
+    ),
+    (_re_compile(r"\btwine\s+upload\b"), "uploads a release to PyPI"),
+    (_re_compile(r"\bdocker\s+push\b"), "pushes an image to a registry"),
+    (
+        _re_compile(r"\bgh\s+release\s+(?:create|edit|upload|delete)\b"),
+        "creates or changes a public release",
+    ),
+    (
+        _re_compile(r"\bgh\s+workflow\s+run\b"),
+        "starts a remote workflow that may publish",
+    ),
+)
+
+
+def irreversible_consequence(tool_name: str, args: dict[str, Any] | None) -> str | None:
+    """The irreversible consequence of this action, or None.
+
+    Returns the consequence rather than a bool so the caller can state what it
+    is about to do. Only actions that leave this machine are listed; a local
+    commit or a local tag is reversible and stays on the normal tiers.
+    """
+    if tool_name not in _SHELL_TOOLS:
+        return None
+    command = str((args or {}).get("command") or "")
+    if not command:
+        return None
+    for pattern, consequence in _IRREVERSIBLE_COMMANDS:
+        if pattern.search(command):
+            return consequence
+    return None
 
 # Per-tool default tier (the fallback when no specific rule matches).
 _DEFAULT_TOOL_TIERS: dict[str, Tier] = {
@@ -100,6 +144,10 @@ _DEFAULT_TOOL_TIERS: dict[str, Tier] = {
 _DEFAULT_SHELL_ALLOW: list[str] = [
     r"^\s*git\s+(?:status|diff|log|show|rev-parse|describe|blame|shortlog)(?=\s|$)",
     r"^\s*git\s+remote\s+-v\s*$",
+    # Reading one config key answers "who am I committing as". Writes are denied
+    # above; `--list`/`--get-all` stay on `ask` because a whole config file can
+    # carry a token in an insteadOf URL.
+    r"^\s*git\s+config\s+(?:--get\s+)?[\w.-]+\s*$",
     r"^\s*ls\b",
     r"^\s*pwd\b",
     r"^\s*cat\b",
@@ -293,10 +341,12 @@ class ApprovalPolicy:
         # inside a chain are still caught below: the deny regexes ``.search()`` the
         # whole string, so ``ls; rm -rf /`` still matches the ``rm -rf /`` rule.
         low = command.lower()
-        # deny: blocked git operations (config edits, --no-verify, ...)
-        for blocked, why in BLOCKED_COMMANDS.items():
-            if blocked.lower() in low:
-                return ApprovalDecision("deny", f"Blocked: {why}", blocked)
+        # deny: blocked git operations (config edits, --no-verify, ...). The
+        # reason is specific — "Blocked: Never update git config from agent"
+        # tells the agent what to do differently; a bare tool name does not.
+        blocked = blocked_command_reason(command)
+        if blocked is not None:
+            return ApprovalDecision("deny", blocked, "blocked-command")
         # deny: built-in + configured destructive patterns
         for pat in self._shell_deny_re:
             if pat.search(command):

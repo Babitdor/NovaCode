@@ -230,3 +230,13 @@ def test_task_logs_cursor_returns_only_new_output():
     assert "line 1" not in new
     assert new.endswith("[next from_offset=21]")
     assert "no new output" in get_task_logs.invoke({"task_id": job.task_id, "from_offset": 21})
+
+
+def test_a_background_job_reports_output_without_terminal_colour():
+    """A sequence split across two reads is only whole once the log is joined."""
+    registry = jobs.get_registry()
+    job = registry.add("pytest", "shell", None)
+    registry.append_log(job.id, "\x1b[31")
+    registry.append_log(job.id, ";1m3 failed\x1b[0m\n")
+    assert job.output == "3 failed\n"
+    registry.reset()

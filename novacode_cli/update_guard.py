@@ -10,7 +10,7 @@ import hashlib
 import os
 import sys
 import tempfile
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -22,12 +22,34 @@ class UpdateBlockedError(ValueError):
     """Updating cannot safely begin; no package changes have been attempted."""
 
 
-@contextmanager
-def installation_lock(*, exclusive: bool, root: Path | None = None) -> Iterator[None]:
-    """Allow concurrent runtimes, but exclude installers and new runtime starts."""
-    if sys.platform != "win32":
-        yield
-        return
+def _blocked_message(exclusive: bool) -> str:
+    if exclusive:
+        return (
+            "Other Nova sessions or an update are using this installation. "
+            "Finish those sessions, then retry /update. No files were changed."
+        )
+    return "Nova is updating this installation. Try launching again when it finishes."
+
+
+#: POSIX locks this process already owns: digest -> [stream, exclusive, depth].
+#: The TUI updates in-process, inside the shared lock its own launch took, so a
+#: nested request is served by the lock that is already open.
+_HELD: dict[str, list] = {}
+
+
+def _posix_lock(stream: object, *, exclusive: bool) -> None:
+    import fcntl
+
+    descriptors = getattr(stream, "fileno")
+    flock = getattr(fcntl, "flock")
+    mode = getattr(fcntl, "LOCK_EX" if exclusive else "LOCK_SH") | getattr(fcntl, "LOCK_NB")
+    try:
+        flock(descriptors(), mode)
+    except OSError as error:
+        raise UpdateBlockedError(_blocked_message(exclusive)) from error
+
+
+def _windows_lock(stream: object, *, exclusive: bool) -> None:
     import ctypes
     import msvcrt
     from ctypes import wintypes
@@ -41,9 +63,6 @@ def installation_lock(*, exclusive: bool, root: Path | None = None) -> Iterator[
             ("hEvent", wintypes.HANDLE),
         ]
 
-    identity = os.path.normcase(str((root or Path(sys.prefix)).resolve()))
-    digest = hashlib.sha256(identity.encode()).hexdigest()[:24]
-    path = Path(tempfile.gettempdir()) / f"nova-install-{digest}.lock"
     kernel = ctypes.WinDLL("kernel32", use_last_error=True)
     kernel.LockFileEx.argtypes = [
         wintypes.HANDLE,
@@ -54,23 +73,61 @@ def installation_lock(*, exclusive: bool, root: Path | None = None) -> Iterator[
         ctypes.POINTER(Overlapped),
     ]
     kernel.LockFileEx.restype = wintypes.BOOL
+    handle = msvcrt.get_osfhandle(getattr(stream, "fileno")())
+    overlap = Overlapped()
+    flags = 1 | (2 if exclusive else 0)  # FAIL_IMMEDIATELY | EXCLUSIVE_LOCK
+    if not kernel.LockFileEx(handle, flags, 0, 1, 0, ctypes.byref(overlap)):
+        error = ctypes.get_last_error()
+        if error == 33:  # noqa: PLR2004 - Win32 error constant  # ERROR_LOCK_VIOLATION
+            raise UpdateBlockedError(_blocked_message(exclusive))
+        raise ctypes.WinError(error)
+
+
+@contextmanager
+def installation_lock(*, exclusive: bool, root: Path | None = None) -> Iterator[None]:
+    """Exclude installers from each other and from runtimes of one installation.
+
+    On POSIX the lock is re-entrant inside a process: an in-process update runs
+    while its own launch holds the shared runtime lock, and it upgrades that
+    lock instead of being refused by it. Windows installs in a fresh interpreter
+    after the runtime exits, so there a second handle is still refused.
+    """
+    identity = os.path.normcase(str((root or Path(sys.prefix)).resolve()))
+    digest = hashlib.sha256(identity.encode()).hexdigest()[:24]
+    path = Path(tempfile.gettempdir()) / f"nova-install-{digest}.lock"
+    if sys.platform != "win32":
+        import fcntl
+
+        # Two installers writing one prefix corrupt it on POSIX just as on Windows.
+        held = _HELD.get(digest)
+        if held is None:
+            stream = path.open("a+b")
+            try:
+                _posix_lock(stream, exclusive=exclusive)
+            except BaseException:
+                stream.close()
+                raise
+            held = [stream, exclusive, 1]
+            _HELD[digest] = held
+        else:
+            held[2] += 1
+            if exclusive and not held[1]:
+                _posix_lock(held[0], exclusive=True)  # upgrade in place, same descriptor
+                held[1] = True
+        try:
+            yield
+        finally:
+            held[2] -= 1
+            if not held[2]:
+                _HELD.pop(digest, None)
+                with suppress(OSError):
+                    fcntl.flock(held[0].fileno(), fcntl.LOCK_UN)
+                held[0].close()
+        return
     # Closing the handle releases the byte-range lock, even after os._exit or
     # a crash. Keep the empty file; deleting it would split the lock identity.
     with path.open("a+b") as stream:
-        handle = msvcrt.get_osfhandle(stream.fileno())
-        overlap = Overlapped()
-        flags = 1 | (2 if exclusive else 0)  # FAIL_IMMEDIATELY | EXCLUSIVE_LOCK
-        if not kernel.LockFileEx(handle, flags, 0, 1, 0, ctypes.byref(overlap)):
-            error = ctypes.get_last_error()
-            if error == 33:  # noqa: PLR2004 - Win32 error constant  # ERROR_LOCK_VIOLATION
-                message = (
-                    "Other Nova sessions or an update are using this installation. "
-                    "Finish those sessions, then retry /update. No files were changed."
-                    if exclusive
-                    else "Nova is updating this installation. Try launching again when it finishes."
-                )
-                raise UpdateBlockedError(message)
-            raise ctypes.WinError(error)
+        _windows_lock(stream, exclusive=exclusive)
         yield
 
 
@@ -145,14 +202,29 @@ def locked_processes(paths: list[Path]) -> list[tuple[int, str]]:
         api.RmEndSession(session)
 
 
+#: Build output that never holds a module the installer must replace.
+_PRUNED = {"__pycache__", ".git", "node_modules", "build", "dist", "__pypackages__"}
+
+
+def _native_files(root: Path) -> list[Path]:
+    """Native extension and library files under ``root``, skipping build output."""
+    found: list[Path] = []
+    for directory, subdirectories, filenames in os.walk(root):
+        subdirectories[:] = [name for name in subdirectories if name not in _PRUNED]
+        for filename in filenames:
+            if os.path.splitext(filename)[1].lower() in {".pyd", ".dll"}:
+                path = Path(directory, filename)
+                with suppress(OSError):
+                    if path.is_file():
+                        found.append(path)
+    return found
+
+
 def check_update_blockers(*, ignore_pids: set[int] | None = None, root: Path | None = None) -> None:
     """Reject mapped dependency files before uv/pip can remove any packages."""
     if sys.platform != "win32":
         return
-    directory = root or Path(sys.prefix)
-    files = [
-        p for p in directory.rglob("*") if p.suffix.lower() in {".pyd", ".dll"} and p.is_file()
-    ]
+    files = _native_files(root or Path(sys.prefix))
     ignored = {os.getpid(), *(ignore_pids or set())}
     blockers = [(pid, name) for pid, name in locked_processes(files) if pid not in ignored]
     if blockers:

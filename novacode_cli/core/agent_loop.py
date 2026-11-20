@@ -1789,7 +1789,16 @@ async def _handle_tool_message(
                 full_output=(tool_content if isinstance(tool_content, str) else ""),
                 call_id=tool_call_id,
             )
-        elif tool_call_id and tool_call_id in displayed_tool_ids:
+        else:
+            # Writes performed inside a Code Mode snippet have no message of
+            # their own — the eval call is the only card — so the tracker holds
+            # them under that call's id. Emit them before the eval's own result
+            # so the diff is in the panel when it finalizes.
+            for nested in file_op_tracker.take_nested(tool_call_id):
+                async for _e in _drain_flush(flush_text):
+                    yield _e
+                yield ev.FileOp(record=nested, parent_call_id=tool_call_id)
+        if not record and tool_call_id and tool_call_id in displayed_tool_ids:
             already_error = (tool_name == "shell" and tool_status != "success") or (
                 tool_content
                 and isinstance(tool_content, str)

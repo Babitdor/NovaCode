@@ -6,8 +6,85 @@ from pathlib import Path
 import pytest
 from textual.widgets import Collapsible
 
-from novacode_cli.tui.code_mode_panel import CodeModePanel, summarize_run
+from novacode_cli.tui.code_mode_panel import (
+    CodeModePanel,
+    ToolTiming,
+    format_duration,
+    summarize_run,
+)
 
+
+@pytest.mark.parametrize(
+    ("seconds", "shown"),
+    [
+        (0.0004, "<1ms"),
+        (0.12, "120ms"),
+        (0.999, "999ms"),
+        (1.0, "1s"),
+        (1.34, "1.3s"),
+        (59.94, "59.9s"),
+        (59.96, "1m 0s"),
+        (60.0, "1m 0s"),
+        (125.0, "2m 5s"),
+        (-3.0, "<1ms"),
+    ],
+)
+def test_duration_switches_from_milliseconds_to_seconds(seconds: float, shown: str) -> None:
+    assert format_duration(seconds) == shown
+
+
+def test_timing_reports_took_only_once_the_call_ends() -> None:
+    now = [100.0]
+    timing = ToolTiming(turn_started=98.5, clock=lambda: now[0])
+    assert "Took" not in timing.summary()
+    assert timing.elapsed() == pytest.approx(1.5)
+    now[0] = 100.12
+    timing.stop()
+    assert timing.summary() == "Took 120ms · Elapsed 1.6s"
+    now[0] = 140.0
+    timing.stop()  # a second stop keeps the first end time
+    assert timing.took == pytest.approx(0.12)
+
+
+@pytest.mark.parametrize("turn_started", [None, 0.0, -5.0])
+def test_elapsed_is_absent_without_a_usable_turn_start(turn_started: float | None) -> None:
+    timing = ToolTiming(turn_started=turn_started, clock=lambda: 10.0)
+    assert timing.elapsed() is None
+    timing.stop()
+    assert timing.summary() == "Took <1ms"
+
+
+def test_elapsed_ignores_a_start_time_from_another_process() -> None:
+    timing = ToolTiming(turn_started=1.0, clock=lambda: 12 * 3600.0 + 2.0)
+    assert timing.elapsed() is None
+
+
+def test_replayed_calls_carry_no_timing() -> None:
+    live = CodeModePanel.for_call("read_file", {"path": "a"}, "read_file(a)")
+    replay = CodeModePanel.for_call("read_file", {"path": "a"}, "read_file(a)", live=False)
+    assert live.timing.enabled
+    assert not replay.timing.enabled
+    replay.timing.stop()  # finishing renders widgets, which needs a mounted app
+    assert replay.timing.summary() == ""
+
+
+@pytest.mark.asyncio
+async def test_finished_row_shows_its_duration_and_the_turn_elapsed() -> None:
+    from textual.app import App, ComposeResult
+
+    now = [50.0]
+    timing = ToolTiming(turn_started=48.8, clock=lambda: now[0])
+    panel = CodeModePanel("code", tool_name="eval", timing=timing)
+
+    class Preview(App):
+        def compose(self) -> ComposeResult:
+            yield panel
+
+    async with Preview().run_test():
+        now[0] = 50.12
+        panel.finish("ok", is_error=False, preview="ok")
+        assert str(panel.timing_label.render()) == "Took 120ms · Elapsed 1.3s"
+        assert panel.timing_label.display
 
 def test_success_title_is_only_the_recorded_tool_names():
     title, _, failed = summarize_run(

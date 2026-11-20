@@ -62,3 +62,70 @@ def test_exit_status(command: str, code: int, note: str, failed: bool):  # noqa:
 
 def test_signal_deaths_use_128_plus_n():
     assert exit_status("sleep 100", -signal.SIGTERM) == ("Exit code: 143 (killed by SIGTERM)", True)
+
+
+# --- terminal colour -------------------------------------------------------
+# PowerShell's Select-String highlights the match inside the line it prints, so
+# a search result reached the model as `config.py ESC[0m ESC[7m 38%` — the path
+# it needed to act on, split by escapes.
+
+_COLOURED = "\x1b[7mconfig\x1b[0m.py \x1b[31;1m38%\x1b[0m"
+
+
+def test_strip_ansi_removes_colour_and_osc():
+    assert output.strip_ansi(_COLOURED) == "config.py 38%"
+    assert output.strip_ansi("\x1b]0;title\x07text") == "text"
+    assert output.strip_ansi("\x1b]8;;https://x\x1b\\link\x1b]8;;\x1b\\") == "link"
+
+
+def test_strip_ansi_leaves_plain_text_alone():
+    plain = "plain text, 100% complete, a > b"
+    assert output.strip_ansi(plain) is plain
+
+
+def test_window_text_drops_colour():
+    window = OutputWindow(200)
+    window.add(_COLOURED + "\n")
+    assert window.text() == "config.py 38%\n"
+
+
+def test_window_text_drops_colour_around_the_omission_note():
+    window = OutputWindow(200)
+    window.add("\x1b[7m" + "a" * 200 + "\x1b[0m\n")
+    window.add("\x1b[32mok\x1b[0m\n")
+    text = window.text()
+    assert "\x1b" not in text
+    assert text.endswith("ok\n")
+
+
+# --- commands that only wait ------------------------------------------------
+# A stuck polling loop looks like `Start-Sleep -Seconds 29` once per model round
+# trip; the advice is said once per session, not on every sleep.
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["Start-Sleep -Seconds 29", "start-sleep -s 5", "sleep 30", "Start-Sleep 12;", "  Sleep 3  "],
+)
+def test_wait_only_commands_are_recognised(command: str):
+    assert output.is_wait_only_command(command) is True
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "Start-Sleep -Seconds 5; gh run view 1",
+        "pytest -q",
+        "sleep 30 && pytest",
+        "Get-ChildItem .",
+        "",
+        "sleep",
+    ],
+)
+def test_work_with_a_wait_in_it_is_not_a_wait(command: str):
+    assert output.is_wait_only_command(command) is False
+
+
+def test_the_wait_note_points_at_the_resume_path():
+    assert "end your turn" in output.WAIT_ONLY_NOTE
+    assert "get_task_logs" not in output.WAIT_ONLY_NOTE

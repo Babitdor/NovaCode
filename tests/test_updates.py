@@ -35,6 +35,15 @@ def update_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Mock:
     return network
 
 
+def _source_git(args: tuple[str, ...]) -> str:
+    """What a clean, up-to-date source checkout answers the updater."""
+    if args[0] == "rev-parse":
+        return "origin/main"
+    if args[0] == "rev-list":
+        return "0"
+    return ""
+
+
 def test_repo_push_detected_without_version_bump_and_cached(update_env: Mock) -> None:
     status = U.check_for_update()
     assert status.available
@@ -93,7 +102,7 @@ def test_source_update_is_fast_forward_only_and_refreshes_dependencies(
     tmp_path: Path,
 ) -> None:
     monkeypatch.setattr(
-        U, "_git", lambda _root, *args: "" if args[0] == "status" else "origin/main"
+        U, "_git", lambda _root, *args: _source_git(args)
     )
     monkeypatch.setattr(U, "_pip_command", lambda: ["python", "-m", "pip", "install"])
     monkeypatch.setattr(U.shutil, "which", lambda _name: None)
@@ -112,9 +121,7 @@ def test_failed_merge_never_runs_dependency_install(
 ) -> None:
     import subprocess
 
-    monkeypatch.setattr(
-        U, "_git", lambda _root, *args: "" if args[0] == "status" else "origin/main"
-    )
+    monkeypatch.setattr(U, "_git", lambda _root, *args: _source_git(args))
     run = Mock(side_effect=[None, subprocess.CalledProcessError(1, "git merge")])
     monkeypatch.setattr(U, "_run", run)
     with pytest.raises(subprocess.CalledProcessError):
@@ -259,6 +266,9 @@ def test_windows_update_runs_in_the_foreground_with_launchers_moved_aside(
     scripts, bin_dir, seen = _windows_tool(
         monkeypatch, tmp_path, "Updated novacode-cli v1.0 -> v1.1", rewrites=True
     )
+    # The change is read from the installation, not from uv's sentence.
+    states = iter([("1.0", ""), ("1.1", "")])
+    monkeypatch.setattr(U, "_installed_state", lambda: next(states))
     assert U.install_update() is True
     assert "nova.exe" not in seen[0] and "nova.exe.old-1" not in seen[0], "stale ones removed"
     for folder in (scripts, bin_dir):

@@ -170,6 +170,60 @@ def detect_installation() -> Installation:
     return Installation(dist.version, kind)
 
 
+def _direct_url() -> dict:
+    """The distribution's installation provenance, empty when it has none."""
+    try:
+        recorded = importlib.metadata.distribution("novacode-cli").read_text("direct_url.json")
+    except (OSError, ValueError):
+        return {}
+    # An unreadable or unexpected file means "no provenance", never a crash.
+    if not isinstance(recorded, (str, bytes, bytearray)):
+        return {}
+    try:
+        loaded = json.loads(recorded or "{}")
+    except ValueError:
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def _installed_state() -> tuple[str, str]:
+    """The version and Git revision written on disk, not the copy this process imported."""
+    vcs = _direct_url().get("vcs_info", {})
+    revision = str(vcs.get("commit_id", "")) if isinstance(vcs, dict) else ""
+    return installed_version(sys.executable), revision
+
+
+def _vcs_requirement() -> str:
+    """The official Git requirement this tool installation came from, if any.
+
+    ``uv tool upgrade`` cannot move a Git requirement: it resolves to the commit
+    it already has and reports "Nothing to upgrade", so the recorded requirement
+    is reinstalled instead.
+    """
+    direct = _direct_url()
+    vcs, url = direct.get("vcs_info"), str(direct.get("url", ""))
+    if not isinstance(vcs, dict) or not url or not _official_remote(url):
+        return ""
+    revision = str(vcs.get("requested_revision") or "main")
+    if revision != "main":
+        return ""  # pinned refs are refused by detect_installation; never invent one
+    suffix = "@" + revision
+    return f"novacode-cli @ git+{url.removesuffix(suffix)}{suffix}"
+
+
+def _update_advanced(installation: Installation) -> bool:
+    """Whether uv changed what is installed, despite a launcher it could not replace."""
+    if installation.revision:
+        revision = detect_installation().revision
+        return bool(revision and revision != installation.revision)
+    from packaging.version import InvalidVersion, Version
+
+    try:
+        return Version(installed_version(sys.executable)) > Version(installation.version)
+    except InvalidVersion:
+        return False
+
+
 def _get_json(url: str) -> dict:
     request = Request(
         url, headers={"User-Agent": "NovaCode-update-check", "Accept": "application/json"}
@@ -309,11 +363,17 @@ def _install_update(progress: Progress | None = None) -> bool:
         root = installation.root
         if root is None:
             _fail("Cannot locate Nova's source checkout.")
-        if _git(root, "status", "--porcelain"):
+        # Untracked files cannot block a fast-forward, but edits to tracked files can.
+        if _git(root, "status", "--porcelain", "--untracked-files=no"):
             _fail("Checkout has local changes. Commit or stash them before updating.")
         upstream = _git(root, "rev-parse", "--abbrev-ref", "@{upstream}")
         if upstream != f"origin/{installation.branch}":
             _fail("Branch must track the matching origin branch before updating.")
+        if _git(root, "rev-list", "--count", f"{upstream}..HEAD").strip() != "0":
+            _fail(
+                f"This checkout has commits that are not on {upstream}. "
+                "Rebase or merge them, then update."
+            )
         uv = shutil.which("uv")
         use_uv = (
             uv is not None
@@ -337,40 +397,41 @@ def _install_update(progress: Progress | None = None) -> bool:
         uv = shutil.which("uv")
         if uv is None:
             _fail("This installation is managed by uv; install uv to update it.")
-        # Precompiled, so the first launch after an update does not compile every module.
-        arguments = [uv, "tool", "upgrade", "novacode-cli", "--compile-bytecode"]
+        requirement = _vcs_requirement()
+        if requirement:
+            # A Git requirement only ever resolves to the commit already installed,
+            # so reinstalling it is the one way uv reaches a new commit.
+            arguments = [
+                uv, "tool", "install", "--force", "--reinstall", "--compile-bytecode",
+                requirement,
+            ]
+        else:
+            # Precompiled, so the first launch after an update does not compile every module.
+            arguments = [uv, "tool", "upgrade", "novacode-cli", "--compile-bytecode"]
+            if sys.platform == "win32":
+                # Reinstall just Nova so uv repairs a launcher even when an earlier
+                # failed update already advanced the installed package's version.
+                arguments.extend(["--reinstall-package", "novacode-cli"])
+        before = _installed_state()
         moved: list[tuple[Path, Path]] = []
         if sys.platform == "win32":
-            # Reinstall just Nova so uv repairs a launcher even when an earlier
-            # failed update already advanced the installed package's version.
-            arguments.extend(["--reinstall-package", "novacode-cli"])
             moved = _move_launchers_aside(uv)
         progress.stage("Downloading and installing")
+        advanced = False
         try:
             try:
-                output = _run(arguments, progress=progress)
+                _run(arguments, progress=progress)
             except subprocess.CalledProcessError as error:
                 if not _uv_entrypoint_is_locked(error):
                     raise
-                if installation.revision:
-                    revision = detect_installation().revision
-                    advanced = bool(revision and revision != installation.revision)
-                else:
-                    from packaging.version import InvalidVersion, Version
-
-                    try:
-                        advanced = Version(installed_version(sys.executable)) > Version(
-                            installation.version
-                        )
-                    except InvalidVersion:
-                        advanced = False
+                advanced = _update_advanced(installation)
                 if not advanced:
                     raise
                 progress.done("uv installed the package; the running nova.exe is still in use")
-                output = "Updated novacode-cli"
         finally:
             _restore_launchers(moved)
-        changed = "nothing to upgrade" not in output.casefold()
+        # uv's wording is not a contract: compare what is installed instead.
+        changed = advanced or _installed_state() != before
     else:
         target = "novacode-cli"
         arguments = ["--upgrade"]
@@ -563,6 +624,12 @@ def _update_after_exit() -> int:
         _wait_for_handoff()
     except (OSError, ValueError) as error:
         print(f"Update did not start: {error}", file=sys.stderr)
+        print(
+            f"Resume this session with: nova --continue {session}"
+            if session
+            else "Run nova to start it again.",
+            file=sys.stderr,
+        )
         return EXIT_UPDATE_BLOCKED
     code = _update_with_progress(restarting=True)
     if code == EXIT_INTERRUPTED:

@@ -124,7 +124,7 @@ from novacode_cli.tui.animations import (
     animate_entrance,
 )
 from novacode_cli.tui import motion
-from novacode_cli.tui.code_mode_panel import CodeModePanel
+from novacode_cli.tui.code_mode_panel import CodeModePanel, ToolTiming
 from novacode_cli.tui.output_buffer import MAX_PENDING_CALLS, OutputTail
 
 # Widgets and modal screens were extracted verbatim into widgets.py /
@@ -993,6 +993,14 @@ def _render_bg_event(  # noqa: PLR0912, PLR0915 — one branch per event type is
             write(f"[{pal.tool_ok}]●[/{pal.tool_ok}] {prefix} [dim]· {_esc(event.preview)}[/dim]")
         else:
             write(f"[{pal.tool_ok}]●[/{pal.tool_ok}] {prefix}")
+    elif isinstance(event, FileOp) and event.parent_call_id:
+        # A Code Mode edit belongs to the eval line above it. The detached card is
+        # collapsed most of the time, so it gets one indented summary line and no
+        # diff body.
+        summary = fileop_summary(event.record)
+        if summary:
+            path = getattr(event.record, "display_path", None) or "file"
+            write(f"[dim]   └ {_esc(path)} {_esc(summary)}[/dim]")
     elif isinstance(event, FileOp):
         rec = event.record
         errored = bool(getattr(rec, "error", None)) or (getattr(rec, "status", "") == "error")
@@ -1051,6 +1059,20 @@ _LIVE_OUTPUT_MAX_LINES = 200
 _LIVE_OUTPUT_MAX_CHARS = 20_000
 _LOG_MAX_LINES = 2_000
 _PENDING_JOB_NOTE_MAX = 100
+#: A job note goes into the agent's next prompt, so its total size is a token
+#: cost the user pays on every message. One turn that backgrounded 20 commands
+#: produced 24 KB of notes — the same command line twice per task, plus a
+#: paragraph of tool hints — and the user's actual question arrived below it.
+_PENDING_JOB_NOTE_CHARS = 4000
+#: A command is quoted only to identify the task; the log holds the rest.
+_JOB_NOTE_COMMAND_CHARS = 120
+#: How many Code Mode edits get a full diff inside their eval card, how many
+#: diff lines each may draw, and how many file summaries the card takes in total.
+#: A snippet can edit many files; past the cap the change is named and counted,
+#: not drawn.
+_CODE_MODE_DIFF_MAX_FILES = 5
+_CODE_MODE_DIFF_MAX_LINES = 60
+_CODE_MODE_FILE_NOTES_MAX = 20
 #: Cap on a failed tool call's stored output, so one enormous traceback cannot
 #: bloat the entry (and the group's repaint) without bound.
 _TOOL_ERROR_MAX_CHARS = 6_000
@@ -1058,6 +1080,47 @@ _TOOL_ERROR_MAX_CHARS = 6_000
 _TOOL_ERROR_MAX_LINES = 12
 #: Saved messages drawn on resume (the agent still gets the full history).
 _REPLAY_MAX_MESSAGES = 150  # kept for callers; replay now fits by items (replay_window)
+
+
+def _short_command(command: str) -> str:
+    """A command trimmed to the part that identifies its task."""
+    flat = " ".join(str(command).split())
+    if len(flat) <= _JOB_NOTE_COMMAND_CHARS:
+        return flat
+    return flat[: _JOB_NOTE_COMMAND_CHARS - 1].rstrip() + "…"
+
+
+def job_note(task_id: str, status: str, command: str) -> str:
+    """One line about a background task, led by its id so it can be replaced."""
+    return (
+        f"{task_id}: {status}. Command: {_short_command(command)}. "
+        f"Read it with get_task_logs('{task_id}')."
+    )
+
+
+def pending_job_notes_block(notes: list[str], *, limit: int = _PENDING_JOB_NOTE_CHARS) -> str:
+    """The newest notes that fit ``limit``, oldest first, with an omission count.
+
+    The newest notes are kept because they describe the tasks whose result the
+    agent has not seen yet; an older one has either been reported already or is
+    still readable in its log.
+    """
+    kept: list[str] = []
+    used = 0
+    # Reserve the widest omission line this list could need, so the block honours
+    # the budget whether or not notes are dropped.
+    reserve = len(f"- ({len(notes)} earlier note(s) omitted)\n")
+    for note in reversed(notes):
+        cost = len(note) + 3  # "- " and the newline
+        if kept and used + cost + reserve > limit:
+            break
+        kept.append(note)
+        used += cost
+    kept.reverse()
+    lines = [f"- {note}" for note in kept]
+    if omitted := len(notes) - len(kept):
+        lines.insert(0, f"- ({omitted} earlier note(s) omitted)")
+    return "\n".join(lines)
 
 
 def replay_window(messages: list, budget: int) -> list:
@@ -7033,6 +7096,44 @@ class NovaApp(App):
         for preview in self.query(DiffPreview):
             preview.set_preview_style(self._diff_preview_style)
 
+    def _attach_nested_file_op(self, event: ev.FileOp) -> None:
+        """Show a Code Mode edit's diff inside the eval card that performed it.
+
+        A snippet's writes have no card of their own — the eval call is the only
+        row the transcript has — so an eval that edited twelve files otherwise
+        said nothing about any of them. The first few diffs are drawn in full;
+        the rest only count, because one measured session ran 47 edits across
+        240 snippets and a wall of diffs is not read.
+        """
+        rec = event.record
+        summary = self._fileop_summary(rec)
+        entry = self._tool_components.get(event.parent_call_id or "")
+        panel = entry[0] if entry is not None else None
+        if not isinstance(panel, CodeModePanel):
+            # The eval card is gone (trimmed, or a resumed turn): keep the fact,
+            # drop the diff.
+            self._mark_tool_group_result(event.parent_call_id, is_error=False, detail=summary)
+            return
+        if not summary:
+            return
+        if panel.diff_block_count >= _CODE_MODE_FILE_NOTES_MAX:
+            return
+        path = getattr(rec, "display_path", None)
+        block = Text(f"• {path or 'file'}  {summary}", style="dim")
+        if panel.diff_block_count < _CODE_MODE_DIFF_MAX_FILES and (
+            diff := self._fileop_diff(rec)
+        ):
+            block.append("\n")
+            block.append_text(
+                self._render_diff_text(diff, max_lines=_CODE_MODE_DIFF_MAX_LINES, path=path)
+            )
+        panel.attach_diff_block(block)
+        if panel.diff_block_count == 1:
+            # Open once, when the first change lands: a diff inside a collapsed
+            # card is the same as no diff.
+            panel.collapsed = False
+            self._scroll_end()
+
     def _fileop_summary(self, rec) -> str:
         """A concise '+A / -D' (or 'Read N lines') summary for a file-op title."""
         if rec is None:
@@ -9701,13 +9802,9 @@ class NovaApp(App):
                 )
                 self._queue_pane_event(root, ev.ContextMessage(message=message))
                 root.unread += 1
-                notes = root.state.setdefault("_pending_job_notes", [])
-                notes.append(
-                    f"Background {job.task_id} {event}. Command: {job.command}. "
-                    f"Use get_task_status('{job.task_id}'), get_task_logs('{job.task_id}') "
-                    f"or terminate_task('{job.task_id}') to manage it."
+                self._queue_pending_job_note(
+                    job_note(job.task_id, event, job.command), task_id=job.task_id
                 )
-                del notes[:-_PENDING_JOB_NOTE_MAX]
                 if event != "started":
                     state = root.state.get("session_state")
                     if state is not None:
@@ -9728,9 +9825,8 @@ class NovaApp(App):
             # current turn, so the tool call is patched as "cancelled" — this note
             # corrects that: the command is still running as a background task).
             self._queue_pending_job_note(
-                f"You moved {job.task_id} to the background; it is still running "
-                f"(command: {job.command}). Check it with get_task_status('{job.task_id}') "
-                f"or get_task_logs('{job.task_id}'); stop it with terminate_task('{job.task_id}')."
+                job_note(job.task_id, "still running (backgrounded mid-turn)", job.command),
+                task_id=job.task_id,
             )
         elif event in ("completed", "failed", "terminated") and job is not None:
             ok = event == "completed"
@@ -9771,8 +9867,8 @@ class NovaApp(App):
                 self._continue_after_task(job)
             else:
                 self._queue_pending_job_note(
-                    f"Background {job.task_id} {verb} (exit {job.exit_code}). "
-                    f"Command: {job.command}. Use get_task_logs('{job.task_id}') for output."
+                    job_note(job.task_id, f"{verb} (exit {job.exit_code})", job.command),
+                    task_id=job.task_id,
                 )
 
     @work(exclusive=True, group="turn")
@@ -10341,9 +10437,10 @@ class NovaApp(App):
         # sees the clean prompt; the agent sees the note prepended).
         agent_text = text
         if self._pending_job_notes:
-            notes = "\n".join(f"- {n}" for n in self._pending_job_notes)
+            notes = self._pending_job_notes
             self._pending_job_notes = []
-            agent_text = f"[Background jobs finished since your last turn]\n{notes}\n\n{text}"
+            if block := pending_job_notes_block(notes):
+                agent_text = f"[Background jobs finished since your last turn]\n{block}\n\n{text}"
         await self._stream_prompt(agent_text)
 
     @staticmethod
@@ -12258,14 +12355,22 @@ class NovaApp(App):
             )
         )
 
-    def _queue_pending_job_note(self, note: str) -> None:
-        """Keep unattended task notes useful without letting them grow forever."""
+    def _queue_pending_job_note(self, note: str, *, task_id: str | None = None) -> None:
+        """Keep unattended task notes useful without letting them grow forever.
+
+        A task's note is replaced rather than repeated: the agent that reads
+        "task_61: still running" followed by "task_61: completed" learnt nothing
+        from the first line and paid for it twice.
+        """
         root = getattr(self, "_root_pane", None)
         notes = (
             root.state.setdefault("_pending_job_notes", [])
             if root is not None and root is not getattr(self, "_active_pane", None)
             else self._pending_job_notes
         )
+        if task_id:
+            prefix = f"{task_id}: "
+            notes[:] = [existing for existing in notes if not existing.startswith(prefix)]
         notes.append(note)
         overflow = len(notes) - _PENDING_JOB_NOTE_MAX
         if overflow > 0:
@@ -19074,7 +19179,13 @@ class NovaApp(App):
         elif isinstance(e, ev.ToolCall):
             self._set_status(f"running {e.name}…")
             base = e.display_str
-            comp = CodeModePanel.for_call(e.name, e.args, e.display_str)
+            comp = CodeModePanel.for_call(
+                e.name,
+                e.args,
+                e.display_str,
+                # The turn clock is shared, so every row shows the same elapsed time.
+                timing=ToolTiming(turn_started=self._turn_start or None),
+            )
             body = comp.output
             await self._mount(comp)
             if isinstance(body, OutputLog):
@@ -19106,6 +19217,8 @@ class NovaApp(App):
                 self._trim_tool_group_history()
             self._scroll_end()
             self._schedule_prune()
+        elif isinstance(e, ev.FileOp) and e.parent_call_id:
+            self._attach_nested_file_op(e)
         elif isinstance(e, ev.FileOp):
             # File operations retain their colored diff inside the compact row.
             rec = e.record

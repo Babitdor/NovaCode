@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 
 from novacode_cli.config.config import console
 from novacode_cli.config.plan_mode import plan_tool_rejection
+from novacode_cli.security.policy import irreversible_consequence
 from novacode_cli.security.session_allow import get_session_allow
 
 
@@ -134,11 +135,25 @@ def evaluate_tool_actions(
             if tier not in {"allow", "ask", "deny"}:
                 decisions.append({"type": "reject", "reason": "Invalid approval policy verdict"})
                 continue
+            if tier == "deny":
+                detail = getattr(verdict, "reason", "") or "denied by policy"
+                decisions.append(
+                    {"type": "reject", "reason": f"Policy denied: {tool_name} — {detail}"}
+                )
+                continue
+            if irreversible_consequence(tool_name, args) is not None:
+                # Pushing and publishing leave this machine for good. A
+                # remembered "always allow" rule must not answer them (it was
+                # written for a different command), and neither may the
+                # decision model read about it in the transcript. Only the
+                # user can, or the explicit --auto-approve opt-in that stands
+                # in for them.
+                decisions.append(
+                    {"type": "approve"} if getattr(session_state, "auto_approve", False) else None
+                )
+                continue
             if tier == "allow":
                 decisions.append({"type": "approve"})
-                continue
-            if tier == "deny":
-                decisions.append({"type": "reject", "reason": f"Policy denied: {tool_name}"})
                 continue
         except Exception:  # noqa: BLE001 — A broken policy cannot grant execution.
             decisions.append({"type": "reject", "reason": "Approval policy evaluation failed"})

@@ -27,6 +27,8 @@ from collections import deque
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 
+from novacode_cli.shell.output import strip_ansi
+
 # ---------------------------------------------------------------------------
 # Foreground control (Esc kill / Ctrl+B detach)
 # ---------------------------------------------------------------------------
@@ -187,7 +189,11 @@ class BackgroundJob:
 
     @property
     def output(self) -> str:
-        return "".join(self.logs)
+        # Colour is stripped here rather than per chunk: a sequence split across
+        # two reads is only whole once the log is joined, and this is the one
+        # place every reader (get_task_logs, the startup tail, the outcome
+        # artifact) goes through.
+        return strip_ansi("".join(self.logs))
 
     def status_glyph(self) -> str:
         return {"running": "●", "done": "✓", "failed": "✗", "terminated": "◼"}.get(self.status, "●")

@@ -103,6 +103,11 @@ class FileOp:
     record: Any
     full_output: str = ""
     call_id: str | None = None
+    parent_call_id: str | None = None
+    """The call this operation happened inside, when it had no tool call of its
+    own — a Code Mode snippet's nested edit. The card for ``parent_call_id``
+    shows the diff; ``call_id`` stays ``None`` so consumers that pair results
+    with calls are not told the outer call finished early."""
 
 
 @dataclass

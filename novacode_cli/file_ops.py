@@ -206,6 +206,15 @@ class FileOperationRecord:
     after_content: str | None = None
     read_output: str | None = None
     hitl_approved: bool = False
+    parent_call_id: str | None = None
+    """The call this operation happened inside, when it was not a tool call of
+    its own — a Code Mode snippet's nested edit. The eval call is the only card
+    the transcript has, so the diff belongs under that one."""
+
+
+#: File tools that change content: the ones worth reporting before/after and
+#: diffing. One definition, used by the tracker and by Code Mode's nested dispatch.
+WRITE_TOOLS = frozenset({"write_file", "edit_file", "Write", "Edit"})
 
 
 def resolve_physical_path(
@@ -374,13 +383,21 @@ class FileOpTracker:
         self.backend = backend
         self.active: dict[str | None, FileOperationRecord] = {}
         self.completed: list[FileOperationRecord] = []
+        #: Completed operations performed *inside* another call, keyed by that
+        #: call's id, waiting for its result to be rendered.
+        self._nested: dict[str, list[FileOperationRecord]] = {}
 
     def start_operation(
-        self, tool_name: str, args: dict[str, Any], tool_call_id: str | None
+        self,
+        tool_name: str,
+        args: dict[str, Any],
+        tool_call_id: str | None,
+        *,
+        parent_call_id: str | None = None,
     ) -> None:
         # Handle both lowercase (Nova-code) and capitalized (Serena MCP) tool names
         file_read_tools = {"read_file", "Read"}
-        file_write_tools = {"write_file", "edit_file", "Write", "Edit"}
+        file_write_tools = WRITE_TOOLS
         all_file_tools = file_read_tools | file_write_tools
 
         if tool_name not in all_file_tools:
@@ -393,8 +410,9 @@ class FileOpTracker:
             physical_path=resolve_physical_path(path_str, self.assistant_id),
             tool_call_id=tool_call_id,
             args=args,
+            parent_call_id=parent_call_id,
         )
-        if tool_name in {"write_file", "edit_file", "Write", "Edit"}:
+        if tool_name in WRITE_TOOLS:
             if self.backend and path_str:
                 try:
                     responses = self.backend.download_files([path_str])  # type: ignore
@@ -648,9 +666,29 @@ class FileOpTracker:
                 f"Failed to read back file from filesystem: {record.physical_path}"
             )
 
+    def take_nested(self, parent_call_id: str | None) -> list[FileOperationRecord]:
+        """Operations performed inside ``parent_call_id``, removed as they leave.
+
+        Taking them means a report emitted twice (a replayed or re-read message,
+        a resumed turn) cannot render the same diff twice.
+        """
+        if not parent_call_id:
+            return []
+        return self._nested.pop(parent_call_id, [])
+
+    def abandon(self, tool_call_id: str | None) -> None:
+        """Drop a started operation whose outcome is unknown (a timeout, a cancel).
+
+        No record is produced: the write may or may not have landed, and reading
+        the file back would describe a guess as a change.
+        """
+        self.active.pop(tool_call_id, None)
+
     def _finalize(self, record: FileOperationRecord) -> None:
         self.completed.append(record)
         self.active.pop(record.tool_call_id, None)
+        if record.parent_call_id and record.tool_call_id:
+            self._nested.setdefault(record.parent_call_id, []).append(record)
         # Bound the completed list: it is write-only (no display consumer reads
         # it), but each record can hold full file contents (before_content,
         # after_content, read_output). Keeping every record for a long session
@@ -671,6 +709,11 @@ class FileOpTracker:
 # ============================================================================
 
 _session_file_op_trackers: dict[str | None, FileOpTracker] = {}
+#: The tracker the running turn resolved last. Code Mode's nested calls are made
+#: by middleware that does not know the owning agent's id, and asking for a
+#: tracker under a *different* key would resolve paths against a different
+#: backend (see the keying note below). This is that same object, not a copy.
+_active_tracker: FileOpTracker | None = None
 
 
 def get_session_file_op_tracker(
@@ -699,7 +742,19 @@ def get_session_file_op_tracker(
     if tracker is None:
         tracker = FileOpTracker(assistant_id=assistant_id, backend=backend)
         _session_file_op_trackers[assistant_id] = tracker
+    global _active_tracker  # noqa: PLW0603 — one pointer to the tracker just resolved
+    _active_tracker = tracker
     return tracker
+
+
+def current_file_op_tracker() -> FileOpTracker | None:
+    """The tracker this turn is already using, or None before one exists.
+
+    Callers that have no assistant id (Code Mode's nested dispatch) use this
+    instead of :func:`get_session_file_op_tracker`, which would create a second
+    tracker under a ``None`` key and resolve paths against the wrong backend.
+    """
+    return _active_tracker
 
 
 def reset_session_file_op_tracker(assistant_id: str | None = None) -> None:
@@ -710,5 +765,7 @@ def reset_session_file_op_tracker(assistant_id: str | None = None) -> None:
     """
     if assistant_id is None:
         _session_file_op_trackers.clear()
+        global _active_tracker  # noqa: PLW0603 — dropped with the trackers it points at
+        _active_tracker = None
     else:
         _session_file_op_trackers.pop(assistant_id, None)

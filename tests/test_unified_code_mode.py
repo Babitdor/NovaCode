@@ -1212,6 +1212,30 @@ async def test_explicit_agent_route_selects_eval_only_while_enabled():
     assert forced_tool(request) == "task"
 
 
+async def test_a_policy_denied_call_names_the_rule_and_admits_nothing_ran():
+    """A denial is not a tool failure: nothing was dispatched, and the reason
+    has to reach the agent or its next attempt repeats the same call."""
+
+    @tool("write_file")
+    def write_file(file_path: str) -> str:
+        """Write a file."""
+        return f"WROTE {file_path}"
+
+    get_policy().tool_tiers["write_file"] = "allow"  # the path deny must still win
+    graph = scripted(
+        [("eval", "await tools.call('write_file', {file_path:'/etc/nova-denied.conf'})")],
+        tools=[write_file],
+        middleware=[CodeModeMiddleware()],
+    )
+    result = await invoke(graph)
+    body = json.loads(result.content)
+    assert result.status == "error"
+    assert "denied" in body["error"]
+    assert body["outcomes"][0]["error"]["kind"] == "authorization"
+    assert "No host tools started" in body["hint"]
+    assert "WROTE" not in result.content
+
+
 @pytest.mark.parametrize("entry", ["eval", "MCPCode"])
 async def test_canonical_interpreter_denial_also_blocks_compatibility_entry(entry):
     get_policy().tool_tiers["eval"] = "deny"

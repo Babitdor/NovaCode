@@ -15,9 +15,12 @@ import subprocess
 import sys
 import threading
 import time
+from contextlib import suppress
 from pathlib import Path
 from typing import TextIO
 
+#: Seconds one install step may run before it is killed; a fetch cannot hang forever.
+STEP_TIMEOUT = 900.0
 _FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 _FROM, _TO = (122, 162, 247), (187, 154, 247)  # Nova blue -> violet
 _GREEN, _RED, _DIM, _BOLD, _RESET = "\x1b[32m", "\x1b[31m", "\x1b[2m", "\x1b[1m", "\x1b[0m"
@@ -142,10 +145,31 @@ class Progress:
             frame += 1
 
 
-def run_command(arguments: list[str], progress: Progress, *, cwd: Path | None = None) -> str:
-    """Run a step's command, its output feeding the spinner line; return the output."""
+def _feed(stream: TextIO, lines: list[str], progress: Progress) -> None:
+    """Copy a step's output into ``lines`` while showing its latest line."""
+    try:
+        for line in stream:
+            lines.append(line)
+            if line.strip():
+                progress.line(line)
+    except (OSError, ValueError):
+        pass
+
+
+def run_command(
+    arguments: list[str],
+    progress: Progress,
+    *,
+    cwd: Path | None = None,
+    timeout: float = STEP_TIMEOUT,
+) -> str:
+    """Run a step's command, its output feeding the spinner line; return the output.
+
+    The deadline keeps a stalled fetch from hanging the update forever, and an
+    interrupt stops the child instead of waiting for it to finish.
+    """
     lines: list[str] = []
-    with subprocess.Popen(
+    process = subprocess.Popen(
         arguments,
         cwd=cwd,
         stdin=subprocess.DEVNULL,
@@ -154,13 +178,38 @@ def run_command(arguments: list[str], progress: Progress, *, cwd: Path | None = 
         text=True,
         encoding="utf-8",
         errors="replace",
-    ) as process:
-        assert process.stdout is not None
-        for line in process.stdout:
-            lines.append(line)
-            if line.strip():
-                progress.line(line)
-        code = process.wait()
+    )
+    assert process.stdout is not None
+    reader = threading.Thread(target=_feed, args=(process.stdout, lines, progress), daemon=True)
+    reader.start()
+    try:
+        try:
+            code = process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            with suppress(subprocess.SubprocessError, OSError):
+                process.wait(timeout=10)
+            raise CommandFailed(
+                process.returncode,
+                arguments,
+                output="".join(lines) + f"\nTimed out after {timeout:.0f}s",
+            ) from None
+        except KeyboardInterrupt:
+            process.terminate()
+            with suppress(subprocess.SubprocessError, OSError):
+                process.wait(timeout=10)
+            raise
+        finally:
+            reader.join(5)
+    finally:
+        stream = getattr(process, "stdout", None)
+        if stream is not None:
+            with suppress(OSError, ValueError, AttributeError):
+                stream.close()
+        if process.poll() is None:
+            process.kill()
+            with suppress(subprocess.SubprocessError, OSError):
+                process.wait(timeout=10)
     output = "".join(lines)
     if code:
         raise CommandFailed(code, arguments, output=output)

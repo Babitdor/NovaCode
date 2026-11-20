@@ -45,8 +45,12 @@ async def _run(*, agent_launched: bool, resume_on_done: bool, turn_active: bool)
 
     _jobs.get_registry().reset()
     app = NovaApp(
-        agent=_FakeAgent(), assistant_id="nova-agent", session_state=_SS(),
-        backend=None, token_tracker=TokenTracker(), image_tracker=None,
+        agent=_FakeAgent(),
+        assistant_id="nova-agent",
+        session_state=_SS(),
+        backend=None,
+        token_tracker=TokenTracker(),
+        image_tracker=None,
         model_name="m",
     )
     async with app.run_test(size=(100, 40)) as pilot:
@@ -139,3 +143,75 @@ def test_process_manager_unregisters_external_process():
 
     assert manager.get_process(info.pid) is None
     assert manager.get_by_name("bg-test") is None
+
+
+# --- what the notes cost ---------------------------------------------------
+# One turn that backgrounded 20 commands produced a 24 KB note block: the same
+# command line twice per task, plus a paragraph of tool hints, and the user's
+# real question arrived underneath it.
+
+
+def test_job_note_is_one_line_led_by_its_task_id():
+    from novacode_cli.tui.app import job_note
+
+    note = job_note("task_61", "completed (exit 0)", "pytest -q")
+    assert note.startswith("task_61: completed (exit 0)")
+    assert "get_task_logs('task_61')" in note
+    assert "\n" not in note
+
+
+def test_job_note_trims_a_huge_command_but_keeps_the_id():
+    from novacode_cli.tui.app import _JOB_NOTE_COMMAND_CHARS, job_note
+
+    note = job_note("task_9", "failed (exit 1)", "python " + "x" * 5000)
+    assert len(note) < _JOB_NOTE_COMMAND_CHARS + 120
+    assert note.endswith("Read it with get_task_logs('task_9').")
+
+
+def test_notes_block_keeps_the_newest_within_budget():
+    from novacode_cli.tui.app import pending_job_notes_block
+
+    notes = [
+        f"task_{i}: done. Command: x. Read it with get_task_logs('task_{i}')." for i in range(200)
+    ]
+    block = pending_job_notes_block(notes, limit=500)
+    assert len(block) <= 500
+    assert "task_199" in block
+    assert "task_0:" not in block
+    assert "earlier note(s) omitted" in block
+    # chronological: the survivor list keeps its order
+    kept = [line for line in block.splitlines() if line.startswith("- task_")]
+    assert kept == sorted(kept, key=lambda line: int(line.split("_")[1].split(":")[0]))
+
+
+def test_notes_block_of_nothing_is_empty():
+    from novacode_cli.tui.app import pending_job_notes_block
+
+    assert pending_job_notes_block([]) == ""
+
+
+def test_a_tasks_note_is_replaced_not_repeated():
+    """`task_61: still running` then `task_61: completed` is one fact, not two."""
+    from novacode_cli.tui.app import NovaApp, job_note
+
+    app = object.__new__(NovaApp)
+    app._pending_job_notes = []
+    app._queue_pending_job_note(
+        job_note("task_61", "still running (backgrounded mid-turn)", "pytest -q"),
+        task_id="task_61",
+    )
+    app._queue_pending_job_note(
+        job_note("task_61", "completed (exit 0)", "pytest -q"), task_id="task_61"
+    )
+    assert len(app._pending_job_notes) == 1
+    assert "completed (exit 0)" in app._pending_job_notes[0]
+
+
+def test_other_tasks_keep_their_own_notes():
+    from novacode_cli.tui.app import NovaApp, job_note
+
+    app = object.__new__(NovaApp)
+    app._pending_job_notes = []
+    app._queue_pending_job_note(job_note("task_1", "completed (exit 0)", "a"), task_id="task_1")
+    app._queue_pending_job_note(job_note("task_2", "completed (exit 0)", "b"), task_id="task_2")
+    assert len(app._pending_job_notes) == 2

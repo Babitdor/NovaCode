@@ -145,3 +145,66 @@ class TestIsSafeGitCommand:
     def test_non_git_command(self):
         safe, msg = is_safe_git_command("echo hello")
         assert safe is True
+
+
+class TestGitConfigReadsAreNotBlocked:
+    """Reading config is how an agent learns the identity it commits with.
+
+    Only writes are blocked: blocking the read cost a retry round-trip while
+    protecting nothing.
+    """
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "git config user.name",
+            "git config user.email",
+            "git config --get user.name",
+            "git config --get-all remote.origin.fetch",
+            "git config --list",
+            "git config -l",
+            "git config --global user.name",
+            "git config --get-regexp ^user\\.",
+            "git config --file .git/config user.name",
+        ],
+    )
+    def test_read_forms_are_allowed(self, command: str):
+        from novacode_cli.git_safety import git_config_writes
+
+        assert git_config_writes(command) is False
+        assert is_dangerous_command(command) == (False, "")
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "git config user.name test",
+            "git config --global user.email me@example.com",
+            "git config --unset user.name",
+            "git config --unset-all user.name",
+            "git config --add remote.origin.fetch +refs/heads/*",
+            "git config --replace-all user.name me",
+            "git config --remove-section remote.origin",
+            "git config --rename-section a.b c.d",
+            "git config --edit",
+            "git config -e",
+            "git config --file .git/config user.name bob",
+        ],
+    )
+    def test_write_forms_are_blocked(self, command: str):
+        dangerous, reason = is_dangerous_command(command)
+        assert dangerous is True
+        assert "git config" in reason
+
+    def test_reads_and_writes_in_one_line(self):
+        """A read earlier in the line does not excuse the write."""
+        dangerous, _ = is_dangerous_command("git config user.name; git config user.email me@x.y")
+        assert dangerous is True
+
+    def test_read_in_a_chain_is_allowed(self):
+        from novacode_cli.git_safety import git_config_writes
+
+        assert git_config_writes("git status && git config user.name") is False
+
+    def test_environment_prefix_does_not_hide_the_write(self):
+        dangerous, _ = is_dangerous_command("GIT_DIR=.git git config user.name bob")
+        assert dangerous is True

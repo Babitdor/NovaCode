@@ -8,6 +8,11 @@
   signal's name, instead of a bare negative number. ``grep``/``rg`` exiting 1
   (no matches) and ``diff``/``cmp`` exiting 1 (files differ) are answers, not
   failures, so they are annotated and not marked as errors.
+* **No terminal colour.** A command that thinks it is talking to a terminal
+  wraps its output in escapes — PowerShell's ``Select-String`` highlights the
+  matching text inside the line it prints, so the path the model needs arrives
+  as ``config.py ESC[0m ESC[7m 38%``. Colour is only meaningful to a terminal
+  we are not, so it is removed before the output reaches the model.
 """
 
 from __future__ import annotations
@@ -61,6 +66,23 @@ async def shell_output_batches(
         if not chunk:
             break
         await asyncio.sleep(0)
+
+
+#: CSI sequences (colour, cursor, erase), OSC sequences (hyperlinks, titles)
+#: and the two-character escapes. Deliberately narrow: a bare ``ESC`` in real
+#: output is data, and dropping everything after it would hide the line.
+_ANSI_ESCAPE = re.compile(
+    r"\x1b\[[0-?]*[ -/]*[@-~]"  # CSI ... final byte
+    r"|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)"  # OSC ... BEL or ST
+    r"|\x1b[@-Z\\-_]"  # two-character escapes
+)
+
+
+def strip_ansi(text: str) -> str:
+    """Remove terminal escape sequences from captured output."""
+    if "\x1b" not in text:
+        return text
+    return _ANSI_ESCAPE.sub("", text)
 
 
 _NO_MATCH_TOOLS = frozenset({"grep", "egrep", "fgrep", "rg", "ag", "findstr", "select-string"})
@@ -144,12 +166,36 @@ class OutputWindow:
         self.close()
         head = "".join(self._head)
         if not self.omitted:
-            return head + self._tail
+            return strip_ansi(head + self._tail)
         where = f" Full output: {self.log_path}" if self.log_path else ""
-        return (
+        return strip_ansi(
             f"{head}\n\n[... {self.omitted} characters omitted from the middle.{where} ...]\n\n"
             f"{self._tail}"
         )
+
+
+#: A command whose only effect is to pass time — the shape a stuck polling loop
+#: takes (``Start-Sleep -Seconds 29`` once every round trip).
+_WAIT_ONLY = re.compile(
+    r"^\s*(?:start-sleep\s+(?:-seconds\s+|-s\s+)?\d+|sleep\s+\d+)\s*;?\s*$",
+    re.IGNORECASE,
+)
+
+
+#: Said once per session, the first time a command does nothing but sleep. The
+#: alternative the agent reaches for is a round trip per 25 seconds, while a
+#: background task it launched reports back on its own when it finishes.
+WAIT_ONLY_NOTE = (
+    "\n\n[That command only waited. If it waits for a background task you launched, "
+    "the task reports back on its own: end your turn with its ID and you are resumed "
+    "when it finishes, instead of paying a model round trip per sleep. If it waits for "
+    "something external, put the sleep and the check in one command.]"
+)
+
+
+def is_wait_only_command(command: str) -> bool:
+    """Whether the command does nothing but sleep (no output, no other step)."""
+    return bool(_WAIT_ONLY.match(command))
 
 
 def _last_program(command: str) -> str | None:

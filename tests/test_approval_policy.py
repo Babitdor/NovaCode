@@ -208,7 +208,10 @@ def test_gate_ask_returns_none_slot():
 def test_gate_auto_approve_approves_all():
     reset_policy_cache()
     res = evaluate_tool_actions(_req(("shell", {"command": "rm -rf /"})), _SS(auto_approve=True))
-    assert res == [{"type": "reject", "reason": "Policy denied: shell"}]
+    # The reason travels with the rejection: the agent has to learn which rule
+    # it hit to make a different next attempt.
+    assert res[0]["type"] == "reject"
+    assert res[0]["reason"] == "Policy denied: shell — Matches a denied command pattern"
 
 
 @pytest.mark.parametrize("auto_approve", [False, True])
@@ -249,6 +252,114 @@ def test_gate_session_allow_cannot_override_deny():
     res = evaluate_tool_actions(_req(("shell", {"command": "sudo apt update"})), _SS())
     assert res[0]["type"] == "reject"  # deny still wins over a session rule
     reset_session_allow()
+
+
+# --- git config: reading is not a change -----------------------------------
+
+
+def test_git_config_read_resolves_without_a_prompt():
+    """`git config user.name` answers who the commit will be authored as."""
+    reset_policy_cache()
+    res = evaluate_tool_actions(
+        _req(("execute", {"command": "git config user.name", "shell": "native"})), _SS()
+    )
+    assert res == [{"type": "approve"}]
+    res = evaluate_tool_actions(
+        _req(("execute", {"command": "git config --get user.email", "shell": "native"})), _SS()
+    )
+    assert res == [{"type": "approve"}]
+
+
+def test_git_config_write_is_rejected_with_its_reason():
+    reset_policy_cache()
+    res = evaluate_tool_actions(
+        _req(("execute", {"command": "git config user.name bob", "shell": "native"})), _SS()
+    )
+    assert res[0]["type"] == "reject"
+    assert "Never update git config" in res[0]["reason"]
+
+
+# --- irreversible actions ---------------------------------------------------
+# A pushed tag can publish a release and a published version number can never be
+# reused. `Ask` is not enough: a remembered "always allow" rule was written for a
+# different command, and the decision model reads about it in the transcript.
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git push origin main",
+        "git push --tags",
+        "git push -u origin HEAD",
+        "npm publish",
+        "uv publish dist/*",
+        "cargo publish",
+        "twine upload dist/*",
+        "docker push registry/x:1",
+        "gh release create v1.2.53",
+        "gh workflow run publish.yml",
+    ],
+)
+def test_irreversible_commands_always_need_the_user(command: str):
+    from novacode_cli.security.policy import irreversible_consequence
+
+    assert irreversible_consequence("shell", {"command": command}) is not None
+    assert irreversible_consequence("execute", {"command": command}) is not None
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["git status", "git commit -m x", "git tag v1.2.53", "python -m build", "npm run build"],
+)
+def test_local_or_reversible_commands_are_not_special(command: str):
+    from novacode_cli.security.policy import irreversible_consequence
+
+    assert irreversible_consequence("execute", {"command": command}) is None
+
+
+def test_irreversible_ignores_tools_without_a_command():
+    from novacode_cli.security.policy import irreversible_consequence
+
+    assert irreversible_consequence("read_file", {"file_path": "/x"}) is None
+    assert irreversible_consequence("execute", {}) is None
+
+
+def test_gate_session_allow_cannot_approve_a_push():
+    """A rule accepted for one command must not license pushing."""
+    from novacode_cli.security.rule_synthesis import synthesize_rule
+    from novacode_cli.security.session_allow import get_session_allow, reset_session_allow
+
+    reset_policy_cache()
+    reset_session_allow()
+    get_session_allow().add(synthesize_rule("shell", {"command": "git push origin main"}))
+    res = evaluate_tool_actions(_req(("shell", {"command": "git push origin main"})), _SS())
+    assert res == [None], res
+    reset_session_allow()
+
+
+def test_gate_explicit_auto_approve_still_pushes():
+    """--auto-approve is a human decision made up front, not a remembered rule."""
+    reset_policy_cache()
+    res = evaluate_tool_actions(
+        _req(("shell", {"command": "git push origin main"})), _SS(auto_approve=True)
+    )
+    assert res == [{"type": "approve"}]
+
+
+def test_gate_force_push_keeps_its_dangerous_tier():
+    """A force push is `ask` because it rewrites history; the irreversible rule
+    must not quietly turn that into an approval."""
+    reset_policy_cache()
+    res = evaluate_tool_actions(_req(("shell", {"command": "git push --force origin main"})), _SS())
+    assert res == [None]
+
+
+def test_gate_deny_still_wins_over_the_irreversible_rule():
+    reset_policy_cache()
+    policy = load_policy()
+    assert policy.evaluate("shell", {"command": "npm publish"}) is not None
+    res = evaluate_tool_actions(_req(("shell", {"command": "sudo npm publish"})), _SS())
+    assert res[0]["type"] == "reject"
 
 
 if __name__ == "__main__":

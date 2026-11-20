@@ -30,6 +30,7 @@ from novacode_cli.agents.tool_offload import save_tool_result
 from novacode_cli.agents.tool_search_variants import SEARCH_VARIANTS
 from novacode_cli.config.nova_config import live_code_mode_enabled
 from novacode_cli.core.tool_results import MAX_INTERMEDIATE_CHARS, capture_file_read, data_text
+from novacode_cli.file_ops import WRITE_TOOLS, current_file_op_tracker
 from novacode_cli.mcp.generic import MCPInput, build_mcp_tool, resolve_target
 from novacode_cli.security.policy import get_policy
 
@@ -67,8 +68,10 @@ def _recovery_hint(exc: Exception, outcomes: list[dict], *, omitted: bool) -> st
     """Tell the next attempt what it can safely resume."""
     if not outcomes and "SyntaxError" in str(exc):
         return (
-            "JavaScript syntax error with no host tool calls. For Markdown, use quoted "
-            "strings or join an array of lines with '\\n'. Escape template backticks once."
+            "JavaScript syntax error with no host tool calls. A snippet is a script: "
+            "leave the value in its final expression instead of writing `return`. "
+            "For Markdown, use quoted strings or join an array of lines with '\\n'. "
+            "Escape template backticks once."
         )
     hints = []
     if _failure_kind(exc) == "timeout" or any("timeout_seconds" in step for step in outcomes):
@@ -108,6 +111,10 @@ task_id with the direct wait_for_task tool. Use tools.call('get_task_logs', {tas
 in a new snippet to read output. Verify the exit status before claiming success. If
 launch was interrupted and no ID was returned, use tools.call('list_background_tasks')
 before starting another copy. Other backends may run synchronously.
+A background job you launched reports back on its own when it finishes: end your turn
+with the task IDs named and you are resumed with the result. Do not sit in the turn
+sleeping and re-reading its status — each Start-Sleep round trip costs a full model
+call and the answer is already coming.
 Use task({description, subagentType, responseSchema?}) for configured subagents,
 including explicit @agent requests. Call task(...) inside eval, never tools.call('task', ...).
 Before choosing an unfamiliar agent, inspect await tools.describe('task') for valid names.
@@ -127,6 +134,8 @@ For background delegation, call start_async_task directly outside eval. Its task
 is not a result; obtain required results with the direct wait_for_task tool before
 claiming completion or starting dependent work.
 eval accepts statements and top-level await; its final expression is the selected result.
+The snippet is a script, not a function body: write `await x` and leave the value as the
+last expression instead of `return x`; a top-level `return` is a syntax error.
 Prefer temporary locals inside await (async () => { ...; return smallResult; })().
 Variables persist within this conversation. Keep intermediate data in JavaScript;
 return a compact synthesis or explicitly print selected output with console.log.
@@ -951,8 +960,29 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
             tool_call=call,
             runtime=replace(request.runtime, tool_call_id=call_id),
         )
-        with capture_file_read(enabled=target.name == "read_file" and not mcp) as capture:
-            result = await self._invoke_with_deadline(handler, nested, target.name, step, updates)
+        # A nested write has no message of its own: the eval call is the only card
+        # the transcript has, and only the tracker knows the file's content before
+        # the snippet runs. Recording it here is what gives Code Mode a diff — and
+        # what makes a Code Mode edit visible to undo and to verification, which
+        # both read the same records.
+        tracker = (
+            current_file_op_tracker() if not mcp and target.name in WRITE_TOOLS else None
+        )
+        if tracker is not None:
+            await asyncio.to_thread(
+                tracker.start_operation,
+                target.name,
+                arguments,
+                call_id,
+                parent_call_id=request.tool_call["id"],
+            )
+        try:
+            with capture_file_read(enabled=target.name == "read_file" and not mcp) as capture:
+                result = await self._invoke_with_deadline(handler, nested, target.name, step, updates)
+        except BaseException:
+            if tracker is not None:
+                tracker.abandon(call_id)
+            raise
         if (
             not mcp
             and isinstance(result, ToolMessage)
@@ -973,6 +1003,10 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
             result = messages[0]
         if not isinstance(result, ToolMessage):
             raise TypeError("Tool returned unsupported state mutation; call this tool directly.")
+        if tracker is not None:
+            # Reads the file back and builds the unified diff; blocking I/O, so it
+            # stays off the event loop like the snapshot that preceded it.
+            await asyncio.to_thread(tracker.complete_with_message, result)
         if result.status == "error":
             raise ValueError(str(result.content))
         value = self._result_value(result)

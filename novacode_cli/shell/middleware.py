@@ -27,7 +27,13 @@ from langchain_core.tools import StructuredTool
 from langchain_core.tools.base import ToolException
 
 from novacode_cli.shell.os_sandbox import OSSandboxPolicy, detect_backend, wrap_command
-from novacode_cli.shell.output import OutputWindow, exit_status
+from novacode_cli.shell.output import (
+    WAIT_ONLY_NOTE,
+    OutputWindow,
+    exit_status,
+    is_wait_only_command,
+    strip_ansi,
+)
 from novacode_cli.shell.patterns import _NPX_YES_RE
 from novacode_cli.shell.tool_surface import ALIAS_MARKER, execution_tool, execution_tools
 from novacode_cli.shell.utils import (
@@ -136,6 +142,8 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
         self._timeout = timeout
         self._max_output_bytes = max_output_bytes
         self._tool_name = "shell"
+        #: The wait-only advice is said once per session, not on every sleep.
+        self._warned_wait_only = False
         self._env = _sanitize_env(env if env is not None else os.environ.copy())
         self._workspace_root = workspace_root
         self._backend = backend
@@ -952,7 +960,7 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
             result = self._backend.execute(command)
 
             # Format output for LLM consumption
-            output = result.output or "<no output>"
+            output = strip_ansi(result.output or "<no output>")
 
             if len(output) > self._max_output_bytes:
                 window = OutputWindow(self._max_output_bytes)
@@ -1435,6 +1443,11 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
         if status == "success" and exit_note:
             status = "error" if failed else "success"
             output = f"{output}\n\n{exit_note}"
+        if is_wait_only_command(command) and not self._warned_wait_only:
+            # Advice, not status: it belongs to the model's copy of the output and
+            # must not mark the run incomplete or ride along into the job result.
+            self._warned_wait_only = True
+            output += WAIT_ONLY_NOTE
 
         if detached and _job is not None:
             # The agent already got the "backgrounded" message; finalize the job

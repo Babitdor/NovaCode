@@ -34,6 +34,96 @@ BLOCKED_COMMANDS = {
     "--no-gpg-sign": "Never skip GPG signing",
 }
 
+#: `git config` flags that change the file. Any of them makes the subcommand a
+#: write, whatever else is on the line.
+_GIT_CONFIG_WRITE_FLAGS = frozenset(
+    {
+        "--add",
+        "--replace-all",
+        "--unset",
+        "--unset-all",
+        "--remove-section",
+        "--rename-section",
+        "--edit",
+        "-e",
+    }
+)
+#: Flags that consume the next token, so that token is not a config value.
+_GIT_CONFIG_FLAGS_WITH_ARGUMENT = frozenset(
+    {
+        "--file",
+        "-f",
+        "--blob",
+        "--type",
+        "-t",
+        "--default",
+        "--get",
+        "--get-all",
+        "--get-regexp",
+        "--get-urlmatch",
+        "--comment",
+    }
+)
+
+
+def _git_config_writes(words: list[str]) -> bool:
+    """Whether these ``git config`` arguments would change configuration."""
+    if any(word in _GIT_CONFIG_WRITE_FLAGS for word in words):
+        return True
+    values: list[str] = []
+    skip = False
+    for word in words:
+        if skip:
+            skip = False
+            continue
+        if word.startswith("-"):
+            skip = word in _GIT_CONFIG_FLAGS_WITH_ARGUMENT
+            continue
+        values.append(word)
+    # One positional is the key being read (``git config user.name``); a second
+    # is the value being written (``git config user.name bob``).
+    return len(values) > 1
+
+
+def git_config_writes(command: str) -> bool:
+    """Whether any ``git config`` in the command would change configuration.
+
+    Reading is how an agent learns the identity it is about to commit with, so
+    only writes are blocked. ``git config`` arrives through the same policy gate
+    as every other command, and blocking the read cost a retry round-trip while
+    protecting nothing.
+    """
+    for segment in re.split(r"[;&|\n]+", command):
+        words = segment.split()
+        while words and re.match(r"^\w+=", words[0]):  # leading FOO=1 assignments
+            words = words[1:]
+        for index, word in enumerate(words[:-1]):
+            if (
+                word == "git"
+                and words[index + 1] == "config"
+                and _git_config_writes(words[index + 2 :])
+            ):
+                return True
+    return False
+
+
+def blocked_command_reason(command: str) -> str | None:
+    """Why a command is blocked, or None.
+
+    One source of truth for the block list: ``git config`` is decided by its
+    form (a read is not a change), every other entry by substring.
+    """
+    command_lower = command.lower()
+    for blocked, reason in BLOCKED_COMMANDS.items():
+        if blocked == "git config":
+            if git_config_writes(command):
+                return f"Blocked: {reason}"
+            continue
+        if blocked.lower() in command_lower:
+            return f"Blocked: {reason}"
+    return None
+
+
 # Command injection patterns to detect
 COMMAND_INJECTION_PATTERNS = [
     r'\$\(',           # $(...)
@@ -159,17 +249,17 @@ def is_dangerous_command(command: str) -> tuple[bool, str]:
         Tuple of (is_dangerous, reason)
     """
     command_lower = command.lower()
-    
+
     # Check for blocked commands
-    for blocked, reason in BLOCKED_COMMANDS.items():
-        if blocked.lower() in command_lower:
-            return True, f"Blocked: {reason}"
-    
+    blocked = blocked_command_reason(command)
+    if blocked is not None:
+        return True, blocked
+
     # Check for dangerous commands
     for dangerous, reason in DANGEROUS_GIT_COMMANDS.items():
         if dangerous.lower() in command_lower:
             return True, reason
-    
+
     return False, ""
 
 
