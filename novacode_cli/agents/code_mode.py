@@ -41,6 +41,8 @@ if TYPE_CHECKING:
     from langchain.agents.middleware.types import ModelRequest, ToolCallRequest
     from langchain_core.messages.tool import ToolCall
 
+    from novacode_cli.file_ops import FileOpTracker
+
 MAX_ARGUMENT_CHARS = 100000
 MAX_OUTPUT_CHARS = 12000
 MAX_CHECKPOINTS = 8
@@ -922,6 +924,52 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
             raise ValueError("Unknown or disabled MCP tool; use mcp.list().")
         return await self._invoke(request, handler, target, params.arguments, step, mcp=True)
 
+    @staticmethod
+    def _state_message(result: Command, updates: dict) -> ToolMessage:
+        """Validate a subagent's state mutation and return its single message."""
+        if result.goto or result.graph or not isinstance(result.update, dict):
+            raise TypeError("Subagent returned unsupported graph mutation.")
+        if set(result.update) - {"messages", "files"}:
+            raise TypeError("Subagent returned unsupported state mutation.")
+        messages = result.update.get("messages", [])
+        if len(messages) != 1 or not isinstance(messages[0], ToolMessage):
+            raise TypeError("Subagent returned unsupported messages.")
+        files = result.update.get("files", {})
+        if files:
+            updates.setdefault("files", {}).update(files)
+        return messages[0]
+
+    async def _track_nested_write(
+        self,
+        request: ToolCallRequest,
+        target: BaseTool,
+        arguments: dict,
+        call_id: str,
+        *,
+        mcp: bool,
+    ) -> FileOpTracker | None:
+        """Record a write made inside a snippet against the eval call that made it.
+
+        A nested write has no message of its own: the eval call is the only card the
+        transcript has, and only the tracker knows the file's content before the
+        snippet runs. Recording it here is what gives Code Mode a diff — and what
+        makes a Code Mode edit visible to undo and to verification, which both read
+        the same records.
+        """
+        if mcp or target.name not in WRITE_TOOLS:
+            return None
+        tracker = current_file_op_tracker()
+        if tracker is None:
+            return None
+        await asyncio.to_thread(
+            tracker.start_operation,
+            target.name,
+            arguments,
+            call_id,
+            parent_call_id=request.tool_call["id"],
+        )
+        return tracker
+
     async def _invoke(  # noqa: PLR0912 -- validate and execute at the common trust boundary.
         self,
         request: ToolCallRequest,
@@ -960,25 +1008,12 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
             tool_call=call,
             runtime=replace(request.runtime, tool_call_id=call_id),
         )
-        # A nested write has no message of its own: the eval call is the only card
-        # the transcript has, and only the tracker knows the file's content before
-        # the snippet runs. Recording it here is what gives Code Mode a diff — and
-        # what makes a Code Mode edit visible to undo and to verification, which
-        # both read the same records.
-        tracker = (
-            current_file_op_tracker() if not mcp and target.name in WRITE_TOOLS else None
-        )
-        if tracker is not None:
-            await asyncio.to_thread(
-                tracker.start_operation,
-                target.name,
-                arguments,
-                call_id,
-                parent_call_id=request.tool_call["id"],
-            )
+        tracker = await self._track_nested_write(request, target, arguments, call_id, mcp=mcp)
         try:
             with capture_file_read(enabled=target.name == "read_file" and not mcp) as capture:
-                result = await self._invoke_with_deadline(handler, nested, target.name, step, updates)
+                result = await self._invoke_with_deadline(
+                    handler, nested, target.name, step, updates
+                )
         except BaseException:
             if tracker is not None:
                 tracker.abandon(call_id)
@@ -990,17 +1025,7 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
         ):
             step["task_id"] = task_id
         if isinstance(result, Command) and updates is not None:
-            if result.goto or result.graph or not isinstance(result.update, dict):
-                raise TypeError("Subagent returned unsupported graph mutation.")
-            if set(result.update) - {"messages", "files"}:
-                raise TypeError("Subagent returned unsupported state mutation.")
-            messages = result.update.get("messages", [])
-            if len(messages) != 1 or not isinstance(messages[0], ToolMessage):
-                raise TypeError("Subagent returned unsupported messages.")
-            files = result.update.get("files", {})
-            if files:
-                updates.setdefault("files", {}).update(files)
-            result = messages[0]
+            result = self._state_message(result, updates)
         if not isinstance(result, ToolMessage):
             raise TypeError("Tool returned unsupported state mutation; call this tool directly.")
         if tracker is not None:
