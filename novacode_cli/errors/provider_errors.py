@@ -84,6 +84,25 @@ _NOTICES = {
 # "region" needs a user opt-in on the provider account, so retrying is pointless.
 _PERMANENT = frozenset({"usage_limit", "auth", "region", "plan", "zdr"})
 
+# Wording that means the *account* is capped, not that this request was fast.
+# A real cap names a plan, a credit balance, or a named window; it will not
+# clear during backoff. "quota" alone does not qualify — Google, Azure and
+# several OpenAI-compatible gateways word per-minute throttling as an exceeded
+# quota ("You exceeded your current quota, please check your plan and billing
+# details"), which is a 429 that clears in seconds.
+_CAP_MARKERS: tuple[str, ...] = (
+    "usage limit",
+    "weekly limit",
+    "monthly limit",
+    "insufficient_quota",
+    "insufficient quota",
+    "out of credit",
+    "insufficient credit",
+    "credit balance",
+    "add extra usage",
+    "allowance",
+)
+
 
 def _status_code(exc: BaseException) -> int | None:
     """Best-effort HTTP status from an SDK exception (attr varies by library)."""
@@ -99,8 +118,8 @@ def _status_code(exc: BaseException) -> int | None:
 def _classify(exc: BaseException | None) -> str | None:
     """Bucket a provider failure into a category, or ``None`` if unrecognised.
 
-    Priority matters: a weekly usage cap is often *also* an HTTP 429, so the
-    usage-limit check must run before the generic rate-limit one.
+    Rate limits and quota wording: an HTTP 429 carries the cap only if the text
+    names one (see ``_CAP_MARKERS``); otherwise it is throttling.
     """
     if exc is None:
         return None
@@ -110,13 +129,15 @@ def _classify(exc: BaseException | None) -> str | None:
 
     # Usage / quota / credit caps — most specific. Ollama Cloud's weekly cap and
     # OpenAI/Anthropic "insufficient_quota" all land here.
-    if (
-        "usage limit" in low
-        or "quota" in low
-        or "weekly limit" in low
-        or "out of credit" in low
-        or "billing" in low
-        or ("insufficient" in low and "credit" in low)
+    #
+    # A 429 is *not* on its own evidence of a cap: OpenAI sends 429 for a real
+    # insufficient_quota, but every throttling provider also 429s, and some of
+    # them call it quota. Requiring cap wording keeps the genuine cap (which
+    # should fail fast) apart from throttling (which should back off and retry).
+    # The bare word "quota" therefore only counts when the status is not 429.
+    if any(marker in low for marker in _CAP_MARKERS) or (
+        status != _HTTP_RATE_LIMITED
+        and ("quota" in low or "billing" in low)
     ):
         return "usage_limit"
 

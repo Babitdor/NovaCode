@@ -91,6 +91,50 @@ def test_plain_429_is_rate_limit_notice():
     assert "rate limit reached" in notice.lower()
 
 
+# Google/Azure-style throttling: a 429 that says the quota was exceeded. The
+# wording is a per-minute window, not an account cap, so it must stay transient.
+_THROTTLED_QUOTA = (
+    "429 RESOURCE_EXHAUSTED: You exceeded your current quota, please check your "
+    "plan and billing details. Quota exceeded for quota metric "
+    "'GenerateRequestsPerMinutePerProjectPerModel'."
+)
+
+
+def test_throttled_quota_429_is_rate_limit_notice():
+    notice = friendly_model_error(_ResponseError(_THROTTLED_QUOTA, 429))
+    assert notice is not None
+    assert "rate limit reached" in notice.lower()
+    # Telling the user to upgrade would be wrong: nothing is exhausted.
+    assert "usage limit reached" not in notice.lower()
+
+
+def test_throttled_quota_429_is_retryable():
+    assert is_retryable_model_error(_ResponseError(_THROTTLED_QUOTA, 429)) is True
+
+
+# OpenAI's real account cap also arrives as 429, but names the condition.
+_INSUFFICIENT_QUOTA = (
+    "Error code: 429 - {'error': {'message': 'You exceeded your current quota, "
+    "please check your plan and billing details.', 'type': 'insufficient_quota', "
+    "'code': 'insufficient_quota'}}"
+)
+
+
+def test_insufficient_quota_429_is_still_a_usage_cap():
+    notice = friendly_model_error(_ResponseError(_INSUFFICIENT_QUOTA, 429))
+    assert notice is not None
+    assert "usage limit reached" in notice.lower()
+    assert is_retryable_model_error(_ResponseError(_INSUFFICIENT_QUOTA, 429)) is False
+
+
+def test_upgrade_required_plan_error_is_not_a_usage_cap():
+    notice = friendly_model_error(
+        _ResponseError("403 upgrade_required: this plan has no API access", 403)
+    )
+    assert notice is not None
+    assert "no api access" in notice.lower()
+
+
 def test_auth_401_is_auth_notice():
     notice = friendly_model_error(_ResponseError("Unauthorized: invalid api key", 401))
     assert notice is not None

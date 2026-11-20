@@ -776,10 +776,16 @@ def _build_chat_model(
         )
         thinking_kwargs = anthropic_thinking_kwargs(model_name, effort, int(thinking_budget or 0))
 
+        # Keyring-or-env, passed explicitly. The SDK reads only ANTHROPIC_API_KEY
+        # from the environment, which is empty for a key saved through /auth, so
+        # omitting it failed with "Could not resolve authentication method".
+        anthropic_key = settings.anthropic_api_key or os.environ.get("ANTHROPIC_API_KEY")
+        key_kwargs = {"api_key": anthropic_key} if anthropic_key else {}
         return ChatAnthropic(
             model_name=model_name,
             max_tokens=20_000,  # type: ignore[arg-type]
             max_retries=max_retries,
+            **key_kwargs,
             **thinking_kwargs,
         )
 
@@ -807,6 +813,11 @@ def _build_chat_model(
                 vertexai=False,
                 base_url="https://generativelanguage.googleapis.com/",
             )
+        elif google_key:
+            # Keyring-or-env, passed explicitly: the SDK would otherwise read only
+            # the environment, and a key saved through /auth lives in the system
+            # keychain, which is empty here on a fresh session.
+            google_kwargs["google_api_key"] = google_key
         google_kwargs.update(google_thinking_kwargs(model_name, effort))
 
         model = ChatGoogleGenerativeAI(

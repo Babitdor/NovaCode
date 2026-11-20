@@ -55,12 +55,20 @@ def test_anthropic_kwargs_pinned():
     assert type(m).__name__ == "ChatAnthropic"
     assert m.max_tokens == 20_000
     assert m.max_retries == 5
+    # The key must reach the client: the SDK reads only ANTHROPIC_API_KEY from
+    # the environment, so a key from /auth (system keychain) was dropped and
+    # every call failed with "Could not resolve authentication method".
+    assert m.anthropic_api_key.get_secret_value() == "test-key"
 
 
 def test_google_kwargs_pinned():
     m = build_chat_model("google", "gemini-3-pro-preview")
     assert type(m).__name__ == "ChatGoogleGenerativeAI"
     assert m.max_retries == 5
+    # Same class of bug as Anthropic above: the resolved key was computed and
+    # then never passed, so a keychain-only GOOGLE_API_KEY raised
+    # "API key required for Gemini Developer API".
+    assert m.google_api_key.get_secret_value() == "test-key"
 
 
 def test_ollama_kwargs_pinned(monkeypatch):
