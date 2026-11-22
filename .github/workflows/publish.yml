@@ -125,6 +125,8 @@ jobs:
           cp "$src" "dist/$asset"
           echo "ASSET=$asset" >> "$GITHUB_ENV"
       - name: Attach the binary beside the wheel
+        if: always()
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
