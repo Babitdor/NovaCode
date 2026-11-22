@@ -66,6 +66,21 @@ def _failure_kind(exc: Exception) -> str:
     return "tool_error"
 
 
+def _error_text(exc: BaseException) -> str:
+    """Full error text with the OS path when one rode on the exception.
+
+    Windows spawn failures (``NotADirectoryError``/``FileNotFoundError`` from
+    ``subprocess``) carry the offending path in ``filename``, which ``str()``
+    does not include — the agent would see only "The directory name is
+    invalid" and could not diagnose the failure.
+    """
+    text = str(exc).strip() or type(exc).__name__
+    filename = getattr(exc, "filename", None)
+    if filename:
+        text = f"{text} [path: {filename}]"
+    return text
+
+
 def _recovery_hint(exc: Exception, outcomes: list[dict], *, omitted: bool) -> str:
     """Tell the next attempt what it can safely resume."""
     if not outcomes and "SyntaxError" in str(exc):
@@ -338,6 +353,21 @@ class TaskInput(BaseModel):
     subagent_type: str = Field(min_length=1, alias="subagentType")
     response_schema: dict[str, Any] | None = Field(default=None, alias="responseSchema")
     label: str | None = None
+
+
+#: Subagent state keys that are internal bookkeeping by convention and are
+#: dropped when a task tool hands its final state back, instead of being merged
+#: into the parent graph or rejected.
+#: - SUBAGENT_EXCLUDED_KEYS mirrors the keys deepagents itself strips from a
+#:   child's final state (deepagents/middleware/subagents.py _EXCLUDED_STATE_KEYS).
+#: - SUBAGENT_CAVEMAN_KEYS are CavemanState extensions (novacode_cli/agents/caveman.py).
+#: - Keys starting with "_" are private per-run attrs such as CompactionState's
+#:   _summarization_event/_compaction_backoff/_collapse_event/_context_blocks/
+#:   _context_archive (novacode_cli/agents/context_compaction.py).
+SUBAGENT_EXCLUDED_KEYS = frozenset(
+    {"todos", "structured_response", "skills_metadata", "skills_load_errors", "memory_contents"}
+)
+SUBAGENT_CAVEMAN_KEYS = frozenset({"caveman_sources", "caveman_blocks", "caveman_route"})
 
 
 class CodeModeMiddleware(CodeInterpreterMiddleware):
@@ -621,7 +651,9 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
                 step["error"] = {
                     "kind": _failure_kind(exc),
                     "type": type(exc).__name__,
-                    "message": str(exc).strip().splitlines()[-1][:300] if str(exc).strip() else "",
+                    # First line, not last: multiline OSError messages put the
+                    # path on the first line; the old last-line slice hid it.
+                    "message": _error_text(exc).splitlines()[0][:300] if str(exc).strip() else "",
                 }
                 raise
 
@@ -691,7 +723,7 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
                 "error": (
                     str(failure)
                     if isinstance(exc, asyncio.CancelledError)
-                    else f"{type(failure).__name__}: {failure}"[:4000]
+                    else f"{type(failure).__name__}: {_error_text(failure)}"[:4000]
                 ),
                 "calls": calls,
                 "failed_calls": failures,
@@ -908,7 +940,7 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
                 {
                     **event,
                     "phase": "error",
-                    "error": str(exc),
+                    "error": _error_text(exc),
                     "duration_ms": int((time.monotonic() - started) * 1000),
                 }
             )
@@ -926,11 +958,31 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
 
     @staticmethod
     def _state_message(result: Command, updates: dict) -> ToolMessage:
-        """Validate a subagent's state mutation and return its single message."""
+        """Validate a subagent's state mutation and return its single message.
+
+        Only ``messages`` and ``files`` transfer to the parent graph. Internal
+        per-run bookkeeping keys carried by subagent middleware state (private
+        attrs, deepagents' excluded keys, caveman state) are dropped, not merged;
+        any other unknown key is an unsupported state mutation.
+        """
         if result.goto or result.graph or not isinstance(result.update, dict):
             raise TypeError("Subagent returned unsupported graph mutation.")
-        if set(result.update) - {"messages", "files"}:
-            raise TypeError("Subagent returned unsupported state mutation.")
+        internal_keys = []
+        for key in result.update:
+            if key in {"messages", "files"}:
+                continue
+            if (
+                key.startswith("_")
+                or key in SUBAGENT_EXCLUDED_KEYS
+                or key in SUBAGENT_CAVEMAN_KEYS
+            ):
+                internal_keys.append(key)
+            else:
+                raise TypeError("Subagent returned unsupported state mutation.")
+        if internal_keys:
+            logger.debug(
+                "Dropping internal subagent state keys: %s", ", ".join(sorted(internal_keys))
+            )
         messages = result.update.get("messages", [])
         if len(messages) != 1 or not isinstance(messages[0], ToolMessage):
             raise TypeError("Subagent returned unsupported messages.")

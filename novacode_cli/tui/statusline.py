@@ -1,40 +1,12 @@
-"""Selectable status-line fields and backwards-compatible preferences."""
+"""Selectable status-line fields.
+
+Kept as the Textual UI's import path; the definitions moved to
+:mod:`novacode_cli.ui.statusline_fields` so the socket server can read them
+without importing Textual. Both names stay importable from here.
+"""
 
 from __future__ import annotations
 
-FIELDS: dict[str, str] = {
-    "activity": "Activity and elapsed time",
-    "model": "Model",
-    "effort": "Reasoning effort",
-    "directory": "Current directory",
-    "branch": "Git branch",
-    "session": "Session name",
-    "version": "Nova version",
-    "phase": "Planning / implementation phase",
-    "permissions": "Permission mode",
-    "context": "Context usage",
-    "cache": "Prompt cache",
-    "learning": "Learning status",
-    "background": "Background tasks",
-    "bridges": "Remote connections",
-    "notifications": "Notifications and pending approvals",
-    "files": "Instruction file count",
-    "skills": "Enabled skill count",
-}
-DEFAULT_FIELDS: tuple[str, ...] = (
-    "activity",
-    "context",
-    "cache",
-    "learning",
-    "bridges",
-    "notifications",
-    "files",
-    "skills",
-)
+from novacode_cli.ui.statusline_fields import DEFAULT_FIELDS, FIELDS, selected_fields
 
-
-def selected_fields(value: object) -> tuple[str, ...]:
-    """Ignore unknown fields; preserve an intentionally empty selection."""
-    if not isinstance(value, list):
-        return DEFAULT_FIELDS
-    return tuple(key for key in FIELDS if key in value)
+__all__ = ["DEFAULT_FIELDS", "FIELDS", "selected_fields"]

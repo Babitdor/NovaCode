@@ -7,20 +7,30 @@ import json
 import logging
 import math
 import re
+import shlex
 import subprocess
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from pathlib import Path
+from typing import TYPE_CHECKING, Protocol
 
-from .adapters import ImportedSession
+from .adapters import ImportedSession, adapters
 from .session_persistence import atomic_write
 
 if TYPE_CHECKING:
-    from pathlib import Path
+    from collections.abc import Sequence
 
     from langchain_core.messages import BaseMessage
 
+    from .adapters import SessionAdapter
+
 MODES = {"compact", "full", "relevant"}
 MESSAGE_ID = "nova-imported-context"
+#: The question `/compare` asks, before the two transcripts are appended.
+COMPARISON_REQUEST = (
+    "Compare these historical sessions: decisions, approaches, files touched, "
+    "test results, and unresolved problems. Cite transcript evidence and "
+    "distinguish it from current workspace state.\n\n"
+)
 
 
 def import_budget(window: int, used: int = 0) -> int:
@@ -54,6 +64,96 @@ def git_state(workspace: Path) -> str:
         ]
     except (OSError, subprocess.TimeoutExpired):
         return "Git state unavailable"
+
+
+class TokenWindow(Protocol):
+    """The two numbers an import budget needs from a session's token tracker."""
+
+    context_window_size: int
+    current_context: int
+
+
+def context_budget(tracker: TokenWindow | None = None) -> int:
+    """Leave room for Nova's prompt, tools, ongoing chat, and the next response."""
+    window = getattr(tracker, "context_window_size", 0)
+    used = getattr(tracker, "current_context", 0)
+    if isinstance(window, (int, float)) and window > 0:
+        return import_budget(int(window), int(used))
+    return 12000
+
+
+def import_message(context: ImportedContext, max_tokens: int = 12000) -> list[BaseMessage]:
+    """The single reference message an import writes into the conversation.
+
+    LangGraph's message reducer replaces a message with a matching ID, so every
+    import reuses :data:`MESSAGE_ID`: a second import replaces the earlier
+    reference instead of stacking a stale transcript beside it. Combining a
+    removal and an append for that ID would delete the replacement instead.
+    """
+    from langchain_core.messages import HumanMessage
+
+    return [HumanMessage(content=context.build(max_tokens), id=MESSAGE_ID)]
+
+
+def parse_import(text: str) -> tuple[str, str, str]:
+    """Parse a slash import; quoted paths retain Windows backslashes."""
+    parts = shlex.split(text, posix=False)
+    parts = [part.strip("\"'") for part in parts]
+    if len(parts) < 2:  # noqa: PLR2004 - a command and its provider
+        message = (
+            'Use /import codex|claude|nova <session ID or "file path"> '
+            "[--mode compact|full|relevant], or --last."
+        )
+        raise ValueError(message)
+    mode = "compact"
+    if "--mode" in parts:
+        index = parts.index("--mode")
+        if index + 1 >= len(parts):
+            message = "--mode requires full, compact, or relevant."
+            raise ValueError(message)
+        mode = parts[index + 1]
+        del parts[index : index + 2]
+    selector = parts[2] if len(parts) == 3 else ""  # noqa: PLR2004 - provider and selector
+    if not selector:
+        message = "Supply a session ID, file path, or --last."
+        raise ValueError(message)
+    return parts[1].lower(), selector, mode
+
+
+def load_import(
+    provider: str,
+    selector: str,
+    mode: str = "compact",
+    *,
+    registry: dict[str, SessionAdapter] | None = None,
+) -> ImportedContext:
+    """Resolve a provider and explicit selector; latest is scoped to that provider."""
+    registry = registry or adapters()
+    if provider not in registry:
+        message = f"Unknown session provider '{provider}'. Available: {', '.join(registry)}"
+        raise ValueError(message)
+    adapter = registry[provider]
+    if selector in {"--last", "--latest"}:
+        rows = adapter.discover()
+        if not rows:
+            message = f"No local {provider} sessions were found."
+            raise ValueError(message)
+        selector = max(rows, key=lambda row: row.updated_at).path
+    context = ImportedContext(adapter.load(selector), mode, git_at_import=git_state(Path.cwd()))
+    context.build()
+    return context
+
+
+def comparison_prompt(contexts: Sequence[ImportedContext], max_tokens: int) -> str:
+    """The request `/compare` sends, so both frontends ask the same question.
+
+    Comparison stays an ordinary new Nova request: no source tools or source
+    agent runtimes are resumed, and the budget is halved per session so two
+    transcripts fit where one import would.
+    """
+    return COMPARISON_REQUEST + "\n\n".join(
+        context.build(max_tokens) for context in contexts
+    )
 
 
 def transcript(session: ImportedSession) -> str:
@@ -250,18 +350,15 @@ def restore_imported_reference(
     max_tokens: int = 12000,
 ) -> list[BaseMessage]:
     """Restore the saved reference even if Nova's recent-history window evicted it."""
-    from langchain_core.messages import HumanMessage
-
     try:
         context = ImportedContext.load(sessions_dir, session_id)
         if context is None:
             return messages
-        content = context.build(max_tokens)
     except (OSError, ValueError, KeyError, TypeError):
         logging.getLogger(__name__).warning(
             "Imported reference could not be restored; use /context imported compact", exc_info=True
         )
         return [message for message in messages if message.id != MESSAGE_ID]
-    return [message for message in messages if message.id != MESSAGE_ID] + [
-        HumanMessage(content=content, id=MESSAGE_ID),
-    ]
+    return [
+        message for message in messages if message.id != MESSAGE_ID
+    ] + import_message(context, max_tokens)

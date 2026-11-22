@@ -90,7 +90,7 @@ def _content(m):
 
 def test_steer_in_system_prompt_and_delivered_as_message_once():
     instrs = [SteeringInstruction("steer", "focus on performance")]
-    mw = SteeringMiddleware(instructions=instrs)
+    mw = SteeringMiddleware(instructions=instrs, treat_existing_as_new=True)
 
     out1 = mw._inject(_Req("BASE", [HumanMessage("hi")]))
     sm = out1.applied["system_message"]
@@ -106,6 +106,57 @@ def test_steer_in_system_prompt_and_delivered_as_message_once():
     out2 = mw._inject(_Req("BASE", [HumanMessage("hi")]))
     assert "focus on performance" in out2.applied["system_message"].content
     assert "messages" not in out2.applied
+
+
+def test_existing_instructions_are_not_renudged_after_a_rebuild():
+    """An agent rebuild constructs a fresh middleware holding the shared list;
+    long-standing rules must not surface again as "just added" messages."""
+    instrs = [SteeringInstruction("steer", "focus on performance")]
+    mw = SteeringMiddleware(instructions=instrs)
+
+    # Rebuild: the existing rule is seeded as delivered -> no nudge message.
+    out = mw._inject(_Req("BASE", [HumanMessage("hi")]))
+    assert "focus on performance" in out.applied["system_message"].content
+    assert "messages" not in out.applied
+
+    # A runtime-added steer still nudges exactly once.
+    instrs.append(SteeringInstruction("steer", "second — added mid-run"))
+    out2 = mw._inject(_Req("BASE", [HumanMessage("hi")]))
+    assert "messages" in out2.applied
+    assert "second — added mid-run" in _content(out2.applied["messages"][-1])
+    out3 = mw._inject(_Req("BASE", [HumanMessage("hi")]))
+    assert "messages" not in out3.applied  # nudged exactly once
+
+
+def test_a_standing_steer_reaches_the_subagent_system_prompt():
+    """S1: subagent stacks (sync `task` children) mount the SAME shared steering
+    list as the main agent, so a standing /steer rule applies inside subagents —
+    without re-nudging the existing rule when a subagent graph is built."""
+    from novacode_cli.agents.core_agent import _harden_subagent_specs
+
+    shared = [SteeringInstruction("constraint", "never touch tests")]
+    spec = {"name": "researcher", "description": "d", "system_prompt": "p", "tools": []}
+    compiled = {"name": "remote-one", "url": "http://example.test", "middleware": []}
+    hardened = _harden_subagent_specs([spec, compiled], steering_instructions=shared)
+
+    steer_mws = [
+        m for m in hardened[0]["middleware"] if type(m).__name__ == "SteeringMiddleware"
+    ]
+    assert len(steer_mws) == 1, "exactly one steering middleware on the subagent stack"
+    assert steer_mws[0]._instructions is shared, "same list instance as the main agent"
+
+    out = steer_mws[0]._inject(_Req("BASE", [HumanMessage("go")]))
+    assert "never touch tests" in out.applied["system_message"].content
+    assert "messages" not in out.applied, "existing rule: no rebuild nudge"
+
+    # A rule added mid-session (shared list) shows up on the next subagent call.
+    shared.append(SteeringInstruction("focus", "second — added mid-run"))
+    out2 = steer_mws[0]._inject(_Req("BASE", [HumanMessage("go")]))
+    assert "second — added mid-run" in _content(out2.applied["messages"][-1])
+
+    # Compiled/remote subagents (server-built graphs) are left untouched.
+    assert "middleware" not in compiled or compiled.get("url"), "remote spec not reconfigured"
+    assert hardened[1] is compiled
 
 
 def test_new_steer_added_later_is_delivered():
@@ -153,11 +204,58 @@ def test_steering_skipped_when_history_overflows_window():
     block appended (that overflow truncates the model's answer mid-sentence) —
     but the newly-added steer still reaches the model in-band."""
     big = HumanMessage("x" * 3000)  # ~1000 tokens of history
-    mw = SteeringMiddleware(instructions=[SteeringInstruction("steer", "focus")])
+    mw = SteeringMiddleware(
+        instructions=[SteeringInstruction("steer", "focus")], treat_existing_as_new=True
+    )
     out = mw._inject(_ReqM("BASE", [big], window=1000))
     assert "system_message" not in out.applied  # block skipped (would overflow)
     assert "messages" in out.applied  # but the nudge still fires
     assert "focus" in _content(out.applied["messages"][-1])
+
+
+def test_margin_counts_image_parts_by_serialized_length():
+    """A base64 image part used to count as zero characters (only its text key
+    was read), letting history+steering overflow the window. It must count."""
+    image_part = {
+        "type": "image_url",
+        "image_url": {"url": "data:image/png;base64," + "A" * 6000},
+    }
+    message = HumanMessage(["look at this", image_part])
+
+    mw = SteeringMiddleware(instructions=[SteeringInstruction("s", "x")])
+    # ~2000+ serialized chars ≈ 700+ tokens: alone fits a big window, but pushes
+    # a small window past the margin once the block is added.
+    assert mw._prompt_within_margin(_ReqM("BASE", [message], window=100_000), added_chars=50)
+    assert not mw._prompt_within_margin(_ReqM("BASE", [message], window=1000), added_chars=50)
+
+
+def test_margin_skip_notifies_once_per_streak():
+    import novacode_cli.events as events_mod
+
+    mw = SteeringMiddleware(instructions=[SteeringInstruction("steer", "focus")])
+    events_mod.nova_event_log.clear()
+
+    # Skips: one notice for the whole streak, not one per call.
+    mw._inject(_ReqM("BASE", [HumanMessage("x" * 3000)], window=1000))
+    mw._inject(_ReqM("BASE", [HumanMessage("x" * 3000)], window=1000))
+    skips = [
+        e
+        for e in events_mod.nova_event_log.drain("test")
+        if e[0] == "steering_skipped"
+    ]
+    assert len(skips) == 1
+    assert "Standing steering held back" in skips[0][3]
+
+    # A successful injection clears the streak, so a later skip notifies again.
+    mw._inject(_ReqM("BASE", [HumanMessage("hi")], window=100_000))
+    events_mod.nova_event_log.clear()
+    mw._inject(_ReqM("BASE", [HumanMessage("x" * 3000)], window=1000))
+    skips = [
+        e
+        for e in events_mod.nova_event_log.drain("test")
+        if e[0] == "steering_skipped"
+    ]
+    assert len(skips) == 1
 
 
 def test_steering_injected_when_history_fits():
@@ -179,6 +277,20 @@ def test_margin_counts_messages_not_just_system_prompt():
         mw._prompt_within_margin(_ReqM("tiny", [HumanMessage("hi")], window=1000), added_chars=50)
         is True
     )
+
+
+def test_skip_notice_event_stays_transient():
+    """The skip notice rides nova_event_log -> ContextMessage (transient toast);
+    it must never join the transcript allowlist in the TUI event handler."""
+    import re
+    from pathlib import Path
+
+    app_source = (Path(__file__).resolve().parents[1] / "novacode_cli" / "tui" / "app.py").read_text(
+        encoding="utf-8"
+    )
+    match = re.search(r"transcript=e\.event_type\s*in\s*\{([^}]*)\}", app_source)
+    assert match, "transcript allowlist moved — re-anchor this test"
+    assert "steering_skipped" not in match.group(1)
 
 
 def test_reset_conversation_preserves_list_identity():

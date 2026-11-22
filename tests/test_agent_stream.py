@@ -648,6 +648,182 @@ def test_text_streams_as_deltas_then_commits():
     assert msg.text == "Hello"
 
 
+class _LastChunk(_Chunk):
+    """A final chunk carrying ``chunk_position == 'last'`` with a stable id."""
+
+    def __init__(self, mid, blocks):
+        super().__init__(mid, blocks)
+        self.chunk_position = "last"
+
+
+def test_streamed_answer_survives_the_final_chunk_flush():
+    """Providers whose delta chunks and final chunk share a stable message id.
+
+    Regression: the id was added to seen_message_ids BEFORE flushing the same
+    chunk's pending prose, and _flush_events discarded prose whose id was
+    already seen — so the whole streamed answer was silently dropped and the
+    turn committed with no assistant text.
+    """
+
+    class Agent:
+        async def aget_state(self, config):
+            return _State([])
+
+        async def astream(self, inp, **kw):
+            yield ((), "messages", (_Chunk("m1", [{"type": "text", "text": "Hel"}]), {}))
+            yield ((), "messages", (_Chunk("m1", [{"type": "text", "text": "lo"}]), {}))
+            yield ((), "messages", (_LastChunk("m1", [{"type": "text", "text": ""}]), {}))
+
+        async def aupdate_state(self, **kw):
+            pass
+
+    evts = _collect(Agent())
+    msgs = [e for e in evts if isinstance(e, ev.AssistantMessage)]
+    assert msgs, [type(e).__name__ for e in evts]
+    assert msgs[-1].text == "Hello"
+
+
+def test_completed_message_text_is_rendered_for_the_main_agent():
+    """Non-streaming providers deliver one whole AIMessage instead of chunks.
+
+    Regression: the text-accumulation path only ran for streamed chunks
+    (``not _is_completed_msg``), so a completed main-agent message had no
+    emission path at all and the model's final answer was silently dropped.
+    """
+
+    class AIMessage:
+        def __init__(self):
+            self.id = "done-1"
+            self._blocks = [{"type": "text", "text": "Final answer."}]
+            self.usage_metadata = {"input_tokens": 10, "output_tokens": 5}
+
+        @property
+        def content_blocks(self):
+            return self._blocks
+
+    class Agent:
+        async def aget_state(self, config):
+            return _State([])
+
+        async def astream(self, inp, **kw):
+            yield ((), "messages", (AIMessage(), {}))
+
+        async def aupdate_state(self, **kw):
+            pass
+
+    evts = _collect(Agent())
+    msgs = [e for e in evts if isinstance(e, ev.AssistantMessage)]
+    assert msgs, [type(e).__name__ for e in evts]
+    assert msgs[-1].text == "Final answer."
+
+
+def test_completed_message_with_two_text_blocks_commits_both():
+    """A completed AIMessage can carry several text blocks.
+
+    Regression: the completed branch flushed per text block, and the first
+    flush marked the message id seen — so blocks 2+ were discarded.
+    """
+
+    class AIMessage:
+        def __init__(self):
+            self.id = "multi-1"
+            self._blocks = [
+                {"type": "text", "text": "Part one."},
+                {"type": "text", "text": "Part two."},
+            ]
+            self.usage_metadata = {"input_tokens": 10, "output_tokens": 5}
+
+        @property
+        def content_blocks(self):
+            return self._blocks
+
+    class Agent:
+        async def aget_state(self, config):
+            return _State([])
+
+        async def astream(self, inp, **kw):
+            yield ((), "messages", (AIMessage(), {}))
+
+        async def aupdate_state(self, **kw):
+            pass
+
+    evts = _collect(Agent())
+    msgs = [e for e in evts if isinstance(e, ev.AssistantMessage)]
+    assert msgs, [type(e).__name__ for e in evts]
+    assert msgs[-1].text == "Part one.Part two."
+
+
+def test_stale_deltas_for_the_same_completed_id_are_not_duplicated():
+    """Deltas streamed for id m1, then the completed AIMessage m1 itself.
+
+    Regression: the streamed 'Hel' stayed in the buffer, so committing the
+    completed message appended its full text after the stale deltas — the
+    user saw 'HelHello.'.
+    """
+
+    class AIMessage:
+        def __init__(self):
+            self.id = "m1"
+            self._blocks = [{"type": "text", "text": "Hello."}]
+            self.usage_metadata = {"input_tokens": 10, "output_tokens": 5}
+
+        @property
+        def content_blocks(self):
+            return self._blocks
+
+    class Agent:
+        async def aget_state(self, config):
+            return _State([])
+
+        async def astream(self, inp, **kw):
+            yield ((), "messages", (_Chunk("m1", [{"type": "text", "text": "Hel"}]), {}))
+            yield ((), "messages", (AIMessage(), {}))
+
+        async def aupdate_state(self, **kw):
+            pass
+
+    evts = _collect(Agent())
+    msgs = [e.text for e in evts if isinstance(e, ev.AssistantMessage)]
+    assert msgs, [type(e).__name__ for e in evts]
+    assert "Hello." in msgs, msgs
+    assert not any("HelHello." in m for m in msgs), msgs
+
+
+def test_completed_message_with_a_new_id_flushes_pending_prose_first():
+    """Deltas streamed for id m1, then a completed AIMessage with a DIFFERENT id.
+
+    Regression: the completed branch appended its text to the pending buffer
+    without flushing the earlier id's prose first, so the user saw 'HelFinal.'
+    merged under the completed id instead of two separate messages.
+    """
+
+    class AIMessage:
+        def __init__(self):
+            self.id = "m2"
+            self._blocks = [{"type": "text", "text": "Final."}]
+            self.usage_metadata = {"input_tokens": 10, "output_tokens": 5}
+
+        @property
+        def content_blocks(self):
+            return self._blocks
+
+    class Agent:
+        async def aget_state(self, config):
+            return _State([])
+
+        async def astream(self, inp, **kw):
+            yield ((), "messages", (_Chunk("m1", [{"type": "text", "text": "Hel"}]), {}))
+            yield ((), "messages", (AIMessage(), {}))
+
+        async def aupdate_state(self, **kw):
+            pass
+
+    evts = _collect(Agent())
+    msgs = [e.text for e in evts if isinstance(e, ev.AssistantMessage)]
+    assert msgs == ["Hel", "Final."], msgs
+    assert not any("HelFinal." in m for m in msgs), msgs
+
+
 def test_usage_captured_from_empty_final_chunk():
     """Providers attach usage_metadata to a final chunk with NO content blocks.
 

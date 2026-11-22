@@ -28,11 +28,14 @@ import os
 import sys
 import threading
 from collections import deque
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from novacode_cli import ui_events as ev
 from novacode_cli.core.agent_loop import default_interrupt_response, iterate_agent_events
 from novacode_cli.sessions import protocol
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +117,7 @@ class SessionWorker:
         backend=None,
         model_name: str | None = None,
         session_manager=None,
+        emit: Callable[[dict], None] | None = None,
     ) -> None:
         self.agent = agent
         self.assistant_id = assistant_id
@@ -122,7 +126,9 @@ class SessionWorker:
         self.model_name = model_name
         self.session_manager = session_manager
 
-        self._emit = _Emitter(getattr(session_state, "headless_out_fd", None))
+        # The socket server passes its own sink so it can reuse this engine
+        # verbatim; the stdio child keeps the descriptor-owning default.
+        self._emit = emit or _Emitter(getattr(session_state, "headless_out_fd", None))
         self._pending: dict[str, asyncio.Future] = {}
         self._session_pending: dict[str, asyncio.Future] = {}
         self._session_ids = itertools.count(1)

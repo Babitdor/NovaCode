@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import sqlite3
-import time
 from datetime import datetime
 
 from rich.text import Text
@@ -14,74 +13,10 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import Screen
 from textual.widgets import Button, Checkbox, Input, Label, Select, Static, TextArea
 
-from novacode_cli.proactive import (
-    RUN_TIMEOUT,
-    AgentSpec,
-    ProactiveStore,
-    execute_run,
-    github_tags,
-)
+from novacode_cli.proactive import AgentSpec, ProactiveStore
+from novacode_cli.proactive_runtime import ProactiveRuntime
 
 logger = logging.getLogger(__name__)
-
-
-class ProactiveRuntime:
-    def __init__(self, store, model_factory, notify):
-        self.store = store
-        self.model_factory = model_factory
-        self.notify = notify
-        self.tasks = [asyncio.create_task(loop()) for loop in (self._runs, self._tags)]
-
-    async def _runs(self):
-        while True:
-            try:
-                job = await asyncio.to_thread(self.store.claim, time.time())
-                if job is not None:
-                    await self._run(job)
-                    continue
-            except sqlite3.Error:
-                logger.exception("Proactive agent storage unavailable")
-            await asyncio.sleep(2)
-
-    async def _run(self, job):
-        name = AgentSpec.model_validate_json(job["spec"]).name
-        try:
-            async with asyncio.timeout(RUN_TIMEOUT):
-                model = await asyncio.to_thread(self.model_factory)
-                result = await execute_run(job, model)
-            status = "complete"
-        except asyncio.CancelledError:
-            await asyncio.to_thread(self.store.finish, job, "interrupted", "NovaCode closed.")
-            raise
-        except TimeoutError:
-            status, result = "failed", "The agent reached its three-minute run limit."
-        except Exception as exc:  # One failing agent cannot stop later runs.
-            status, result = "failed", f"Run failed ({type(exc).__name__}). Check the model and tool setup."
-        await asyncio.to_thread(self.store.finish, job, status, result)
-        self.notify(f"{name} · {status}. Open /proactive to see the report.", title="Proactive agent")
-
-    async def _tags(self):
-        while True:
-            try:
-                watch = await asyncio.to_thread(self.store.tag_watch, time.time())
-                if watch:
-                    key, definition, repo = watch
-                    try:
-                        tags = await github_tags(repo)
-                    except (OSError, ValueError, TimeoutError):
-                        logger.warning("Proactive tag check failed for %s", repo)
-                        await asyncio.to_thread(self.store.tag_failure, key, definition)
-                    else:
-                        await asyncio.to_thread(self.store.record_tags, key, definition, tags)
-                    continue
-            except sqlite3.Error:
-                logger.exception("Proactive tag storage unavailable")
-            await asyncio.sleep(5)
-
-    async def close(self):
-        for task in self.tasks:
-            task.cancel()
-        await asyncio.gather(*self.tasks, return_exceptions=True)
 
 
 async def start_proactive(app, *, create=False):

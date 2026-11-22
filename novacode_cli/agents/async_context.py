@@ -291,11 +291,14 @@ def _bind_context(client: Any) -> Any:
                         kwargs["config"] = config
                     else:
                         kwargs.pop("config", None)
-                # Preserve unrelated configurable values. This run can still launch
-                # with its graph default, while avoiding the server's 400 response.
-                remaining = config.get("configurable") if isinstance(config, dict) else None
-                if not remaining:
-                    kwargs["context"] = context
+                # Attach the context whenever it was computed; leftover caller
+                # configurables are unrelated to it and travel alongside. The
+                # 400 the parent pop avoids was deepagents_parent + context,
+                # not context + configurables — gating the context on remaining
+                # configurables silently dropped the model override, the
+                # owner's consent and the auto-approve stamp whenever the
+                # caller sent any other configurable key.
+                kwargs["context"] = context
         return original(*args, **kwargs)
 
     create._nova_context_bound = True  # type: ignore[attr-defined]

@@ -232,6 +232,119 @@ def test_task_logs_cursor_returns_only_new_output():
     assert "no new output" in get_task_logs.invoke({"task_id": job.task_id, "from_offset": 21})
 
 
+def test_task_logs_offset_inside_a_split_escape_leaves_no_fragment():
+    """A from_offset landing inside a split escape resumes after it closes.
+
+    Regression: the raw slice starting mid-escape left an orphan fragment
+    (e.g. "[31;1m") that strip_ansi cannot remove — its ESC is before the
+    cut — so the page began with stray glyphs.
+    """
+    from novacode_cli.shell import jobs
+    from novacode_cli.tools.job_tools import get_task_logs
+
+    registry = jobs.get_registry()
+    job = registry.add("build", "shell", None)
+    registry.append_log(job.id, "plain\n")
+    first = get_task_logs.invoke({"task_id": job.task_id})
+    m = re.search(r"\[next from_offset=(\d+)\]", first)
+    assert m
+    # "colored\n" is appended as two chunks whose boundary splits the escape:
+    # "\x1b[3" + "8;5;196mRED\x1b[0m\n"
+    registry.append_log(job.id, "\x1b[3")
+    registry.append_log(job.id, "8;5;196mRED\x1b[0m\n")
+    raw = "".join(job.logs)
+    cut = raw.find("\x1b[3") + 2  # inside the split sequence
+    new = get_task_logs.invoke({"task_id": job.task_id, "from_offset": cut})
+    assert "RED" in new
+    assert not re.search(r"^\[?3?[;0-9]*m?RED", new.replace("\x1b", "")), new
+    assert "[31;" not in new and "[3" + "8;" not in new
+    registry.reset()
+
+
+def test_split_escape_end_edges():
+    from novacode_cli.shell.output import split_escape_end
+
+    text = "abc\x1b[31;1mRED\x1b[0m\n"
+    cut = text.find("31")  # inside the CSI sequence
+    assert split_escape_end(text, cut) == text.find("m") + 1
+    # No ESC before the cut → not inside a sequence.
+    assert split_escape_end("plain text\n", 5) == -1
+    # Sequence closed BEFORE the cut → not inside.
+    assert split_escape_end(text, text.find("RED")) == -1
+    # Unterminated sequence at the end → give up (-1), keep the fragment.
+    assert split_escape_end("x\x1b[31;1", 3) == -1
+
+
+def test_task_logs_cursor_matches_coloured_output():
+    """Offsets and slices share one coordinate space even with ANSI escapes.
+
+    Regression: ``from_offset`` cursors counted raw characters (escapes
+    included) while the slice came from the ANSI-stripped string, so coloured
+    output drifted the cursor and repeated or skipped lines between calls.
+    """
+    from novacode_cli.shell import jobs
+    from novacode_cli.tools.job_tools import get_task_logs
+
+    registry = jobs.get_registry()
+    job = registry.add("build", "shell", None)
+    registry.append_log(job.id, "\x1b[31mred line\x1b[0m\n")
+    first = get_task_logs.invoke({"task_id": job.task_id})
+    assert "red line" in first
+    m = re.search(r"\[next from_offset=(\d+)\]", first)
+    assert m
+    registry.append_log(job.id, "plain line\n")
+    new = get_task_logs.invoke({"task_id": job.task_id, "from_offset": int(m.group(1))})
+    assert "plain line" in new
+    assert "red line" not in new
+    registry.reset()
+
+
+def test_task_logs_tail_lines_zero_returns_whole_output():
+    """tail_lines=0 means "no tail limit" — the whole (stripped) output.
+
+    max(1, tail_lines) would have clamped 0 to 1 and returned only the last
+    line; the no-limit path applies to both the plain and the from_offset
+    slice, whose strip/slice coordinates already share the raw buffer.
+    """
+    from novacode_cli.shell import jobs
+    from novacode_cli.tools.job_tools import get_task_logs
+
+    registry = jobs.get_registry()
+    job = registry.add("build", "shell", None)
+    registry.append_log(job.id, "line 1\nline 2\nline 3\n")
+    whole = get_task_logs.invoke({"task_id": job.task_id, "tail_lines": 0})
+    assert "line 1" in whole and "line 2" in whole and "line 3" in whole
+    assert "last 3 line(s)" in whole
+    registry.append_log(job.id, "\x1b[32mgreen line\x1b[0m\n")
+    m = re.search(r"\[next from_offset=(\d+)\]", whole)
+    assert m
+    new = get_task_logs.invoke(
+        {"task_id": job.task_id, "from_offset": int(m.group(1)), "tail_lines": 0}
+    )
+    assert "green line" in new
+    assert "line 1" not in new
+    registry.reset()
+
+
+def test_force_terminate_resolves_a_dead_drain_loop():
+    """kill.set() alone leaves status running if the drain loop is gone.
+
+    Regression: a job whose drain thread died before reacting to the kill
+    event stayed 'running' forever — no wait resolved and terminate_task kept
+    reporting success into the stuck state. force=True settles it.
+    """
+    registry = jobs.JobRegistry()
+    job = registry.add("server", "execute")
+    assert registry.terminate(job.id)
+    assert job.status == "running"  # graceful: drain loop owns the transition
+    registry2 = jobs.JobRegistry()
+    stuck = registry2.add("server", "execute")
+    assert registry2.terminate(stuck.id, force=True)
+    assert stuck.status == "terminated"
+    assert stuck._done.is_set()
+    assert registry2.wait(stuck.id, timeout=0) is stuck
+
+
 def test_a_background_job_reports_output_without_terminal_colour():
     """A sequence split across two reads is only whole once the log is joined."""
     registry = jobs.get_registry()

@@ -85,6 +85,27 @@ def strip_ansi(text: str) -> str:
     return _ANSI_ESCAPE.sub("", text)
 
 
+def split_escape_end(text: str, cut: int, *, window: int = 32) -> int:
+    """If ``text[cut:]`` starts inside a split ANSI escape, return its end.
+
+    A page cut at *cut* can land between an escape's ESC and its terminator;
+    the orphan fragment (e.g. ``[38;5;…m``) survives ``strip_ansi`` because
+    the ESC sits before the cut. Looks back at most *window* characters for
+    that ESC and returns the index just past the sequence's terminator, or
+    -1 when the cut is not inside a sequence (or it never terminates — a
+    cosmetic fragment is then left rather than dropping real text).
+    """
+    if cut <= 0 or cut >= len(text):
+        return -1
+    esc = text.rfind("\x1b", max(0, cut - window), cut)
+    if esc == -1:
+        return -1
+    match = _ANSI_ESCAPE.match(text, esc)
+    if match is not None and match.end() > cut:
+        return match.end()
+    return -1
+
+
 _NO_MATCH_TOOLS = frozenset({"grep", "egrep", "fgrep", "rg", "ag", "findstr", "select-string"})
 _DIFF_TOOLS = frozenset({"diff", "cmp", "fc"})
 _COMPOUND = re.compile(r"&&|\|\||;|\n")

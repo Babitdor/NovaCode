@@ -148,6 +148,144 @@ async def test_failed_setup_can_be_watched_again():
     await watcher.aclose()
 
 
+async def test_setup_failures_stop_requeued_polling_after_a_budget():
+    """Transient setup failures retry, then the task is declared unmonitorable.
+
+    Regression: a record whose agent spec no longer resolved was popped and
+    re-enqueued by every turn-end sync forever — silent infinite retry.
+    """
+    notices: list[tuple[str, str]] = []
+    watcher = AsyncTaskWatcher(lambda level, title, message: notices.append((title, message)))
+    watcher._spec_for = lambda name: None
+    state = {"a": {"status": "running", "agent_name": "missing", "thread_id": "t", "run_id": "r"}}
+    from novacode_cli.remote import async_task_watcher as module
+
+    for _ in range(module._MAX_SETUP_TRIES):
+        watcher.sync_from_state(state)
+        await asyncio.gather(*watcher._tasks)
+    watcher.sync_from_state(state)
+    await asyncio.gather(*watcher._tasks)
+    await watcher.aclose()
+    assert "a" in watcher._watched, "must stop re-enqueueing an unmonitorable record"
+    assert any("monitorable" in title.lower() for title, _ in notices)
+
+
+async def test_a_record_without_ids_is_never_watched_again():
+    notices: list[tuple[str, str]] = []
+    watcher = AsyncTaskWatcher(lambda level, title, message: notices.append((title, message)))
+    state = {"a": {"status": "running", "agent_name": "x"}}
+    watcher.sync_from_state(state)
+    await asyncio.gather(*watcher._tasks)
+    watcher.sync_from_state(state)
+    await asyncio.gather(*watcher._tasks)
+    await watcher.aclose()
+    assert "a" in watcher._watched
+    assert any("monitorable" in title.lower() for title, _ in notices)
+
+
+async def test_eviction_spares_a_poll_in_flight(monkeypatch: pytest.MonkeyPatch):
+    """Evicting an actively-polled id lets a later sync re-watch it and emit a
+    second completion (second auto-report turn); eviction skips those ids."""
+    from novacode_cli.remote import async_task_watcher as module
+
+    monkeypatch.setattr(module, "_MAX_WATCHED_IDS", 4)
+    monkeypatch.setattr(module, "_MAX_PENDING_POLLS", 64)
+    watcher = module.AsyncTaskWatcher(lambda *args: None)
+    stuck = asyncio.Event()
+
+    class _Runs:
+        @staticmethod
+        async def get(**_kw):
+            await stuck.wait()
+            return {"status": "success"}
+
+    class _Client:
+        runs = _Runs()
+
+    async def fake_client(spec, factory):
+        return _Client()
+
+    watcher._clients.get = fake_client
+    ids = [f"t{i}" for i in range(10)]
+    state = {
+        i: {"status": "running", "agent_name": "x", "thread_id": i, "run_id": i}
+        for i in ids
+    }
+    for i in ids:
+        watcher._running[i] = {"agent_name": "x", "started": 0.0}
+    watcher.sync_from_state(state)
+    # All 10 polls are in flight (in _running), so all 10 survive the cap of 4.
+    assert set(watcher._watched) == set(ids)
+    stuck.set()
+    await watcher.aclose()
+
+
+async def test_invalidate_specs_forgets_the_spec_cache(monkeypatch: pytest.MonkeyPatch):
+    """A /model change to the async role must not leave stale poll specs."""
+    from novacode_cli.agents.default_subagents import async_subagents
+    from novacode_cli.remote import async_task_watcher as module
+
+    monkeypatch.setattr(
+        async_subagents,
+        "retrieve_async_subagents",
+        lambda: [{"name": "x", "url": "old"}],
+    )
+    watcher = module.AsyncTaskWatcher(lambda *args: None)
+    assert await watcher._resolve_spec("x") == {"name": "x", "url": "old"}
+    assert watcher._specs is not None  # cache populated
+    await watcher.invalidate_specs()
+    assert watcher._specs is None
+    # Re-discovery happens after invalidation, and setup retries are reset.
+    watcher._setup_tries["a"] = 2
+    await watcher.invalidate_specs()
+    assert not watcher._setup_tries
+
+
+async def test_invalidate_specs_cannot_race_a_cold_discovery(monkeypatch: pytest.MonkeyPatch):
+    """The clear holds _spec_lock, so a discovery in flight finishes before
+    invalidation — it cannot write its stale specs back after the clear."""
+    import asyncio
+    import threading
+
+    from novacode_cli.agents.default_subagents import async_subagents
+    from novacode_cli.remote import async_task_watcher as module
+
+    monkeypatch.setattr(
+        async_subagents,
+        "retrieve_async_subagents",
+        lambda: [{"name": "x", "url": "old"}],
+    )
+    watcher = module.AsyncTaskWatcher(lambda *args: None)
+
+    discovery_entered = threading.Event()
+    release = threading.Event()
+    real_spec_for = module.AsyncTaskWatcher._spec_for
+
+    def slow_spec_for(self, agent_name):
+        discovery_entered.set()  # discovery is running, holding the lock
+        release.wait(5)
+        return real_spec_for(self, agent_name)
+
+    monkeypatch.setattr(module.AsyncTaskWatcher, "_spec_for", slow_spec_for)
+
+    discovery = asyncio.create_task(watcher._resolve_spec("x"))
+    # Pump the loop until the discovery thread has entered _spec_for.
+    for _ in range(500):
+        if discovery_entered.is_set():
+            break
+        await asyncio.sleep(0.01)
+    else:
+        discovery.cancel()
+        raise AssertionError("cold discovery never entered _spec_for")
+    invalidate = asyncio.create_task(watcher.invalidate_specs())
+    await asyncio.sleep(0)  # let invalidate_specs block on the held lock
+    assert invalidate.done() is False, "invalidation waits for the discovery lock"
+    release.set()
+    assert await discovery == {"name": "x", "url": "old"}
+    await invalidate
+    assert watcher._specs is None, "stale discovery result was cleared"
+
+
 async def test_slow_tasks_do_not_starve_later_completions(monkeypatch):
     from types import SimpleNamespace
     from unittest.mock import AsyncMock

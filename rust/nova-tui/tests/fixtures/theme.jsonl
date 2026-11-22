@@ -1,0 +1,3 @@
+{"assistant_id": "nova-agent", "capacity": 4, "cwd": "C:/work/nova", "model": "recording-model", "protocol": 1, "session_id": "recorded-session", "t": "ready", "thread_id": "recorded-thread", "ui": "ratatui"}
+{"background": "#141414", "border": "#514b47", "dark": true, "error": "#f4723f", "foreground": "#f2eeeb", "muted": "#afa6a0", "name": "nova-signal", "panel": "#222222", "primary": "#f4723f", "success": "#f4723f", "surface": "#1c1c1c", "t": "ui_theme", "warning": "#f4723f"}
+{"action": "theme", "blocks": [{"kind": "text", "text": "Theme set to nova-signal (dark)."}], "id": "c1", "message": "Theme: nova-signal", "ok": true, "t": "command_result"}

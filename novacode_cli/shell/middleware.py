@@ -1136,6 +1136,12 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
         ``create_subprocess_exec`` — no cmd.exe wrapper, no quoting surprises.
         When *prog* is ``None`` it falls back to the platform default shell
         (POSIX ``sh`` on Unix, ``cmd.exe`` on Windows).
+
+        A cwd that is not a usable directory (a file at the path, a vanished
+        workspace, a drive-relative path like ``B:Summer``) raises
+        ``NotADirectoryError`` with NO path in ``str()`` — the agent would see
+        only "The directory name is invalid". Re-raise with the path in the
+        message so the failure is diagnosable from the tool result alone.
         """
         kwargs = {
             "stdin": stdin,
@@ -1155,8 +1161,18 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
         else:
             kwargs["start_new_session"] = True
         if prog is not None:
-            return await asyncio.create_subprocess_exec(*prog, command, **kwargs)
-        return await asyncio.create_subprocess_shell(command, **kwargs)
+            try:
+                return await asyncio.create_subprocess_exec(*prog, command, **kwargs)
+            except OSError as exc:
+                raise OSError(
+                    f"Could not start the command in cwd {self._workspace_root!r}: {exc}"
+                ) from exc
+        try:
+            return await asyncio.create_subprocess_shell(command, **kwargs)
+        except OSError as exc:
+            raise OSError(
+                f"Could not start the command in cwd {self._workspace_root!r}: {exc}"
+            ) from exc
 
     @staticmethod
     async def _terminate_tree(proc: asyncio.subprocess.Process, *, grace: float = 3.0) -> None:

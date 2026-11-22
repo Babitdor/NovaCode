@@ -79,3 +79,56 @@ jobs:
         env:
           VERSION: ${{ steps.metadata.outputs.version }}
         run: uv publish --trusted-publishing always --check-url https://pypi.org/simple/ "dist/novacode_cli-${VERSION}-py3-none-any.whl" "dist/novacode_cli-${VERSION}.tar.gz"
+
+  binaries:
+    name: TUI client (${{ matrix.platform }})
+    needs: verify-ci
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            triple: x86_64-unknown-linux-gnu
+            platform: linux-x86_64
+          - os: macos-latest
+            triple: aarch64-apple-darwin
+            platform: macos-aarch64
+          - os: windows-latest
+            triple: x86_64-pc-windows-msvc
+            platform: windows-x86_64
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Read the wire protocol version this build speaks
+        id: protocol
+        shell: bash
+        run: |
+          version=$(grep -m1 'PROTOCOL_VERSION: u64 =' rust/nova-tui/src/frames.rs | tr -dc '0-9')
+          test -n "$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Build the client
+        working-directory: rust
+        run: cargo build --release -p nova-tui --target ${{ matrix.triple }}
+      - name: Stage the artifact with its protocol stamp
+        shell: bash
+        env:
+          PROTOCOL: ${{ steps.protocol.outputs.version }}
+        run: |
+          suffix=""
+          if [ "${{ runner.os }}" = "Windows" ]; then suffix=".exe"; fi
+          src="rust/target/${{ matrix.triple }}/release/nova-tui${suffix}"
+          asset="nova-tui-p${PROTOCOL}-${{ matrix.platform }}${suffix}"
+          mkdir -p dist
+          cp "$src" "dist/$asset"
+          echo "ASSET=$asset" >> "$GITHUB_ENV"
+      - name: Attach the binary beside the wheel
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1 || \
+            gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes "NovaCode $GITHUB_REF_NAME"
+          gh release upload "$GITHUB_REF_NAME" "dist/$ASSET" --clobber
+

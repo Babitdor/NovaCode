@@ -104,6 +104,32 @@ async def test_tui_prompt_releases_wait_and_delivers_guidance(monkeypatch: pytes
             await asyncio.gather(waiting, return_exceptions=True)
 
 
+async def test_the_wait_client_recovers_checkpoint_errors(monkeypatch: pytest.MonkeyPatch):
+    """wait_for_task builds its client through bind_run_errors, like the watcher."""
+    import langgraph_sdk
+
+    import novacode_cli.tools.waiter_tools as wt
+
+    captured: list = []
+
+    class _Runs:
+        async def get(self, **_kw):
+            return {"status": "success"}
+
+    class _Client:
+        runs = _Runs()
+
+    def fake_get_client(**kwargs):
+        captured.append(kwargs)
+        return _Client()
+
+    monkeypatch.setattr(langgraph_sdk, "get_client", fake_get_client)
+    client = wt._remote_client({"url": "http://x", "headers": {"a": "b"}})
+    assert captured and captured[0]["url"] == "http://x"
+    # The factory seam is bound: runs.get was replaced by the error-recovering wrapper.
+    assert getattr(client.runs.get, "_nova_errors_bound", False) is True
+
+
 async def test_new_input_cancels_remote_observation_without_stopping_run(
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -390,15 +416,92 @@ def test_a_wait_is_a_short_look():
 
 
 async def test_one_wait_is_allowed(monkeypatch: pytest.MonkeyPatch):
+    """The FIRST wait since the user's message runs; a second is refused.
+
+    Regression: the gate compared ``> MAX_WAIT_STEPS``, so one prior wait was
+    still allowed — two waits per user message against the documented 'one
+    wait per user message'.
+    """
     registry = jobs.JobRegistry()
     monkeypatch.setattr(jobs, "get_registry", lambda: registry)
     job = registry.add("cargo build", "shell")
     waiting = asyncio.create_task(
-        waiter_tools.wait_for_task.coroutine(job.task_id, _runtime(_waits(1)), timeout_seconds=5)
+        waiter_tools.wait_for_task.coroutine(job.task_id, _runtime(_waits(0)), timeout_seconds=5)
     )
     await asyncio.sleep(0.05)
     registry.complete(job.id, 0, "ok\n")
     assert "exit 0" in await asyncio.wait_for(waiting, 2)
+
+
+async def test_a_second_wait_is_refused(monkeypatch: pytest.MonkeyPatch):
+    registry = jobs.JobRegistry()
+    monkeypatch.setattr(jobs, "get_registry", lambda: registry)
+    job = registry.add("cargo build", "shell")
+    result = await asyncio.wait_for(
+        waiter_tools.wait_for_task.coroutine(job.task_id, _runtime(_waits(1)), timeout_seconds=60), 2
+    )
+    assert "already waited" in result and "end your turn" in result
+
+
+async def test_first_wait_is_allowed_when_state_includes_the_current_call(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Regression: ToolNode's runtime.state already contains the current call's
+    AIMessage (langgraph/prebuilt/tool_node.py), so counting it refused the
+    FIRST real-graph wait with 'already waited'.
+    """
+    registry = jobs.JobRegistry()
+    monkeypatch.setattr(jobs, "get_registry", lambda: registry)
+    job = registry.add("cargo build", "shell")
+    from langchain_core.messages import AIMessage
+
+    messages = _waits(0) + [
+        AIMessage("", tool_calls=[{"id": "w", "name": "wait_for_task", "args": {}, "type": "tool_call"}])
+    ]
+    waiting = asyncio.create_task(
+        waiter_tools.wait_for_task.coroutine(job.task_id, _runtime(messages), timeout_seconds=5)
+    )
+    await asyncio.sleep(0.05)
+    assert not waiting.done(), "the running wait must not be refused outright"
+    registry.complete(job.id, 0, "ok\n")
+    result = await asyncio.wait_for(waiting, 2)
+    assert "already waited" not in result
+    assert "exit 0" in result
+
+
+async def test_parallel_waits_in_one_step_do_not_refuse_each_other(monkeypatch):
+    """A wait counts only once its ToolMessage result exists in the history, so
+    two wait_for_task calls issued in the SAME AIMessage do not see each other:
+    the first call still runs."""
+    registry = jobs.JobRegistry()
+    monkeypatch.setattr(jobs, "get_registry", lambda: registry)
+    job = registry.add("cargo build", "shell")
+    from langchain_core.messages import AIMessage, HumanMessage
+
+    messages = [
+        HumanMessage("run the build in the background"),
+        AIMessage(
+            "",
+            tool_calls=[
+                {"id": "wa", "name": "wait_for_task", "args": {}, "type": "tool_call"},
+                {"id": "wb", "name": "wait_for_task", "args": {}, "type": "tool_call"},
+            ],
+        ),
+    ]
+    runtime = SimpleNamespace(
+        state={"messages": messages},
+        tool_call_id="wa",
+        config={"configurable": {"thread_id": "c"}},
+    )
+    waiting = asyncio.create_task(
+        waiter_tools.wait_for_task.coroutine(job.task_id, runtime, timeout_seconds=5)
+    )
+    await asyncio.sleep(0.05)
+    assert not waiting.done(), "the first of two parallel waits must still run"
+    registry.complete(job.id, 0, "ok\n")
+    result = await asyncio.wait_for(waiting, 2)
+    assert "already waited" not in result
+    assert "exit 0" in result
 
 
 async def test_after_the_user_releases_a_wait_the_agent_must_reply_first(
@@ -407,7 +510,7 @@ async def test_after_the_user_releases_a_wait_the_agent_must_reply_first(
     registry = jobs.JobRegistry()
     monkeypatch.setattr(jobs, "get_registry", lambda: registry)
     job = registry.add("cargo build", "shell")
-    runtime = _runtime(_waits(1), thread="chat-9")
+    runtime = _runtime(_waits(0), thread="chat-9")
     waiting = asyncio.create_task(
         waiter_tools.wait_for_task.coroutine(job.task_id, runtime, timeout_seconds=60)
     )

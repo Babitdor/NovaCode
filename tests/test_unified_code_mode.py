@@ -1336,3 +1336,17 @@ def test_search_and_provider_fallback_cannot_restore_ordinary_schemas(provider):
         media = next(t for t in bound.tools if getattr(t, "name", None) == "read_file")
         assert media.description.startswith("Media fallback only")
         assert "primary control surface" in bound.system_message.text
+
+
+def test_error_text_includes_the_os_path_and_first_line():
+    """Windows spawn errors carry the path in .filename but not in str()."""
+    from novacode_cli.agents.code_mode import _error_text
+
+    exc = NotADirectoryError(267, "The directory name is invalid", "C:/gone/dir", 267, None)
+    text = _error_text(exc)
+    assert "C:/gone/dir" in text and "[path:" in text
+    # Multi-line messages keep the FIRST line (where the path lives), not the last.
+    multi = OSError("cwd B:Summer is invalid:\n  more detail\n  even more")
+    assert _error_text(multi).splitlines()[0].startswith("cwd B:Summer")
+    # No filename → unchanged text.
+    assert _error_text(ValueError("boom")) == "boom"

@@ -20,17 +20,23 @@ Architecture
 -----------
 ``SteeringMiddleware`` sits in the agent middleware stack alongside
 ``GraphContextMiddleware``, ``ShellMiddleware``, etc.  It intercepts
-every ``awrap_model_call`` and prepends the current steering instructions
-to the system prompt, right after the base prompt but before any other
-middleware injections.
+every ``awrap_model_call`` and APPENDS a steering block to the final
+system prompt: it rewrites ``system_message`` wholesale from
+``request.system_prompt`` (whatever earlier middleware built is
+preserved) with the block added at the end, after all other middleware
+injections.
 
 The injection format is::
 
-    [Steering Instructions]
+    [User Steering — standing instructions from the user that you MUST
+    follow on every step]
     - focus on the database layer
     - never modify test files without asking first
     - prioritize backward compatibility
-    [/Steering Instructions]
+    [/User Steering]
+
+The ``[/User Steering]`` sentinel marks a prompt that already carries
+the block, so it is not re-appended on every call.
 
 This is deliberately verbose — the agent sees these on every call, so
 they act as persistent guardrails rather than one-off suggestions.
@@ -132,6 +138,8 @@ class SteeringMiddleware(AgentMiddleware):
         self,
         instructions: list[SteeringInstruction] | None = None,
         enabled: bool = True,
+        *,
+        treat_existing_as_new: bool = False,
     ) -> None:
         """Initialize the steering middleware.
 
@@ -139,6 +147,12 @@ class SteeringMiddleware(AgentMiddleware):
             instructions: Shared list of steering instructions.  If None,
                 creates an empty list internally (not connected to session state).
             enabled: If False, this middleware is a no-op.
+            treat_existing_as_new: When False (the default), instructions that
+                already sit in the shared list at construction are marked as
+                delivered. An agent rebuild then constructs a fresh middleware
+                without re-nudging long-standing rules as "just added". Pass
+                True only when the caller knows the list was populated for a
+                brand-new steer that must surface as a one-time message.
         """
         self._enabled = enabled
         self._instructions: list[SteeringInstruction] = (
@@ -148,6 +162,17 @@ class SteeringMiddleware(AgentMiddleware):
         # new steer is delivered as an actionable message exactly once (then
         # persists via the system prompt).
         self._delivered: set[int] = set()
+        # True while the context-margin guard is skipping the standing block;
+        # cleared when an injection succeeds again (one notice per skip streak).
+        self._skip_notified = False
+        if not treat_existing_as_new:
+            # Seed delivery state: standing rules present at construction were
+            # nudged by a previous instance (or never needed a nudge) — they
+            # persist via the system prompt, so don't re-deliver them.
+            for si in self._instructions:
+                if not si.live:
+                    self._delivered.add(si.uid)
+                    si.consumed = True
 
     @staticmethod
     def _estimate_tokens(text: str) -> int:
@@ -193,7 +218,10 @@ class SteeringMiddleware(AgentMiddleware):
                     if isinstance(part, str):
                         total += len(part)
                     elif isinstance(part, dict):
-                        total += len(str(part.get("text", "")))
+                        # Non-text parts (images, tool payloads) count by their
+                        # serialized length: a base64 image under-counted to 0
+                        # let the margin guard pass prompts that then overflowed.
+                        total += len(str(part))
         return total
 
     def _prompt_within_margin(self, request: ModelRequest, added_chars: int) -> bool:
@@ -274,6 +302,12 @@ class SteeringMiddleware(AgentMiddleware):
         if not already_injected and self._prompt_within_margin(request, len(block)):
             new_prompt = (system_prompt + "\n\n" + block) if system_prompt else block
             overrides["system_message"] = SystemMessage(new_prompt)
+            self._skip_notified = False
+        elif not already_injected and not self._skip_notified:
+            # Held back by the margin guard: tell the UI once per skip streak
+            # (a silent skip looks like steering stopped working).
+            self._skip_notified = True
+            _notify_skip()
 
         # ── Guard 2 (always): deliver newly-added steers as a live msg ─
         new = [si for si in instructions if si.uid not in self._delivered]
@@ -364,6 +398,23 @@ def _announce_pickup(text: str) -> None:
         logger.debug("queued-message notice failed", exc_info=True)
 
 
+def _notify_skip() -> None:
+    """Tell the UI standing steering was held back by the margin guard (best effort)."""
+    try:
+        from novacode_cli.events import nova_event_log
+
+        nova_event_log.append(
+            (
+                "steering_skipped",
+                "⚠",
+                "yellow",
+                "Standing steering held back: context window is nearly full",
+            )
+        )
+    except Exception:  # noqa: BLE001 - a notice is never worth a failed step
+        logger.debug("steering-skip notice failed", exc_info=True)
+
+
 def format_steering_status(instructions: list[SteeringInstruction]) -> str:
     """Format the current steering instructions as a Rich-displayable summary.
 
@@ -376,7 +427,10 @@ def format_steering_status(instructions: list[SteeringInstruction]) -> str:
     if not instructions:
         return "[dim]No steering instructions active.[/dim]"
 
-    lines = [f"[cyan]{len(instructions)} steering instruction(s) active:[/cyan]"]
+    lines = [
+        f"[cyan]{len(instructions)} steering instruction(s) active "
+        "(this session only — re-applied on /resume, gone after a restart):[/cyan]"
+    ]
     for i, si in enumerate(instructions, 1):
         if si.label:
             lines.append(f"  [dim]{i}.[/dim] [bold]{si.label}[/bold]: {si.instruction}")

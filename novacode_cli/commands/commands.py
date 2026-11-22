@@ -673,7 +673,8 @@ async def _handle_steer_command(cmd_args: str | None, session_state, console) ->
     console.print()
     console.print(
         f"  [dim]{len(instructions)} instruction(s) active. "
-        "These will be injected into every model call this session.[/dim]"
+        "Standing rules last for the current session/process only: they are "
+        "re-applied on /resume within this run, but do not survive a restart.[/dim]"
     )
     console.print()
     return True

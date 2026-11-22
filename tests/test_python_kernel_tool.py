@@ -221,3 +221,28 @@ async def test_live_kernel_rejects_foreign_event_loop():
     with pytest.raises(RuntimeError, match="event loops"):
         await asyncio.to_thread(lambda: asyncio.run(kernel.request({"code": "1"}, 5)))
     assert (await kernel.request({"code": "print('owner')"}, 5))["output"].strip() == "owner"
+
+
+class TestSpawnGuard:
+    async def test_a_kernel_spawn_with_a_bad_cwd_names_the_path(self):
+        """A vanished cwd raises NotADirectoryError with NO path in str(); the
+        kernel must name the cwd so the failure is diagnosable."""
+        import tempfile
+
+        from novacode_cli.tools.python_kernel_tool import _KernelProcess
+
+        kernel = _KernelProcess(cwd=tempfile.gettempdir())
+        # Point the cwd at a file that exists, then delete the dir path role:
+        # use a path that is a FILE — the same field shape as the incident.
+        import os
+
+        file_cwd = os.path.join(tempfile.gettempdir(), "nova_kernel_cwd_file.txt")
+        with open(file_cwd, "w", encoding="utf-8") as fh:
+            fh.write("x")
+        kernel._cwd = file_cwd
+        try:
+            with pytest.raises(RuntimeError, match="nova_kernel_cwd_file.txt"):
+                await kernel._ensure()
+        finally:
+            os.unlink(file_cwd)
+            await kernel.close()

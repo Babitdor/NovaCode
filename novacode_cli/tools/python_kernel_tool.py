@@ -62,14 +62,22 @@ class _KernelProcess:
         # Spawn the kernel loop. Use the same interpreter that's running us.
         python = sys.executable
         cmd = [python, "-u", "-m", "novacode_cli.tools.python_kernel_loop"]
-        self._proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=self._cwd,
-            env=os.environ.copy(),
-        )
+        try:
+            self._proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=self._cwd,
+                env=os.environ.copy(),
+            )
+        except OSError as exc:
+            # A vanished/invalid cwd raises NotADirectoryError with NO path in
+            # str(); name the cwd so the failure is diagnosable from the tool
+            # result alone.
+            raise RuntimeError(
+                f"Python kernel could not start (cwd {self._cwd!r}): {exc}"
+            ) from exc
         return self._proc
 
     async def _kill(self) -> None:

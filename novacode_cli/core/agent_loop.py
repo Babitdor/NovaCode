@@ -1200,11 +1200,43 @@ async def _iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
                     if message_already_seen or not blocks:
                         continue
 
+                    _completed_accumulated = False
+                    if (
+                        is_main_agent
+                        and _is_completed_msg
+                        and pending_text
+                        and current_ai_message_id != getattr(message, "id", None)
+                    ):
+                        # Pending deltas belong to an EARLIER streamed id, while
+                        # the completed message carries a different id: flush
+                        # the pending prose first so the completed text does
+                        # not merge it under the new id.
+                        for _e in await _flush_events_checked():
+                            yield _e
                     for block in blocks:
                         btype = block.get("type")
                         if btype == "text" and block.get("thought") is not True:
                             text = block.get("text", "")
-                            if text and is_main_agent and not _is_completed_msg:
+                            if text and is_main_agent and _is_completed_msg:
+                                # A completed message (non-streaming provider)
+                                # has no deltas behind it: accumulate all its
+                                # text blocks and flush ONCE after the loop —
+                                # the first flush marks the id seen, so flushing
+                                # per block dropped blocks 2+ of the message.
+                                if not _completed_accumulated:
+                                    _completed_accumulated = True
+                                    if (
+                                        pending_text
+                                        and current_ai_message_id == getattr(message, "id", None)
+                                    ):
+                                        # Streamed deltas for this id are stale
+                                        # duplicates of the full text.
+                                        pending_text = ""
+                                current_ai_message_id = getattr(message, "id", None)
+                                pending_text += text
+                                if text_guard.feed(text):
+                                    raise _RepetitionLoop
+                            elif text and is_main_agent and not _is_completed_msg:
                                 current_ai_message_id = getattr(message, "id", None)
                                 pending_text += text
                                 if looks_like_summarization_output(pending_text):
@@ -1276,8 +1308,18 @@ async def _iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
                                 yield _e
 
                     if getattr(message, "chunk_position", None) == "last":
+                        # Flush the same chunk's own pending prose BEFORE marking
+                        # its id seen; _flush_events discards prose whose id is
+                        # already in seen_message_ids, so marking first silently
+                        # dropped the whole streamed answer when the final chunk
+                        # shares its id with the delta chunks.
+                        for _e in await _flush_events_checked():
+                            yield _e
                         if hasattr(message, "id"):
                             seen_message_ids.add(message.id)
+                    if is_main_agent and _is_completed_msg and pending_text:
+                        # One flush for the whole completed message so all its
+                        # text blocks commit together under a single id.
                         for _e in await _flush_events_checked():
                             yield _e
 

@@ -289,7 +289,7 @@ def test_concurrent_output_and_flush_remains_usable(monkeypatch: pytest.MonkeyPa
 def test_output_tail_matches_reference_under_adversarial_chunks():
     import random
 
-    from novacode_cli.tui.output_buffer import MAX_PENDING_CHARS, OutputTail
+    from novacode_cli.ui.output_buffer import MAX_PENDING_CHARS, OutputTail
 
     rng = random.Random(20261006)
     buffer = OutputTail()

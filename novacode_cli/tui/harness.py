@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import os
 import re
 import uuid
 from collections import deque
-from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
@@ -16,7 +14,11 @@ from textual.containers import VerticalScroll
 from textual.message import Message
 from textual.widgets import DirectoryTree, Static
 
+from novacode_cli.ui.layout_profile import profile_path
+
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from textual.app import App
 
 PanelId = Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9_-]{0,31}$")]
@@ -92,10 +94,6 @@ class UIHarnessRequest(Message):
         self.future = future
 
 
-def profile_path(workspace: Path) -> Path:
-    """Store a separate user-owned layout for each workspace."""
-    key = hashlib.sha256(str(workspace.resolve()).encode()).hexdigest()[:16]
-    return Path.home() / ".nova" / "ui" / f"{key}.json"
 
 
 class UIHarness:

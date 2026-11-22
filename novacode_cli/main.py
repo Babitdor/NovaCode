@@ -840,6 +840,52 @@ async def _run_agent_session(
         _tui_sandbox_id = getattr(sandbox_backend, "id", None)
         _tui_sandbox_meta = getattr(sandbox_backend, "_nova_meta", None)
 
+    # ── Terminal frontend ────────────────────────────────────────────────
+    # One session, two frontends: the ratatui client over a loopback socket, or
+    # the Textual TUI, which stays the default until the parity ledger is clean.
+    # `--serve` stops before either and just listens.
+    def _frontend_spec():  # noqa: ANN202 — local closure, typed by SessionSpec below
+        """Describe this session for the TUI server without starting it."""
+        from novacode_cli.server.host import SessionSpec
+
+        return SessionSpec(
+            agent=agent,
+            session_state=session_state,
+            assistant_id=assistant_id,
+            backend=composite_backend,
+            model_name=model_name,
+            session_manager=session_manager,
+            name=assistant_id,
+            cwd=str(settings.get_workspace_root()),
+            sandbox_id=_tui_sandbox_id,
+            sandbox_type=sandbox_type if sandbox_backend else None,
+        )
+
+    _serve = getattr(session_state, "serve", None)
+    _frontend = getattr(session_state, "frontend", "textual")
+    if _serve is not None:
+        from novacode_cli.server.host_main import serve_main
+
+        _serve_port, _serve_token = _serve
+        try:
+            _serve_code = await serve_main(
+                spec_factory=_frontend_spec,
+                port=_serve_port or 0,
+                token=_serve_token,
+                announce=True,
+            )
+        finally:
+            await _shutdown_background_services(session_state, agent=agent)
+        session_state.headless_exit_code = _serve_code
+        return
+    if _frontend == "ratatui":
+        from novacode_cli.ui.launcher import launch_ratatui
+
+        if await launch_ratatui(_frontend_spec()):
+            return
+        # The launcher printed why; Textual takes over so a machine without the
+        # Rust binary still gets a working session.
+
     try:
         await run_tui(
             agent=agent,
@@ -2078,6 +2124,11 @@ def cli_main() -> None:
             session_state.cli_model_override = args.model
             session_state.prime_enabled = getattr(args, "prime", None) is True
             session_state.cli_prime_override = getattr(args, "prime", None)
+            # Which terminal frontend runs this session, and whether it should
+            # listen on a socket instead of drawing (`nova --serve`).
+            session_state.frontend = getattr(args, "ui", "textual")
+            if getattr(args, "serve", False):
+                session_state.serve = (args.serve_port or 0, args.serve_token)
             if pipe_mode:
                 session_state.pipe_mode = True
                 session_state.pipe_input_format = args.input_format

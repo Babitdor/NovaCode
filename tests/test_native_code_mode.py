@@ -583,6 +583,64 @@ async def test_unexpected_command_result_is_visible_error():
     assert "unapplied" not in messages[0].content
 
 
+def test_state_message_drops_internal_bookkeeping_keys():
+    updates: dict = {}
+    message = CodeModeMiddleware._state_message(
+        Command(
+            update={
+                "messages": [ToolMessage(content="ok", tool_call_id="c1")],
+                "files": {"/src/a.py": {"content": "x"}},
+                "_context_blocks": {"b": {}},
+                "caveman_route": None,
+                "todos": [],
+                "skills_metadata": [],
+            }
+        ),
+        updates,
+    )
+    assert message.content == "ok"
+    assert updates == {"files": {"/src/a.py": {"content": "x"}}}
+
+
+def test_state_message_rejects_unknown_state_key():
+    with pytest.raises(TypeError, match="unsupported state mutation"):
+        CodeModeMiddleware._state_message(
+            Command(
+                update={
+                    "messages": [ToolMessage(content="ok", tool_call_id="c1")],
+                    "weird_key": 1,
+                }
+            ),
+            {},
+        )
+
+
+def test_state_message_rejects_graph_mutation():
+    with pytest.raises(TypeError, match="unsupported graph mutation"):
+        CodeModeMiddleware._state_message(
+            Command(
+                update={"messages": [ToolMessage(content="ok", tool_call_id="c1")]},
+                goto="somewhere",
+            ),
+            {},
+        )
+
+
+def test_state_message_rejects_multi_message_update():
+    with pytest.raises(TypeError, match="unsupported messages"):
+        CodeModeMiddleware._state_message(
+            Command(
+                update={
+                    "messages": [
+                        ToolMessage(content="a", tool_call_id="c1"),
+                        ToolMessage(content="b", tool_call_id="c2"),
+                    ]
+                }
+            ),
+            {},
+        )
+
+
 async def test_failed_later_approval_does_not_replay_earlier_write():
     calls = []
 

@@ -1463,6 +1463,99 @@ def test_tui_remote_steer_drain():
     asyncio.run(_drive_remote_steer_drain())
 
 
+async def _drive_remote_steer_subcommands():
+    """Mid-turn remote /steer routes through the TUI-native _run_steer: a bare
+    "/steer rule" is a STANDING instruction (not a one-shot live steer), and
+    "/steer clear" mid-turn discards live steers without requeueing them."""
+    from novacode_cli.tui.app import NovaApp
+    from novacode_cli.ui.ui_elements import TokenTracker
+
+    class _SSRemote(_SS):
+        def __init__(self):
+            # Instance state: _SS carries class-level lists that other steer
+            # tests mutate, which would leak across tests.
+            self.steering_instructions = []
+
+    app = NovaApp(
+        agent=_FakeAgent(),
+        assistant_id="nova-agent",
+        session_state=_SSRemote(),
+        backend=None,
+        token_tracker=TokenTracker(),
+        image_tracker=None,
+        model_name="m",
+    )
+
+    class _Msg:
+        def __init__(self, text):
+            self.text = text
+            self.reacted = []
+            self.replies = []
+
+        async def react_fn(self, emoji):
+            self.reacted.append(emoji)
+
+        async def reply_fn(self, txt):
+            self.replies.append(txt)
+
+    async with app.run_test():
+        queue: asyncio.Queue = asyncio.Queue()
+        drain = asyncio.create_task(app._remote_steer_drain(queue))
+
+        async def _until(predicate, limit=200):
+            for _ in range(limit):
+                if predicate():
+                    return True
+                await asyncio.sleep(0.01)
+            return False
+
+        # A bare "/steer some rule" mid-turn adds a STANDING instruction.
+        add = _Msg("/steer always run the full test suite")
+        await queue.put(add)
+        assert await _until(
+            lambda: any(
+                "full test suite" in si.instruction
+                for si in app.session_state.steering_instructions
+            )
+        )
+        standing = [
+            si
+            for si in app.session_state.steering_instructions
+            if "full test suite" in si.instruction
+        ]
+        assert standing and not standing[0].live
+        assert add.reacted == ["↗"]
+
+        # Non-/steer text is still a one-shot live steer.
+        live = _Msg("also handle null inputs")
+        await queue.put(live)
+        assert await _until(lambda: bool(app._live_steers))
+        assert any("null inputs" in si.instruction for si in app._live_steers)
+
+        # A queued turn must NOT be resurrected by the clear.
+        app._deferred_prompts.append("a queued turn")
+        clear = _Msg("/steer clear")
+        await queue.put(clear)
+        assert await _until(lambda: not app.session_state.steering_instructions)
+        await _until(lambda: not app._live_steers)
+        assert not app._live_steers
+        assert app._deferred_prompts == ["a queued turn"], (
+            "explicit clear must discard live steers, not requeue them"
+        )
+
+        drain.cancel()
+        try:
+            await drain
+        except (asyncio.CancelledError, Exception):  # noqa: BLE001
+            pass
+
+
+def test_tui_remote_steer_subcommands():
+    if not _HAS_TEXTUAL:
+        return
+    asyncio.run(_drive_remote_steer_subcommands())
+
+
 async def _drive_remote_question():
     """A question asked during a remote turn is replied to via remote bridge,
     intercepting the answer from the queue, and resuming the agent loop.

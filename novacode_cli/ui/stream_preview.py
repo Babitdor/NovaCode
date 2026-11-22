@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 from rich.live import Live
 from rich.text import Text
 
-from novacode_cli.tui.output_buffer import OutputTail
+from novacode_cli.ui.output_buffer import OutputTail
 
 if TYPE_CHECKING:
     from rich.console import Console

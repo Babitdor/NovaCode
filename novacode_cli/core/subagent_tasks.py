@@ -217,6 +217,10 @@ _ASYNC_STATUS = {
     "failed": "failed",
     "error": "failed",
     "cancelled": "failed",
+    # The watcher treats these as terminal (remote/async_task_watcher.py);
+    # leaving them unmapped rendered them as running forever in the panel.
+    "timeout": "failed",
+    "interrupted": "failed",
 }
 
 

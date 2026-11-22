@@ -172,6 +172,30 @@ jobs:
           path: test-results/*.xml
           if-no-files-found: warn
 
+  rust:
+    name: Rust client (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: rust
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      # GitHub's runners ship with stable Rust; rust/rust-toolchain.toml pins the
+      # components (rustfmt, clippy) so no third-party toolchain action is needed.
+      - name: Show the toolchain
+        run: rustup show
+      - name: Check formatting
+        run: cargo fmt --check
+      - name: Lint, warnings are errors
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Test the client, including the recorded-frame replay
+        run: cargo test --workspace
+
   regression:
     name: Regression (${{ matrix.os }}, shard ${{ matrix.shard }})
     runs-on: ${{ matrix.os }}
@@ -209,7 +233,7 @@ jobs:
   ci-result:
     name: CI result
     if: always()
-    needs: [checks, regression, windows-install-update]
+    needs: [checks, regression, rust, windows-install-update]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
@@ -217,7 +241,7 @@ jobs:
         env:
           RESULTS: ${{ join(needs.*.result, ',') }}
         run: |
-          test "$RESULTS" = "success,success,success"
+          test "$RESULTS" = "success,success,success,success"
 
   windows-install-update:
     name: Windows install and update

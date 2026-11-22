@@ -4,12 +4,9 @@
 from __future__ import annotations
 
 import asyncio
-import shlex
 from dataclasses import replace
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from langchain_core.messages import HumanMessage
 from rich.text import Text
 from textual import work
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -18,17 +15,17 @@ from textual.widgets import Button, Input, OptionList, Static
 
 from novacode_cli.session.adapters import ImportedSession, SessionInfo, adapters
 from novacode_cli.session.imported_context import (
-    MESSAGE_ID,
     ImportedContext,
-    git_state,
-    import_budget,
+    comparison_prompt,
+    context_budget,
+    import_message,
+    load_import,
+    parse_import,
 )
 from novacode_cli.tui.session_transcript import SessionTranscript, show_imported_history
 
 if TYPE_CHECKING:
     from textual.app import ComposeResult
-
-    from novacode_cli.session.adapters import SessionAdapter
 
 
 class TranscriptScreen(ModalScreen[None]):
@@ -178,75 +175,13 @@ class ExternalSessionsScreen(ModalScreen[SessionInfo | None]):
         self.dismiss(None)
 
 
-def parse_import(text: str) -> tuple[str, str, str]:
-    """Parse a slash import; quoted paths retain Windows backslashes."""
-    parts = shlex.split(text, posix=False)
-    parts = [part.strip("\"'") for part in parts]
-    if len(parts) < 2:
-        message = (
-            'Use /import codex|claude|nova <session ID or "file path"> '
-            "[--mode compact|full|relevant], or --last."
-        )
-        raise ValueError(message)
-    mode = "compact"
-    if "--mode" in parts:
-        index = parts.index("--mode")
-        if index + 1 >= len(parts):
-            message = "--mode requires full, compact, or relevant."
-            raise ValueError(message)
-        mode = parts[index + 1]
-        del parts[index : index + 2]
-    selector = parts[2] if len(parts) == 3 else ""
-    if not selector:
-        message = "Supply a session ID, file path, or --last."
-        raise ValueError(message)
-    return parts[1].lower(), selector, mode
-
-
-def load_import(
-    provider: str,
-    selector: str,
-    mode: str = "compact",
-    *,
-    registry: dict[str, SessionAdapter] | None = None,
-) -> ImportedContext:
-    """Resolve a provider and explicit selector; latest is scoped to that provider."""
-    registry = registry or adapters()
-    if provider not in registry:
-        message = f"Unknown session provider '{provider}'. Available: {', '.join(registry)}"
-        raise ValueError(message)
-    adapter = registry[provider]
-    if selector in {"--last", "--latest"}:
-        rows = adapter.discover()
-        if not rows:
-            message = f"No local {provider} sessions were found."
-            raise ValueError(message)
-        selector = max(rows, key=lambda row: row.updated_at).path
-    context = ImportedContext(adapter.load(selector), mode, git_at_import=git_state(Path.cwd()))
-    context.build()
-    return context
-
-
-def context_budget(app: Any) -> int:
-    """Leave room for Nova's prompt, tools, ongoing chat, and the next response."""
-    tracker = app.token_tracker
-    window = getattr(tracker, "context_window_size", 0)
-    used = getattr(tracker, "current_context", 0)
-    if isinstance(window, (int, float)) and window > 0:
-        return import_budget(int(window), int(used))
-    return 12000
-
-
 async def install_context(
     app: Any, context: ImportedContext, *, render_history: bool = True
 ) -> None:
     """Replace only the imported reference message; keep Nova history intact."""
     config = {"configurable": {"thread_id": app.session_state.thread_id}}
-    budget = context_budget(app)
-    content = context.build(budget)
-    # LangGraph's message reducer replaces a matching ID. Combining remove and
-    # append for the same ID would delete the replacement at the end of reduction.
-    updates = [HumanMessage(content=content, id=MESSAGE_ID)]
+    budget = context_budget(app.token_tracker)
+    updates = import_message(context, budget)
     await app.agent.aupdate_state(config, values={"messages": updates}, as_node="model")
     if app.session_manager:
         await asyncio.to_thread(
@@ -307,7 +242,9 @@ async def dispatch_import_command(app: Any, text: str) -> None:  # noqa: PLR0912
                 message = "This Nova session has no imported context. Use /import first."
                 raise ValueError(message)  # noqa: TRY301 — report command errors locally
             if len(parts) == 2:
-                app._log(Text(loaded_context.describe(context_budget(app)), style="cyan"))
+                app._log(
+                    Text(loaded_context.describe(context_budget(app.token_tracker)), style="cyan")
+                )
                 return
             context = replace(
                 loaded_context, mode=parts[2].lower(), query=parts[3] if len(parts) > 3 else ""
@@ -320,14 +257,7 @@ async def dispatch_import_command(app: Any, text: str) -> None:  # noqa: PLR0912
             contexts = await asyncio.gather(
                 *(asyncio.to_thread(load_import, *selector.split(":", 1)) for selector in parts[1:])
             )
-            # Comparison remains an ordinary new Nova request. No source tools
-            # or source agent runtimes are resumed.
-            prompt = (
-                "Compare these historical sessions: decisions, approaches, files touched, "
-                "test results, and unresolved problems. Cite transcript evidence and "
-                "distinguish it from current workspace state.\n\n"
-            )
-            prompt += "\n\n".join(context.build(context_budget(app) // 2) for context in contexts)
+            prompt = comparison_prompt(contexts, context_budget(app.token_tracker) // 2)
             await app._stream_prompt(prompt)
     except (ValueError, OSError, KeyError, TypeError) as exc:
         app._log(Text(f"Session import: {exc}", style="yellow"))

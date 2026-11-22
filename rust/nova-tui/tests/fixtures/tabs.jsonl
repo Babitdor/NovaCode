@@ -1,0 +1,9 @@
+{"assistant_id": "nova-agent", "capacity": 4, "cwd": "C:/work/alpha", "model": "recording-model", "protocol": 1, "session_id": "session-alpha", "t": "ready", "thread_id": "thread-session-alpha", "ui": "ratatui"}
+{"active": "session-alpha", "sessions": [{"cwd": "C:/work/alpha", "id": "session-alpha", "model": "recording-model", "name": "alpha", "status": "idle"}, {"cwd": "C:/work/beta", "id": "session-beta", "model": "recording-model", "name": "beta", "status": "idle"}], "t": "sessions"}
+{"c": "AssistantMessage", "d": {"agent_color": "cyan", "agent_name": "Nova", "is_subagent": false, "text": "Alpha one"}, "t": "ev"}
+{"level": "info", "message": "Attached to beta.", "t": "notice"}
+{"active": "session-beta", "sessions": [{"cwd": "C:/work/alpha", "id": "session-alpha", "model": "recording-model", "name": "alpha", "status": "idle"}, {"cwd": "C:/work/beta", "id": "session-beta", "model": "recording-model", "name": "beta", "status": "idle"}], "t": "sessions"}
+{"c": "AssistantMessage", "d": {"agent_color": "cyan", "agent_name": "Nova", "is_subagent": false, "text": "Beta one"}, "t": "ev"}
+{"level": "info", "message": "Attached to alpha.", "t": "notice"}
+{"active": "session-alpha", "sessions": [{"cwd": "C:/work/alpha", "id": "session-alpha", "model": "recording-model", "name": "alpha", "status": "idle"}, {"cwd": "C:/work/beta", "id": "session-beta", "model": "recording-model", "name": "beta", "status": "idle"}], "t": "sessions"}
+{"c": "AssistantMessage", "d": {"agent_color": "cyan", "agent_name": "Nova", "is_subagent": false, "text": "Alpha two"}, "t": "ev"}

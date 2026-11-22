@@ -27,6 +27,10 @@ logger = logging.getLogger("nova.async_task_watcher")
 _TERMINAL = frozenset({"success", "error", "timeout", "interrupted", "cancelled"})
 _POLL_INTERVAL = 6.0
 _MAX_WATCH_SECONDS = 300.0  # warn once after five minutes; keep watching
+#: How often a task may fail its setup (spec discovery, client construction)
+#: before it stops being re-watched on every turn end and is declared
+#: unmonitorable once, with a notice.
+_MAX_SETUP_TRIES = 3
 _RUN_TIMEOUT = 10.0
 _MAX_CONCURRENT_POLLS = 8
 _MAX_PENDING_POLLS = 256
@@ -47,6 +51,7 @@ class AsyncTaskWatcher:
         self._poll_slots = asyncio.Semaphore(_MAX_CONCURRENT_POLLS)
         self._specs: dict[str, dict] | None = None
         self._spec_lock = asyncio.Lock()
+        self._setup_tries: dict[str, int] = {}
         self._clients = AsyncTaskClients()
         # Currently-running tasks, for the TUI indicator: task_id -> {agent_name, started}.
         self._running: dict[str, dict] = {}
@@ -64,6 +69,22 @@ class AsyncTaskWatcher:
                 return None
         return self._specs.get(agent_name)
 
+    async def invalidate_specs(self) -> None:
+        """Forget cached agent specs so the next poll rediscovers them.
+
+        The cache is populated once per watcher; without this a ``/model``
+        change to the async role (or edited agent files) leaves polls using
+        stale URLs/headers for the session's life.
+
+        The clear happens under ``_spec_lock`` — the same lock a cold
+        discovery holds in :meth:`_resolve_spec` — so an in-flight discovery
+        finishes its write before we clear, and cannot write stale specs
+        back after invalidation.
+        """
+        async with self._spec_lock:
+            self._specs = None
+            self._setup_tries.clear()
+
     def sync_from_state(self, async_tasks: dict[str, Any] | None) -> None:
         """Start watching any running task in *async_tasks* not already watched."""
         if self._closed:
@@ -79,7 +100,10 @@ class AsyncTaskWatcher:
                 skipped += 1
                 continue
             task = dict(task)
-            task.setdefault("task_id", task_id)
+            # The state map key is the identity used for _watched/_running/
+            # notifications; an embedded field that disagrees with it would
+            # split the task across two identities.
+            task["task_id"] = task_id
             self._pending.append((task_id, task))
             self._pending_ids.add(task_id)
             self._running[task_id] = {
@@ -103,8 +127,16 @@ class AsyncTaskWatcher:
             self._pending_ids.discard(task_id)
             self._watched[task_id] = None
             self._watched.move_to_end(task_id)
-            while len(self._watched) > _MAX_WATCHED_IDS:
-                self._watched.popitem(last=False)
+            # Eviction must spare ids whose poll is still in flight: if state
+            # still lists the task as running, a later sync would re-watch it
+            # and emit a second completion (second auto-report turn).
+            attempts = 0
+            while len(self._watched) > _MAX_WATCHED_IDS and attempts < len(self._watched):
+                oldest, _ = self._watched.popitem(last=False)
+                attempts += 1
+                if oldest in self._running:
+                    self._watched[oldest] = None
+                    self._watched.move_to_end(oldest)
             poll = asyncio.create_task(self._poll(task), name=f"async-task-watch-{task_id[:8]}")
             self._tasks.add(poll)
             poll.add_done_callback(self._poll_done)
@@ -141,6 +173,7 @@ class AsyncTaskWatcher:
         task_id = str(task.get("task_id") or task.get("thread_id") or "?")
         agent_name = task.get("agent_name") or "async agent"
         completed = False
+        permanent = False
         try:
             thread_id, run_id = task.get("thread_id"), task.get("run_id")
             if (
@@ -149,9 +182,16 @@ class AsyncTaskWatcher:
                 or not thread_id
                 or not run_id
             ):
+                # A record without ids cannot ever be polled; retrying on
+                # every turn end would loop forever with no notice.
+                permanent = True
                 return
+            tries = self._setup_tries.get(task_id, 0) + 1
             spec = await self._resolve_spec(agent_name)
             if spec is None:
+                self._setup_tries[task_id] = tries
+                if tries >= _MAX_SETUP_TRIES:
+                    permanent = True
                 return
             try:
 
@@ -162,9 +202,12 @@ class AsyncTaskWatcher:
 
                 client = await self._clients.get(spec, create_client)
             except Exception:  # noqa: BLE001
+                if tries >= _MAX_SETUP_TRIES:
+                    permanent = True
                 return
+            self._setup_tries.pop(task_id, None)
 
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             deadline = loop.time() + _MAX_WATCH_SECONDS
             warned_slow = False
             failures = 0
@@ -209,7 +252,19 @@ class AsyncTaskWatcher:
         finally:
             # Drop from the running set on every exit path so the TUI indicator clears.
             self._running.pop(task_id, None)
-            if not completed:
+            if permanent:
+                # Unmonitorable after the setup budget (or structurally broken):
+                # keep it in _watched so every turn-end sync does not re-enqueue
+                # it forever, and say so once instead of failing silently.
+                self._setup_tries.pop(task_id, None)
+                self._notice(
+                    agent_name,
+                    task_id,
+                    "No longer monitorable",
+                    "Its run could not be resolved (missing ids or agent spec). "
+                    "Use check_async_task if you need its result.",
+                )
+            elif not completed:
                 # Failed setup/cancelled monitoring is not a completed remote run.
                 self._watched.pop(task_id, None)
 

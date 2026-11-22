@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass, replace
-from datetime import UTC, datetime
 from itertools import groupby
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -17,6 +15,25 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Input, OptionList, Static
 from textual.widgets.option_list import Option
 
+# One definition of what a row is, ordered by recency and live-first, shared
+# with the socket port so both frontends label the same session the same way.
+from novacode_cli.ui.command_center import (
+    DETAIL_CHARS as _DETAIL_CHARS,
+)
+from novacode_cli.ui.command_center import (
+    STATUSES,
+    CommandSession,
+    merge_sessions,
+    message_preview,
+    session_age,
+)
+from novacode_cli.ui.command_center import (
+    message_text as _text,
+)
+from novacode_cli.ui.command_center import (
+    safe_identity as _safe_identity,
+)
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
@@ -26,69 +43,20 @@ if TYPE_CHECKING:
     from novacode_cli.session.session_persistence import SessionManager, SessionMeta
 
 logger = logging.getLogger(__name__)
-STATUSES = ("All", "Needs you", "Working", "Ready", "Inactive")
 _PAGE_SIZE = 25
-_DETAIL_CHARS = 1600
 _NARROW_WIDTH = 100
 _TINY_WIDTH = 72
 
-
-@dataclass(frozen=True)
-class CommandSession:
-    """Detached display facts; selecting one grants no execution permission."""
-
-    key: str
-    session_id: str = ""
-    pane_id: str = ""
-    current: bool = False
-    title: str = ""
-    project: str = ""
-    status: str = "Inactive"
-    updated_at: str = ""
-    model: str = ""
-    reasoning: str = ""
-    branch: str = ""
-    input_tokens: int | None = None
-    output_tokens: int | None = None
-    last_message: str = ""
-    prompt: str = ""
-    blocked_reason: str = ""
-    external: bool = False
-
-
-def _text(content: object) -> str:
-    if isinstance(content, str):
-        return content[:_DETAIL_CHARS]
-    if isinstance(content, list):
-        return "\n".join(
-            str(block.get("text", ""))
-            for block in content
-            if isinstance(block, dict) and block.get("type") == "text"
-        )[:_DETAIL_CHARS]
-    return ""
-
-
-def message_preview(messages: Sequence[Any]) -> tuple[str, str]:
-    """Use only human/assistant text, excluding tools and hidden reasoning blocks."""
-    prompt = reply = ""
-    for message in reversed(messages):
-        kind = getattr(message, "type", "")
-        if kind == "human" and not prompt:
-            prompt = _text(message.content)
-        elif kind == "ai" and not reply:
-            reply = _text(message.content)
-        if prompt and reply:
-            break
-    return prompt, reply
-
-
-def _safe_identity(identity: str) -> bool:
-    return (
-        isinstance(identity, str)
-        and bool(identity)
-        and identity not in {".", ".."}
-        and not any(character in identity for character in ("/", "\\", ":", "\0"))
-    )
+__all__ = [
+    "STATUSES",
+    "CommandCenterScreen",
+    "CommandSession",
+    "live_sessions",
+    "merge_sessions",
+    "message_preview",
+    "pane_activity",
+    "session_age",
+]
 
 
 def pane_activity(app: Any, pane: Any) -> str:  # noqa: ANN401 - cached UI state
@@ -183,56 +151,6 @@ def live_sessions(app: Any) -> list[CommandSession]:  # noqa: ANN401 - UI snapsh
             )
         )
     return rows
-
-
-def merge_sessions(
-    saved: Sequence[SessionMeta], live: Sequence[CommandSession]
-) -> list[CommandSession]:
-    """Overlay live facts; an old saved 'active' flag is never proof of running work."""
-    rows = {
-        f"session:{meta.session_id}": CommandSession(
-            key=f"session:{meta.session_id}",
-            session_id=meta.session_id,
-            title=meta.current_task or "Saved conversation",
-            project=meta.project_root or "",
-            status="Needs you" if meta.task_status == "blocked" else "Inactive",
-            updated_at=meta.last_active,
-            model=meta.model_name or "",
-            blocked_reason=meta.blocked_reason or "",
-        )
-        for meta in saved
-        if not meta.cleared and _safe_identity(meta.session_id)
-    }
-    for live_row in live:
-        row = live_row
-        previous = rows.get(row.key)
-        if previous is not None:
-            row = replace(
-                row,
-                title=row.title or previous.title,
-                project=row.project or previous.project,
-                model=row.model or previous.model,
-                updated_at=row.updated_at or previous.updated_at,
-            )
-        rows[row.key] = replace(row, title=row.title or "Current conversation")
-    ordered = sorted(rows.values(), key=lambda row: row.updated_at, reverse=True)
-    return sorted(ordered, key=lambda row: (not row.current, not bool(row.pane_id)))
-
-
-def session_age(timestamp: str) -> str:
-    """Render malformed/legacy dates honestly, without failing a whole list."""
-    if not timestamp:
-        return "Live"
-    try:
-        instant = datetime.fromisoformat(timestamp)
-        instant = instant.replace(tzinfo=UTC) if instant.tzinfo is None else instant
-        seconds = max(0, int((datetime.now(UTC) - instant).total_seconds()))
-    except (ValueError, TypeError, OverflowError):
-        return "Unknown"
-    for divisor, unit in ((86400, "d"), (3600, "h"), (60, "m")):
-        if seconds >= divisor:
-            return f"{seconds // divisor}{unit} ago"
-    return f"{seconds}s ago"
 
 
 class CommandCenterScreen(ModalScreen[CommandSession | None]):

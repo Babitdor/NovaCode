@@ -1,6 +1,7 @@
 """CLI argument definitions, independent of configuration and agent runtime."""
 
 import argparse
+import os
 import sys
 from collections.abc import Sequence
 from typing import Any
@@ -655,6 +656,20 @@ def parse_args() -> argparse.Namespace:  # noqa: PLR0912, PLR0915 — one existi
     parser.add_argument("--import-mode", choices=("compact", "full", "relevant"), default="compact")
     parser.add_argument("--session-worker", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--session-id", default=None, help=argparse.SUPPRESS)
+    # Internal: serve the TUI protocol on a loopback socket instead of taking the
+    # terminal. Kept out of -h because it is a frontend/automation seam, not a
+    # user-facing mode (--mode already means {tui,pipe}).
+    parser.add_argument("--serve", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--serve-port", type=int, default=0, help=argparse.SUPPRESS)
+    parser.add_argument("--serve-token", default=None, help=argparse.SUPPRESS)
+    _env_ui = (os.environ.get("NOVA_UI") or "textual").strip().lower()
+    parser.add_argument(
+        "--ui",
+        choices=("textual", "ratatui"),
+        default=_env_ui if _env_ui in ("textual", "ratatui") else "textual",
+        help="Terminal UI frontend: 'textual' (default) or 'ratatui' (Rust client). "
+        "The NOVA_UI environment variable sets the same default.",
+    )
     _add_agent_server_args(parser)
     parser.add_argument(
         "--version",
@@ -720,4 +735,14 @@ def parse_args() -> argparse.Namespace:  # noqa: PLR0912, PLR0915 — one existi
             parser.error("--import requires exactly one of --latest or --import-session <id/file>")
     elif args.latest or args.import_session:
         parser.error("--latest and --import-session require --import <provider>")
+    if args.serve and (
+        args.print_prompt is not None
+        or args.mode == "pipe"
+        or args.session_worker
+        or args.command
+    ):
+        parser.error(
+            "--serve cannot be combined with a subcommand, --print, --mode pipe "
+            "or --session-worker"
+        )
     return args

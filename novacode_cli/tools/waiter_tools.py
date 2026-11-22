@@ -67,8 +67,26 @@ _STOP_WAITING = (
 )
 
 
-def _waiting_steps(messages: list) -> int:
-    """Assistant steps that called wait_for_task since the user's last message."""
+def _waiting_steps(messages: list, skip_call_id: str | None = None) -> int:
+    """Assistant steps that called wait_for_task since the user's last message.
+
+    A wait call counts only when its ToolMessage RESULT already exists in the
+    history (a ToolMessage with a matching ``tool_call_id``). That excludes the
+    call currently executing and its parallel siblings in the same AIMessage —
+    the running graph already includes their AIMessage in the state, so
+    counting them would refuse the FIRST real wait — while keeping prior
+    completed waits counted. ``skip_call_id`` stays as a belt: it excludes that
+    id even if a result were somehow present.
+    """
+    seen_results: set[str] = set()
+    for message in reversed(messages or []):
+        kind = getattr(message, "type", "")
+        if kind == "human":
+            break
+        if kind == "tool":
+            call_id = getattr(message, "tool_call_id", None)
+            if call_id:
+                seen_results.add(str(call_id))
     steps = 0
     for message in reversed(messages or []):
         kind = getattr(message, "type", "")
@@ -76,6 +94,8 @@ def _waiting_steps(messages: list) -> int:
             break
         if kind == "ai" and any(
             call.get("name") == "wait_for_task"
+            and str(call.get("id")) in seen_results
+            and call.get("id") != skip_call_id
             for call in getattr(message, "tool_calls", None) or []
         ):
             steps += 1
@@ -227,9 +247,15 @@ async def _wait_shell(task_id: str, seconds: int) -> str:
 def _remote_client(spec: AsyncSubAgent) -> LangGraphClient:
     from langgraph_sdk import get_client
 
+    from novacode_cli.agents.async_task_errors import bind_run_errors
+
     headers = dict(spec.get("headers") or {})
     headers.setdefault("x-auth-scheme", "langsmith")
-    return get_client(url=spec.get("url"), headers=headers)
+    # A failed run's error lives in the checkpoint, not the Run schema; bind
+    # the same error recovery as check_async_task's client seam (the watcher
+    # itself binds nothing) so a wait reports the real cause instead of a bare
+    # "The subagent failed."
+    return bind_run_errors(get_client(url=spec.get("url"), headers=headers))
 
 
 async def _wait_remote(task: dict, seconds: int) -> dict:
@@ -319,7 +345,7 @@ def _remote_result(task: dict, result: dict, runtime: ToolRuntime) -> Command:
 
 @tool
 async def wait_for_task(
-    task_id: str, runtime: ToolRuntime, timeout_seconds: int = 30
+    task_id: str, runtime: ToolRuntime, timeout_seconds: int = MAX_WAIT_SECONDS
 ) -> str | Command:
     """Wait up to 10 seconds for a shell job or background subagent to finish.
 
@@ -346,7 +372,12 @@ async def wait_for_task(
         _released.pop(thread_id, None)
     if released:
         refusal = "The user sent a message while you were waiting: reply to it first."
-    elif _waiting_steps(state.get("messages") or []) > MAX_WAIT_STEPS:
+    elif (
+        _waiting_steps(
+            state.get("messages") or [], skip_call_id=getattr(runtime, "tool_call_id", None)
+        )
+        >= MAX_WAIT_STEPS
+    ):
         refusal = "You already waited since the user's last message."
     if refusal is not None:
         job = get_registry().resolve(task_id)

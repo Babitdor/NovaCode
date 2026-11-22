@@ -142,6 +142,16 @@ def test_async_entries_map_status_and_stay_out_of_the_eval_grouping():
     assert done.duration_ms is not None
 
 
+def test_async_terminal_timeout_and_interrupted_are_not_running():
+    """The watcher treats these as terminal; the panel must not spin them."""
+    for status in ("timeout", "interrupted"):
+        task = st.task_from_async_entry(
+            {"task_id": "abc", "agent_name": "x", "status": status}, now=100.0
+        )
+        assert task is not None, status
+        assert task.status == "failed", status
+
+
 def test_async_entries_tolerate_junk():
     assert st.task_from_async_entry(None, now=1.0) is None
     assert st.task_from_async_entry({"agent_name": "x"}, now=1.0) is None

@@ -210,15 +210,54 @@ def _split_tail(messages: list[BaseMessage], keep_tokens: int) -> int:
     budget = keep_tokens * 4
     best = len(messages)
     size = 0
-    for i in range(len(messages) - 1, 0, -1):  # index 0: nothing left to summarize
+    overflow = None
+    for i in range(len(messages) - 1, 0, -1):
         size += _message_chars(messages[i])
         if size > budget:
+            overflow = i
             break
         msg = messages[i]
         if isinstance(msg, HumanMessage) and not is_compaction_summary(
             _format_message_content(msg.content)
         ):
             best = i
+    only_user_message_at_start = not any(
+        isinstance(m, HumanMessage) and not is_compaction_summary(
+            _format_message_content(m.content)
+        )
+        for m in messages[1:]
+    )
+    if (
+        best == len(messages)
+        and overflow is not None
+        and overflow > 0
+        and only_user_message_at_start
+    ):
+        # Code Mode and other single-user-turn sessions never offer a
+        # HumanMessage cut inside the budget: their only user message sits at
+        # index 0, so preferring it summarized the empty head and saved ~0
+        # tokens. Fall back to the overflow boundary, advanced to a
+        # non-ToolMessage so no result is orphaned from its call. Sessions
+        # with later user turns keep the old rule: an oversized last turn is
+        # kept whole rather than summarized around. The fallback boundary can
+        # therefore keep a tail somewhat LARGER than the requested budget —
+        # that overflow is deliberate, not drift: keeping the tail whole beats
+        # splitting a turn that has no user-message cut.
+        i = overflow
+        while i < len(messages):
+            if isinstance(messages[i], ToolMessage):
+                i += 1
+                continue
+            tail = messages[i:]
+            issued = {
+                tc.get("id") for m in tail for tc in (getattr(m, "tool_calls", None) or [])
+            }
+            if not any(
+                isinstance(m, ToolMessage) and m.tool_call_id not in issued for m in tail
+            ):
+                best = i
+                break
+            i += 1
     tail = messages[best:]
     issued = {tc.get("id") for m in tail for tc in (getattr(m, "tool_calls", None) or [])}
     if any(isinstance(m, ToolMessage) and m.tool_call_id not in issued for m in tail):

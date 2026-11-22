@@ -1,0 +1,7 @@
+# Pin the Rust toolchain for rust/nova-tui so CI, contributors and release builds
+# agree. "stable" is deliberate: the client has no nightly-only features, and a
+# version pin would need a rustup download on every machine that lacks it.
+[toolchain]
+channel = "stable"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

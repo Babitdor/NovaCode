@@ -112,8 +112,13 @@ def scan_workspace(project_root: Path | None = None) -> dict[str, Any]:
             state["untracked_files"] = untracked
             state["has_uncommitted_changes"] = len(modified) > 0 or len(untracked) > 0
 
-    except (subprocess.TimeoutExpired, subprocess.SubprocessError, FileNotFoundError):
-        # Git command failed, but that's okay
+    except (
+        subprocess.TimeoutExpired,
+        subprocess.SubprocessError,
+        OSError,
+    ):
+        # Git command failed, but that's okay. OSError covers the Windows
+        # cwd classes too (NotADirectoryError/FileNotFoundError).
         pass
 
     return state

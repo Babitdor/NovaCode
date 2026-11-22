@@ -280,13 +280,20 @@ class JobRegistry:
         self._fire_completion(job)
 
     # -- actions -----------------------------------------------------------
-    def terminate(self, job_id: int) -> bool:
+    def terminate(self, job_id: int, *, force: bool = False) -> bool:
         """Signal a running job to stop (the drain loop terminates its process
-        tree gracefully, then marks it terminated). True if it was running."""
+        tree gracefully, then marks it terminated). True if it was running.
+
+        With ``force=True`` the job is marked terminated immediately as well:
+        if its drain loop is dead (failed launch before the pid attach, a lost
+        thread), the kill signal alone would leave the status ``running``
+        forever with no wait ever resolving."""
         job = self.get(job_id)
         if job is None or job.status != "running":
             return False
         job.kill.set()
+        if force:
+            self.mark_terminated(job_id)
         return True
 
     def restart(self, job_id: int) -> BackgroundJob | None:

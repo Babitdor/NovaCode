@@ -85,10 +85,10 @@ def run_tests(args: argparse.Namespace, extra: list[str]) -> int:
     if args.coverage:
         import coverage
 
-        buffer = importlib.import_module("novacode_cli.tui.output_buffer")
+        buffer = importlib.import_module("novacode_cli.ui.output_buffer")
         cov = coverage.Coverage(
             branch=True,
-            source=["novacode_cli.tui.output_buffer"],
+            source=["novacode_cli.ui.output_buffer"],
             data_file=str(ROOT / ".tmp-resource.coverage"),
         )
         cov.erase()

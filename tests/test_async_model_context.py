@@ -361,8 +361,13 @@ def test_parent_reference_config_is_removed_when_context_is_attached(monkeypatch
     assert "config" not in sent[0]
 
 
-def test_unrelated_configurable_is_preserved_without_context(monkeypatch):
-    """Never drop caller configuration just to deliver the model override."""
+def test_unrelated_configurable_is_preserved_with_context(monkeypatch):
+    """Caller configuration travels alongside the context, never instead of it.
+
+    Regression: the context was only attached when the caller sent NO other
+    configurable key, silently dropping the model override (and the owner's
+    consent and auto-approve stamp) whenever a configurable rode along.
+    """
     monkeypatch.setattr(
         "novacode_cli.config.nova_config.NovaConfig.get_role_model",
         lambda self, role: {"provider": "opencode", "model": "deepseek-v4.1-flash"},
@@ -382,7 +387,7 @@ def test_unrelated_configurable_is_preserved_without_context(monkeypatch):
     )
 
     assert sent[0]["config"] == config
-    assert "context" not in sent[0]
+    assert sent[0]["context"] == NovaAsyncContext(provider="opencode", model="deepseek-v4.1-flash")
 
 
 def test_an_auto_approve_session_stamps_its_async_launches(monkeypatch):

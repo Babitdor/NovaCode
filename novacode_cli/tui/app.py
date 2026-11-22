@@ -5969,10 +5969,11 @@ class NovaApp(App):
         """While a remote turn runs, treat further remote messages as live steers.
 
         Lets a remote user "add extra stuff to the previous prompt": a message
-        (or ``/steer …``) arriving mid-turn is injected as a live steer the
-        running agent picks up at its next step, instead of queuing a whole new
-        turn behind the current one. Other slash commands get a "busy" note.
-        Cancelled when the turn ends.
+        arriving mid-turn is injected as a live steer the running agent picks
+        up at its next step, instead of queuing a whole new turn behind the
+        current one. ``/steer …`` routes through the same subcommand handling
+        as the TUI-native ``_run_steer`` (a bare ``/steer rule`` is STANDING);
+        other slash commands get a "busy" note. Cancelled when the turn ends.
         """
         while True:
             try:
@@ -6006,7 +6007,26 @@ class NovaApp(App):
                     await m.reply_fn(await self._set_auto_approve(text))
                     continue
                 if low.startswith("/steer"):
-                    text = text[len("/steer") :].strip()
+                    # Same subcommand handling as the TUI-native /steer:
+                    # add/list/clear behave identically, and a bare
+                    # "/steer some rule" adds a STANDING instruction (it
+                    # persists across turns), not a one-shot live steer.
+                    await self._run_steer(text)
+                    react_fn = getattr(m, "react_fn", None)
+                    reply_fn = getattr(m, "reply_fn", None)
+                    if react_fn is not None:
+                        try:
+                            await react_fn("↗")
+                        except Exception:  # noqa: BLE001
+                            pass
+                    elif reply_fn is not None:
+                        try:
+                            await reply_fn(
+                                "↗ Steering updated — send /steer list for the current rules"
+                            )
+                        except Exception:  # noqa: BLE001
+                            pass
+                    continue
                 elif text.startswith("/"):
                     await self._defer_remote_slash(m, queue)
                     continue
@@ -6910,19 +6930,43 @@ class NovaApp(App):
             return
         now = time.time()
         changed = False
+        seen_async: set[str] = set()
         for entry in tasks.values():
             row = subagent_tasks.task_from_async_entry(entry, now=now, model=None)
             if row is None:
                 continue
+            # Same fallback key task_from_async_entry uses, so an entry that
+            # lacks task_id but has thread_id maps to the SAME row on every
+            # poll instead of flickering between a seen/missing id.
+            if isinstance(entry, dict):
+                seen_async.add(str(entry.get("task_id") or entry.get("thread_id") or ""))
             # The server decides this one's model, so naming the async role (or
             # the server default) is the honest label. It was blanked as unknown,
             # which was right only while a local model was all a row could mean.
             from novacode_cli.config.role_models import panel_row_model
 
             row.model = panel_row_model("async", self.model_name)
+            existing = self._subagent_rows.get(row.task_id)
+            if (
+                existing is not None
+                and row.status != "running"
+                and existing.status == row.status
+                and existing.duration_ms is not None
+            ):
+                # The finished entry stays in graph state, so re-deriving the
+                # duration from created_at inflated the TIME column forever.
+                row.duration_ms = existing.duration_ms
             self._subagent_rows[row.task_id] = row
             if row.phase_id and row.phase_id not in self._subagent_phase_order:
                 self._subagent_phase_order.append(row.phase_id)
+            changed = True
+        stale = [
+            task_id
+            for task_id in self._subagent_rows
+            if task_id.startswith("async:") and task_id[len("async:") :] not in seen_async
+        ]
+        for task_id in stale:
+            del self._subagent_rows[task_id]
             changed = True
         if changed:
             self._subagents_collapsed = not any(
@@ -10580,6 +10624,9 @@ class NovaApp(App):
         # reports can start another exclusive turn and cancel this continuation.
         if turn_completed and getattr(self.session_state, "approved_plan_content", None):
             await self._maybe_run_approved_plan()
+            # Queued async completions must not wait for the next user turn:
+            # the plan path returned before the shared reschedule below.
+            self._schedule_pending_async_report()
             return True
         # Refresh the per-category context breakdown from agent state, then
         # proactively manage the context window once the turn has settled.
@@ -11021,7 +11068,11 @@ class NovaApp(App):
                             await msg.reply_fn(await self._set_auto_approve(text))
                             continue
                         if low.startswith("/steer"):
-                            text = text[len("/steer") :].strip()
+                            # Same subcommand handling as TUI-native mid-turn
+                            # /steer (add/list/clear); a bare rule becomes a
+                            # standing instruction, not a one-shot live steer.
+                            await self._run_steer(text)
+                            continue
                         elif text.startswith("/"):
                             await self._defer_remote_slash(msg, queue)
                             continue
@@ -13792,7 +13843,7 @@ class NovaApp(App):
 
         role = str(result.get("role") or "main")
         if role != "main":
-            self._apply_role_pick(result, role)
+            await self._apply_role_pick(result, role)
             return
 
         provider = result["provider"]
@@ -13915,7 +13966,7 @@ class NovaApp(App):
         except Exception:  # noqa: BLE001 — settings persist even if rebuilding fails
             self._log(Text("Saved; restart Nova to apply them.", style="yellow"))
 
-    def _apply_role_pick(self, result: dict, role: str) -> None:
+    async def _apply_role_pick(self, result: dict, role: str) -> None:
         """Save a model for one non-main role, and say when it takes effect.
 
         The main agent keeps ``/model``'s original behaviour and hot-swaps the live
@@ -13937,6 +13988,12 @@ class NovaApp(App):
             from novacode_cli.agents.core_agent import clear_named_subagents_cache
 
             clear_named_subagents_cache()
+            if role == "async":
+                # The watcher caches agent specs for its whole life; without
+                # this, running polls keep the old model's launch config.
+                watcher = getattr(self, "_async_watcher", None)
+                if watcher is not None:
+                    await watcher.invalidate_specs()
         except Exception as ex:  # noqa: BLE001 — a pick must never crash the TUI
             label = ROLE_LABELS.get(role, role)
             self._log(Text(f"Could not set the {label} model: {ex}", style="red"))
@@ -16952,6 +17009,10 @@ class NovaApp(App):
         if low in ("clear", "reset"):
             n = len(instr)
             instr.clear()
+            # Mid-turn live steers die too — an explicit clear DISCARDS them, so
+            # do not requeue to _deferred_prompts (that is _clear_live_steers'
+            # turn-end behavior, which would resurrect them as new turns).
+            self._live_steers.clear()
             self._log(Text(f"Cleared {n} steering instruction(s).", style="green"))
             return
         m = re.match(r"(?:remove|rm|del|delete)\s+(\d+)", args, re.IGNORECASE)
@@ -19533,6 +19594,19 @@ class NovaApp(App):
         Injects a visible message into the transcript and runs a turn that asks
         the agent to fetch the task result and summarize it — closing the gap
         where a finished remote agent otherwise waits for the user to ask."""
+        try:
+            await self._report_async_result(task_id)
+        except asyncio.CancelledError:
+            # The exclusive turn group cancelled this report because a newer
+            # one started (or the turn was replaced). The id was already popped
+            # from the queue, so re-queue it — a cancelled report must not lose
+            # the completion delivery.
+            if task_id not in self._pending_async_completion_ids:
+                self._pending_async_completion_ids.insert(0, task_id)
+            raise
+
+    async def _report_async_result(self, task_id: str) -> None:
+        """The report turn body: inject the notice, then run the fetch turn."""
         if getattr(getattr(self, "_active_pane", None), "kind", "root") != "root":
             self._queue_pending_job_note(
                 f"Async task {task_id} finished. Fetch it with check_async_task('{task_id}')."

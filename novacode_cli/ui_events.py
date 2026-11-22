@@ -303,3 +303,28 @@ class Error:
     message: str
     exception: BaseException | None = None
     is_provider_notice: bool = False
+
+
+@dataclass
+class CouncilUpdate:
+    """One progress event from a planning council.
+
+    The client folds these into a single in-place card, the way the Textual
+    `CouncilCard` does. Every field is additive: a newer server can send an
+    event name an older client does not render without breaking the feed.
+    """
+
+    prompt: str = ""
+    run_id: str = ""
+    event: str = ""
+    phase: str = ""
+    agent_id: str = ""
+    agent_name: str = ""
+    reason: str = ""
+    proposals: int = 0
+    critiques: int = 0
+    ballots: int = 0
+    entropy: float | None = None
+    agents: list[dict] = field(default_factory=list)
+    outcome: str = ""
+    status: str = ""

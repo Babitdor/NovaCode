@@ -66,21 +66,33 @@ def get_task_logs(task_id: str, tail_lines: int = 50, from_offset: int | None = 
         task_id: e.g. "task_42".
         tail_lines: How many trailing lines to return (default 50). The buffer is
             bounded, so very old output may already have been dropped.
+            0 (or None) means no limit: return everything still buffered.
         from_offset: Return only output written after this offset, as given by
             the ``next from_offset`` of a previous call. Use it when checking a
             task repeatedly, so earlier lines are not sent again.
     """
+    from novacode_cli.shell.output import split_escape_end, strip_ansi
+
     t = _reg().resolve(task_id)
     if t is None:
         return f"No background task '{task_id}'."
-    total = getattr(t.logs, "total", len(t.output))
+    # from_offset cursors (total/start) count RAW log characters, so the slice
+    # must come from the raw join — slicing the ANSI-stripped string drifted
+    # the cursor and repeated or skipped lines whenever output was coloured.
+    raw = "".join(t.logs) if getattr(t.logs, "total", None) is not None else t.output
+    total = getattr(t.logs, "total", len(raw))
     start = getattr(t.logs, "start", 0)
     cursor = f"[next from_offset={total}]"
     if from_offset is not None:
         if from_offset >= total:
             return f"{t.task_id} ({t.status}) — no new output since offset {from_offset}. {cursor}"
         dropped = max(0, start - from_offset)
-        new = t.output[max(0, from_offset - start) :]
+        cut = max(0, from_offset - start)
+        # A cut inside a split ANSI escape leaves an orphan fragment (e.g.
+        # "[38;5;…m") that strip_ansi cannot remove because its leading ESC
+        # is before the cut. Resume after that sequence closes instead.
+        end = split_escape_end(raw, cut)
+        new = strip_ansi(raw[end if end != -1 else cut :])
         lines = new.splitlines()[-max(1, tail_lines) :] if tail_lines else new.splitlines()
         note = f" ({dropped} older characters were dropped from the buffer)" if dropped else ""
         header = f"{t.task_id} ({t.status}) — new output since offset {from_offset}{note}:"
@@ -89,13 +101,15 @@ def get_task_logs(task_id: str, tail_lines: int = 50, from_offset: int | None = 
     if not text.strip():
         return f"{t.task_id} has produced no output yet. {cursor}"
     lines = text.splitlines()
-    tail = lines[-max(1, tail_lines):]
+    # tail_lines=0 means no limit (same as the from_offset path below);
+    # max(1, tail_lines) would have clamped it to the last line only.
+    tail = lines if not tail_lines else lines[-max(1, tail_lines) :]
     header = f"{t.task_id} ({t.status}) — last {len(tail)} line(s):"
     return "\n".join([header, *tail, cursor])
 
 
 @tool
-def terminate_task(task_id: str) -> str:
+def terminate_task(task_id: str, force: bool = False) -> str:
     """Stop a background command and its child processes in this session.
 
     Use list_background_tasks to find its task_id. This signals termination;
@@ -104,13 +118,18 @@ def terminate_task(task_id: str) -> str:
 
     Args:
         task_id: e.g. "task_42".
+        force: Also mark the task terminated immediately, without waiting for
+            the graceful drain. Use when a task is stuck "running" after a
+            terminate (its drain loop may be gone).
     """
     reg = _reg()
     t = reg.resolve(task_id)
     if t is None:
         return f"No background task '{task_id}'."
-    if not reg.terminate(t.id):
+    if not reg.terminate(t.id, force=force):
         return f"{t.task_id} is not running (status: {t.status})."
+    if force:
+        return f"Forcibly terminated {t.task_id} ({t.command[:60]})."
     return f"Terminating {t.task_id} ({t.command[:60]}). It will report as terminated shortly."
 
 

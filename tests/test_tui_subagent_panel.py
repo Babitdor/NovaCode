@@ -216,6 +216,32 @@ async def test_async_panel_survives_local_turn_and_local_tasks_stay_inline():
         assert app._subagents_tick is None
 
 
+async def test_ingest_freezes_finished_async_duration_and_drops_stale_rows(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Finished rows keep their duration; rows gone from state are removed.
+
+    Regression: the finished entry stays in graph state, so every sync
+    recomputed duration from created_at — the TIME column inflated forever —
+    and tasks removed from async_tasks left stale rows for the session.
+    """
+    app = _app()
+    clock = {"now": 2000.0}
+    monkeypatch.setattr("novacode_cli.tui.app.time.time", lambda: clock["now"])
+    async with app.run_test(size=(120, 44)):
+        app._ingest_async_tasks(
+            {"a": {"task_id": "a", "agent_name": "r", "status": "success", "created_at": 1900.0}}
+        )
+        first = app._subagent_rows["async:a"].duration_ms
+        assert first == 100_000, first
+        clock["now"] = 2900.0
+        app._ingest_async_tasks({"a": {"task_id": "a", "status": "success"}})
+        assert app._subagent_rows["async:a"].duration_ms == first, "duration must stay frozen"
+        # Vanished from state → row dropped.
+        app._ingest_async_tasks({})
+        assert "async:a" not in app._subagent_rows
+
+
 async def test_clear_removes_inline_state(monkeypatch):
     app = _app()
 

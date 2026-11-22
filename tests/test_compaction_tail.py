@@ -67,6 +67,30 @@ def test_last_turn_too_big_keeps_nothing() -> None:
     assert C._split_tail(msgs, keep_tokens=100) == len(msgs)
 
 
+def test_single_user_turn_mega_session_still_summarizes_a_head() -> None:
+    """Code Mode drives a whole run from one user message at index 0.
+
+    Regression: _split_tail only cut at a HumanMessage and explicitly skipped
+    index 0, so a single-user-turn session — no matter how long — always
+    summarized an empty head and reported ~0 tokens saved ("nothing to
+    compress"). The fallback cuts at the overflow boundary instead, advanced
+    to a non-ToolMessage so no result is orphaned.
+    """
+    msgs = [HumanMessage(content="build the feature", id="h0")]
+    for n in range(5):
+        msgs += [
+            AIMessage(
+                content="", id=f"a{n}",
+                tool_calls=[{"id": f"c{n}", "name": "eval", "args": {}}],
+            ),
+            ToolMessage(content="x" * 2_000, tool_call_id=f"c{n}", name="eval", id=f"t{n}"),
+            AIMessage(content=f"step {n} done", id=f"d{n}"),
+        ]
+    cut = C._split_tail(msgs, keep_tokens=500)  # ~2000-char budget vs ~10k transcript
+    assert 0 < cut < len(msgs), cut
+    assert not isinstance(msgs[cut], ToolMessage)
+
+
 def test_tail_never_orphans_a_tool_result() -> None:
     """A steer injected between a call and its result is also a HumanMessage."""
     msgs = [

@@ -15,7 +15,7 @@ from rich.console import Console
 
 from novacode_cli import events
 from novacode_cli import ui_events as ev
-from novacode_cli.tui.output_buffer import MAX_PENDING_CHARS
+from novacode_cli.ui.output_buffer import MAX_PENDING_CHARS
 from novacode_cli.ui.stream_preview import ConsoleStreamPreview
 from tests.test_tui_sessions import _app, isolated_session_config  # noqa: F401
 

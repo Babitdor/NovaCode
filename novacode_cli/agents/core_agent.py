@@ -782,6 +782,7 @@ def _harden_subagent_specs(
     skill_sources: list[str] | None = None,
     main_model_supports_images: bool = False,
     skill_backend: object | None = None,
+    steering_instructions: list | None = None,
 ) -> list:
     """Return resilient, unattended copies of the subagent specs.
 
@@ -813,6 +814,10 @@ def _harden_subagent_specs(
       loader using the specialist's selected names and the user's enabled set.
       General-purpose agents retain the full library. Explicit source roots
       remain supported, and the automatic second loader is disabled.
+    - **Mount the shared ``SteeringMiddleware``** — the same list instance the
+      main agent holds, so a standing ``/steer`` rule reaches in-process
+      subagents too. Remote/async subagents build their own graphs on the
+      server and are skipped (see ``runnable``/``url`` above).
     """
     from novacode_cli.agents.model_retry import NovaSubagentRetryMiddleware as ModelRetryMiddleware
     from novacode_cli.agents.agent_file import FilesystemToolFilter
@@ -913,6 +918,7 @@ def _harden_subagent_specs(
         has_loopguard = any(type(m).__name__ == "LoopGuardMiddleware" for m in existing)
         has_async = any(type(m).__name__ == "AsyncSubAgentMiddleware" for m in existing)
         has_pii = any(type(m).__name__ == "PIIMiddleware" for m in existing)
+        has_steering = any(type(m).__name__ == "SteeringMiddleware" for m in existing)
 
         # Share the source mounts, but give each graph its own selected library
         # and activation state. Respect explicitly configured source roots.
@@ -939,6 +945,14 @@ def _harden_subagent_specs(
             new_spec["skills"] = []  # disable the second, automatic loader
 
         mw_to_add = []
+        # Standing steering: the SHARED list (same instance as the main agent's
+        # middleware) so /steer rules added mid-session reach this subagent's
+        # system prompt without a rebuild. Mirrors the main stack mount in
+        # _build_middleware_stack; skipped for specs that carry their own.
+        if not has_steering:
+            from novacode_cli.bootstrap.steering import SteeringMiddleware
+
+            mw_to_add.append(SteeringMiddleware(instructions=steering_instructions))
         from novacode_cli.security.delegated_approval import DelegatedApprovalMiddleware
         if not any(isinstance(m, DelegatedApprovalMiddleware) for m in existing):
             mw_to_add.append(DelegatedApprovalMiddleware())
@@ -1970,6 +1984,7 @@ def _build_subagent_roster(
     mcp_tools: list[BaseTool] | None = None,
     main_model_supports_images: bool = False,
     skill_backend: object | None = None,
+    steering_instructions: list | None = None,
 ) -> list:
     """Assemble the final subagent roster for ``create_deep_agent``.
 
@@ -2069,7 +2084,11 @@ def _build_subagent_roster(
     # subagent mid-run — see _harden_subagent_specs. Returns fresh copies (never
     # mutates the cached specs, which would accumulate middleware across builds).
     Nova_SubAgent = _harden_subagent_specs(
-        unique_subagent_specs(Nova_SubAgent), skill_sources, main_model_supports_images, skill_backend
+        unique_subagent_specs(Nova_SubAgent),
+        skill_sources,
+        main_model_supports_images,
+        skill_backend,
+        steering_instructions=steering_instructions,
     )
 
     return unique_subagent_specs(Nova_SubAgent + async_subagents)  # type: ignore[arg-type]
@@ -2468,6 +2487,7 @@ This file stores your preferences and context that persist across sessions.
         skill_sources=skill_sources,
         main_model_supports_images=_main_model_supports_images,
         skill_backend=composite_backend,
+        steering_instructions=steering_instructions,
     )
 
     if _has_mcp:

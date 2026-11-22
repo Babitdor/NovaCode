@@ -201,6 +201,13 @@ async def check_claude_now() -> Usage:
 
 BAR_WIDTH = 30
 
+#: Shown under the bars in `/usage`, in every frontend that renders them.
+USAGE_NOTE = (
+    "Claude Code reports its limits only during a call: Check Claude now makes one tiny "
+    "call. Codex's come from its last session. Anthropic and OpenAI API keys, Gemini, "
+    "NVIDIA and Ollama have no usage endpoint."
+)
+
 
 def _bar_color(used: float) -> str:
     return "green" if used < 0.6 else "yellow" if used < 0.85 else "red"

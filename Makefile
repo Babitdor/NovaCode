@@ -1,4 +1,4 @@
-.PHONY: all lint format test help run test_integration test_watch clean
+.PHONY: all lint format test help run test_integration test_watch clean rust rust-test rust-frames
 
 # Default target executed when no arguments are given to make.
 all: help
@@ -70,6 +70,30 @@ reinstall:
 
 run_reinstall:
 	uv sync --reinstall-package novacode-cli --reinstall-package deepagents && uv run nova
+
+######################
+# RUST CLIENT (rust/nova-tui)
+######################
+
+# Build the ratatui client. Development builds are enough to run with
+# NOVA_TUI_BIN=rust/target/debug/nova-tui (or nova-tui.exe on Windows).
+rust:
+	cd rust && cargo build -p nova-tui
+
+# Format, lint and test exactly what CI runs. -D warnings makes clippy a gate,
+# not a suggestion.
+rust-test:
+	cd rust && cargo fmt --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace
+
+# Regenerate every parity corpus (deterministic: stub agent, no API spend) and
+# the rendered-frame snapshot the replay test compares against. One scenario per
+# behaviour family; the replay tests read whichever corpora exist, so adding a
+# scenario is a data change, not a code change.
+rust-frames:
+	uv run python scripts/record_tui_session.py --scenario core_chat
+	uv run python scripts/record_tui_session.py --scenario screens
+	uv run python scripts/record_tui_session.py --scenario commands
+	cd rust && BLESS=1 cargo test -p nova-tui --test frames_replay
 
 ######################
 # LINTING AND FORMATTING

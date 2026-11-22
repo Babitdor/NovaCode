@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "novacode-cli"
-version = "1.2.54"
+version = "1.2.55"
 description = "Agentic Coding Tool that runs in your terminal"
 authors = [{ name = "Babitdor", email = "babitdorbryan14@gmail.com" }]
 readme = {file = "README.md", content-type = "text/markdown"}
@@ -242,6 +242,7 @@ ignore-var-parameters = true
 [tool.ruff.lint.per-file-ignores]
 "scripts/verify_installed_code_mode.py" = ["S101", "T201"]  # Executable installation assertions.
 "novacode_cli/config/*" = ["INP001"]  # Existing namespace package; no eager config imports.
+"novacode_cli/ui/*" = ["INP001"]  # Existing namespace package (like config/); sibling modules share it.
 "novacode_cli/agents/browser_mode.py" = ["INP001"]  # Existing agents namespace package.
 "scripts/verify_prime.py" = [
     "T201",  # CLI verification results.

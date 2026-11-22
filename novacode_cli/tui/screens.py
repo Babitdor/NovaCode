@@ -35,6 +35,7 @@ from textual.widgets import (
 )
 from textual.widgets.option_list import Option
 
+from novacode_cli.commands.planner_usage import USAGE_NOTE as _USAGE_NOTE
 from novacode_cli.config.config import agent_md as _agent_md
 from novacode_cli.tui.animations import animate_modal_screen
 from novacode_cli.tui.auth_display import format_auth_indicator
@@ -3365,12 +3366,10 @@ class UsageScreen(ModalScreen[None]):
         self.dismiss(None)
 
 
-#: Shown under the bars in /usage (modal and remote text alike).
-USAGE_NOTE = (
-    "Claude Code reports its limits only during a call: Check Claude now makes one tiny "
-    "call. Codex's come from its last session. Anthropic and OpenAI API keys, Gemini, "
-    "NVIDIA and Ollama have no usage endpoint."
-)
+#: Shown under the bars in /usage (modal and remote text alike). The text lives
+#: in the neutral usage module so the socket server can say the same thing
+#: without importing this package.
+USAGE_NOTE = _USAGE_NOTE
 
 
 class ContextScreen(ModalScreen[None]):

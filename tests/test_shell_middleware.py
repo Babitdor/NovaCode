@@ -18,6 +18,36 @@ def _mw(timeout: float = 30.0) -> ShellMiddleware:
     return ShellMiddleware(workspace_root=".", timeout=timeout)
 
 
+def test_a_spawn_with_an_unusable_cwd_names_the_path():
+    """WinError 267 must never surface as a pathless "directory name is invalid".
+
+    A cwd that is a FILE (or vanished) raises NotADirectoryError with NO path
+    in str() — observed in the field as a subagent crash with only "[WinError
+    267] The directory name is invalid". _spawn now re-raises with the cwd in
+    the message.
+    """
+    import asyncio
+    import os
+    import tempfile
+
+    async def _run():
+        mw = ShellMiddleware(workspace_root=".", timeout=30)
+        file_cwd = os.path.join(tempfile.gettempdir(), "nova_test_file.txt")
+        with open(file_cwd, "w", encoding="utf-8") as fh:
+            fh.write("x")
+        try:
+            mw._workspace_root = file_cwd
+            await mw._spawn("echo hi", None, stdin=0, stdout=0, stderr=0)
+            raise AssertionError("expected OSError")
+        except OSError as exc:
+            assert "nova_test_file.txt" in str(exc), str(exc)
+            assert "Could not start the command in cwd" in str(exc)
+        finally:
+            os.unlink(file_cwd)
+
+    asyncio.run(_run())
+
+
 def test_quick_command_returns_output():
     r = _mw()._run_local_command('python -c "print(7*6)"', tool_call_id="t")
     assert "42" in r.content

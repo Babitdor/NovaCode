@@ -60,7 +60,8 @@ MUTANTS = [
 def child(index: int, report: str) -> int:
     """Replace one actual method with its modified source, then run its test."""
     from novacode_cli.audio import pipeline
-    from novacode_cli.tui import app, output_buffer
+    from novacode_cli.tui import app
+from novacode_cli.ui import output_buffer
 
     modules = {"app": app, "pipeline": pipeline, "buffer": output_buffer}
     module_name, class_name, method_name, before, after, test = MUTANTS[index]
