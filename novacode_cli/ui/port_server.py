@@ -1070,18 +1070,23 @@ class ServerPort:
             lines.append(f"{key:<9} {value}")
         return CommandResult(ok=True, message="Status", blocks=(Block("text", "\n".join(lines)),))
 
-    async def _context_screen(self, _args: str | None = None) -> CommandResult:
+    async def _context_screen(self, args: str | None = None) -> CommandResult:
         """Build the `/context` report and the breakdown table it opens.
 
         The report travels as blocks so its numbers survive the modal closing,
         and the table travels as a `screen` spec so the client opens it without
         the server blocking on an answer: reading a report needs no reply.
 
+        Args:
+            args: `imported [mode] [query]` for an imported context, else nothing.
+
         Returns:
             A successful result carrying both.
         """
         from novacode_cli.ui import screen_specs
 
+        if (args or "").split()[:1] == ["imported"]:
+            return await self._imported_context(args)
         state = getattr(self._worker, "session_state", None)
         tracker = getattr(state, "token_tracker", None)
         usage = screen_specs.context_usage(tracker, getattr(self._worker, "model_name", None))
@@ -1091,6 +1096,50 @@ class ServerPort:
             blocks=screen_specs.context_blocks(usage),
             screen=screen_specs.context_spec(usage),
         )
+
+    async def _imported_context(self, args: str | None) -> CommandResult:
+        """Report the imported context this session carries, or switch its mode.
+
+        The transcript is stored beside the session, so switching mode rewrites
+        the one reference message instead of loading the source again: the same
+        write path `/import` uses, which keeps both frontends agreeing on what a
+        session currently carries.
+
+        Args:
+            args: `imported`, optionally followed by `full|compact|relevant` and a query.
+
+        Returns:
+            The provenance and size, the rewritten reference, or why nothing changed.
+        """
+        from dataclasses import replace
+
+        from novacode_cli.session.imported_context import ImportedContext, context_budget
+
+        state = getattr(self._worker, "session_state", None)
+        manager = getattr(self._worker, "session_manager", None)
+        session_id = getattr(state, "session_id", None)
+        if manager is None or not session_id:
+            text = "Imported context requires session storage."
+            return CommandResult(ok=False, message=text, blocks=(Block("text", text),))
+        loaded = await asyncio.to_thread(ImportedContext.load, manager.sessions_dir, session_id)
+        if loaded is None:
+            text = "This Nova session has no imported context. Use /import first."
+            return CommandResult(ok=False, message=text, blocks=(Block("text", text),))
+        rest = (args or "").split()[1:]
+        budget = context_budget(getattr(state, "token_tracker", None))
+        if not rest:
+            report = loaded.describe(budget)
+            return CommandResult(
+                ok=True, message=_first_line(report), blocks=blocks_from_text(report)
+            )
+        wanted = replace(loaded, mode=rest[0].lower(), query=rest[1] if rest[1:] else "")
+        try:
+            wanted.build(budget)
+        except ValueError as error:
+            text = f"Session import: {error}"
+            return CommandResult(ok=False, message=text, blocks=(Block("text", text),))
+        text = f"Imported context · {wanted.mode}"
+        return await self._write_imported(wanted, note=text)
 
     async def _theme_screen(self, args: str | None) -> CommandResult:
         """Pick a theme, then tell the client to draw with it.
@@ -3712,12 +3761,7 @@ class ServerPort:
         Returns:
             What was imported and how much of it loaded, or why nothing changed.
         """
-        from novacode_cli.session.imported_context import (
-            context_budget,
-            import_message,
-            load_import,
-            parse_import,
-        )
+        from novacode_cli.session.imported_context import load_import, parse_import
 
         text = f"/import {args.strip()}" if (args or "").strip() else "/import"
         try:
@@ -3726,6 +3770,22 @@ class ServerPort:
         except (OSError, ValueError, KeyError, TypeError) as error:
             text = f"Session import: {error}"
             return CommandResult(ok=False, message=text, blocks=(Block("text", text),))
+        session = context.session
+        note = f"Imported {len(session.messages)} messages from {session.provider}."
+        return await self._write_imported(context, note=note)
+
+    async def _write_imported(self, context: Any, *, note: str) -> CommandResult:  # noqa: ANN401
+        """Write one imported reference, store its transcript and report the size.
+
+        Args:
+            context: The imported context to attach to this conversation.
+            note: The line that says what happened, e.g. "Imported 4 messages from codex."
+
+        Returns:
+            The result carrying the new budget, or why nothing was written.
+        """
+        from novacode_cli.session.imported_context import context_budget, import_message
+
         state = getattr(self._worker, "session_state", None)
         thread_id = getattr(state, "thread_id", None)
         agent = getattr(self._worker, "agent", None)
@@ -3748,12 +3808,10 @@ class ServerPort:
             except OSError as error:
                 text = f"Imported the context, but storing it failed: {error}"
                 return CommandResult(ok=False, message=text, blocks=(Block("text", text),))
-        session = context.session
-        message = f"Imported {len(session.messages)} messages from {session.provider}."
         return CommandResult(
             ok=True,
-            message=message,
-            blocks=(Block("text", message), Block("text", context.describe(budget))),
+            message=note,
+            blocks=(Block("text", note), Block("text", context.describe(budget))),
         )
 
     async def _compare_command(self, args: str | None) -> CommandResult:

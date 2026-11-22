@@ -31,7 +31,7 @@ def test_roster_combines_sources_without_duplicate_tool_routes(
     monkeypatch.setattr(core, "build_named_subagents", lambda **_kw: [named])
     monkeypatch.setattr(claude_plugins, "plugin_agent_specs", lambda: [plugin, plugin])
     monkeypatch.setattr(core, "retrieve_async_subagents", lambda: [remote])
-    monkeypatch.setattr(core, "_harden_subagent_specs", lambda specs, **_kw: specs)
+    monkeypatch.setattr(core, "_harden_subagent_specs", lambda *args, **_kw: args[0])
     result = core._build_subagent_roster(
         assistant_id="nova", tools=[], plugin_specs=[], skill_sources=[]
     )

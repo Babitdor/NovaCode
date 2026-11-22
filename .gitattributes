@@ -16,3 +16,6 @@
 novacode_cli/prompts/ponytail/** text eol=lf
 # Preserve the recorded hashes of benchmark runtime snapshots on every platform.
 scripts/fixtures/code_mode_baseline/*.txt text eol=lf
+# The Rust client compares rendered frames byte-for-byte against recorded
+# fixtures; CRLF on a Windows checkout would fail the replay everywhere.
+rust/nova-tui/tests/fixtures/** text eol=lf

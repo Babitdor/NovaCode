@@ -215,3 +215,58 @@ def test_import_and_compare_are_served():
         assert spec is not None
         assert spec.served is True
         assert spec.route == "passthrough"
+
+
+@pytest.mark.asyncio
+async def test_context_imported_reports_what_was_imported(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    import novacode_cli.session.imported_context as module
+
+    monkeypatch.setattr(module, "load_import", lambda *_a, **_k: _context())
+    port, _agent, _emitted = _port(manager=_Manager(tmp_path))
+    await port.run("/import", "codex abc")
+    result = await port.run("/context", "imported")
+    assert result.ok is True
+    assert result.message.startswith("Imported Context · codex · compact")
+    assert "2 messages" in result.blocks[0].text
+
+
+@pytest.mark.asyncio
+async def test_context_imported_switches_mode_without_reloading_the_source(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    import novacode_cli.session.imported_context as module
+
+    monkeypatch.setattr(module, "load_import", lambda *_a, **_k: _context())
+    port, agent, _emitted = _port(manager=_Manager(tmp_path))
+    await port.run("/import", "codex abc")
+    message_id = agent.writes[-1]["values"]["messages"][0].id
+    result = await port.run("/context", "imported relevant auth")
+    assert result.ok is True
+    assert result.message == "Imported context · relevant"
+    assert agent.writes[-1]["values"]["messages"][0].id == message_id
+    stored = ImportedContext.load(tmp_path, "s1")
+    assert stored is not None
+    assert stored.mode == "relevant"
+    assert stored.query == "auth"
+
+
+@pytest.mark.asyncio
+async def test_context_imported_refuses_an_unknown_mode(tmp_path: Path):
+    import novacode_cli.session.imported_context as module
+
+    port, agent, _emitted = _port(manager=_Manager(tmp_path))
+    _context().save(tmp_path, "s1")
+    result = await port.run("/context", "imported sideways")
+    assert result.ok is False
+    assert result.message.startswith("Session import: Imported context mode must be")
+    assert agent.writes == []
+
+
+@pytest.mark.asyncio
+async def test_context_imported_says_when_nothing_was_imported(tmp_path: Path):
+    port, _agent, _emitted = _port(manager=_Manager(tmp_path))
+    result = await port.run("/context", "imported")
+    assert result.ok is False
+    assert result.message == "This Nova session has no imported context. Use /import first."
