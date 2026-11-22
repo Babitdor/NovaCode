@@ -209,10 +209,9 @@ def test_large_context_budget_and_full_refusal():
     for mode in ("compact", "relevant"):
         assert estimated_tokens(ImportedContext(source, mode).build(1000)) <= 1000
     assert len(source.messages[0].content) == 20000
-    app = SimpleNamespace(
-        token_tracker=SimpleNamespace(context_window_size=8000, current_context=6000)
-    )
-    assert context_budget(app) == 400
+    # The budget now belongs to the token tracker, which both frontends share.
+    tracker = SimpleNamespace(context_window_size=8000, current_context=6000)
+    assert context_budget(tracker) == 400
 
 
 def test_native_adapter(tmp_path: Path):

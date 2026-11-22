@@ -56,14 +56,14 @@ from novacode_cli.shell.utils import (
 # (the #1 Windows failure) succeed by re-running in bash, without predicting or
 # hard-coding what "looks like" bash. Empirical, not heuristic.
 _SHELL_REJECTION = re.compile(
-    r"is not recognized"                                          # cmd.exe / pwsh: unknown command
-    r"|command not found"                                         # bash: `foo: command not found`
-    r"|CommandNotFoundException"                                  # pwsh
-    r"|ParameterBindingException"                                 # pwsh: bash-style flags (`-rf`)
-    r"|A parameter cannot be found that matches parameter name"   # pwsh
-    r"|positional parameter cannot be found"                      # pwsh
-    r"|Unexpected token|ParserError"                              # pwsh parse
-    r"|syntax error near unexpected token|syntax error:",         # bash parse
+    r"is not recognized"  # cmd.exe / pwsh: unknown command
+    r"|command not found"  # bash: `foo: command not found`
+    r"|CommandNotFoundException"  # pwsh
+    r"|ParameterBindingException"  # pwsh: bash-style flags (`-rf`)
+    r"|A parameter cannot be found that matches parameter name"  # pwsh
+    r"|positional parameter cannot be found"  # pwsh
+    r"|Unexpected token|ParserError"  # pwsh parse
+    r"|syntax error near unexpected token|syntax error:",  # bash parse
     re.IGNORECASE,
 )
 
@@ -259,7 +259,9 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
             "as `shell`."
         )
 
-        def _make_impl(prog: list[str] | None, *, is_bash: bool = False) -> Callable[..., ToolMessage | str]:
+        def _make_impl(
+            prog: list[str] | None, *, is_bash: bool = False
+        ) -> Callable[..., ToolMessage | str]:
             """Build a tool body bound to the program it should execute."""
 
             def _impl(
@@ -459,7 +461,9 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
         if background or is_long_running_command(command):
             return self._run_background_shell_command(command, tool_call_id=tool_call_id, prog=prog)
         if interactive:
-            return self._run_interactive_shell_command(command, tool_call_id=tool_call_id, prog=prog)
+            return self._run_interactive_shell_command(
+                command, tool_call_id=tool_call_id, prog=prog
+            )
         return self._run_foreground_with_fallback(command, tool_call_id=tool_call_id, prog=prog)
 
     def _intercept_execute(self, request: Any) -> str | None:
@@ -510,14 +514,18 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
 
         def run(command: str, **kwargs: Any) -> str | ToolMessage:
             return self._dispatch_local(
-                command, tool_call_id=call_id, prog=None,
+                command,
+                tool_call_id=call_id,
+                prog=None,
                 interactive=bool(kwargs.get("interactive", False)),
                 background=bool(kwargs.get("background", False)),
             )
 
         async def arun(command: str, **kwargs: Any) -> str | ToolMessage:
             return await self._adispatch_local(
-                command, tool_call_id=call_id, prog=None,
+                command,
+                tool_call_id=call_id,
+                prog=None,
                 interactive=bool(kwargs.get("interactive", False)),
                 background=bool(kwargs.get("background", False)),
             )
@@ -931,9 +939,7 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
 
         main = asyncio.run_coroutine_threadsafe(make_coro(), get_background_loop())
         waiters = {asyncio.wrap_future(main), asyncio.wrap_future(detach_future)}
-        await asyncio.wait(
-            waiters, timeout=timeout, return_when=asyncio.FIRST_COMPLETED
-        )
+        await asyncio.wait(waiters, timeout=timeout, return_when=asyncio.FIRST_COMPLETED)
         if detach_future.done():
             return detach_future.result()
         if main.done():
@@ -1436,6 +1442,7 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
                     tail = (tail + text)[-4096:]
                     if tool_call_id:
                         from novacode_cli.events import emit_tool_output
+
                         emit_tool_output(tool_call_id, text)
         except asyncio.CancelledError:
             await asyncio.shield(self._terminate_tree(proc, grace=0))

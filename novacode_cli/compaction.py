@@ -222,9 +222,8 @@ def _split_tail(messages: list[BaseMessage], keep_tokens: int) -> int:
         ):
             best = i
     only_user_message_at_start = not any(
-        isinstance(m, HumanMessage) and not is_compaction_summary(
-            _format_message_content(m.content)
-        )
+        isinstance(m, HumanMessage)
+        and not is_compaction_summary(_format_message_content(m.content))
         for m in messages[1:]
     )
     if (
@@ -249,12 +248,8 @@ def _split_tail(messages: list[BaseMessage], keep_tokens: int) -> int:
                 i += 1
                 continue
             tail = messages[i:]
-            issued = {
-                tc.get("id") for m in tail for tc in (getattr(m, "tool_calls", None) or [])
-            }
-            if not any(
-                isinstance(m, ToolMessage) and m.tool_call_id not in issued for m in tail
-            ):
+            issued = {tc.get("id") for m in tail for tc in (getattr(m, "tool_calls", None) or [])}
+            if not any(isinstance(m, ToolMessage) and m.tool_call_id not in issued for m in tail):
                 best = i
                 break
             i += 1
@@ -334,6 +329,7 @@ def _archive_messages(thread_id: str, messages: list[BaseMessage]) -> Path | Non
     """
     try:
         from novacode_cli.context.archives import default_recovery_store
+
         return default_recovery_store().archive(thread_id, messages)
     except Exception:
         logger.debug("Could not publish recovery archive", exc_info=True)
@@ -633,8 +629,10 @@ async def _compact_conversation(
                 "Compaction archive could not be saved. Conversation history was kept."
             )
         from novacode_cli.session.checkpoint_coordinator import CoordinatedGraph
+
         if isinstance(agent, CoordinatedGraph):
             from novacode_cli.context.archives import default_recovery_store
+
             saver = agent.coordinator.saver
             original = await saver.aget_tuple(state.config)
             if original:
@@ -698,8 +696,17 @@ async def _compact_conversation(
         progress = task_progress(head, state.values.get("todos"))
         protected = _historical_user_requests(said)
         body = "\n\n".join(
-            filter(None, [framing, protected, summary, render_task_progress(progress),
-                          _rehydration_note(), archive_note])
+            filter(
+                None,
+                [
+                    framing,
+                    protected,
+                    summary,
+                    render_task_progress(progress),
+                    _rehydration_note(),
+                    archive_note,
+                ],
+            )
         )
         blocks = user_content_blocks(head)
         content = f"{COMPACTION_SUMMARY_MARKER}\n\n{body}"
@@ -728,11 +735,16 @@ async def _compact_conversation(
         current = await agent.aget_state(config)
         _validate_generation(current, generation)
         from novacode_cli.session.checkpoint_coordinator import CoordinatedGraph
+
         commit_options = {}
         if isinstance(agent, CoordinatedGraph):
-            commit_options["expected_revision"] = (state.config or {}).get("configurable", {}).get("checkpoint_id")
+            commit_options["expected_revision"] = (
+                (state.config or {}).get("configurable", {}).get("checkpoint_id")
+            )
         try:
-            await agent.aupdate_state(config=config, values=update_values, as_node="model", **commit_options)
+            await agent.aupdate_state(
+                config=config, values=update_values, as_node="model", **commit_options
+            )
         except Exception:
             # Older graphs without the summarization state key reject the extra
             # field; retry with just the message rewrite.

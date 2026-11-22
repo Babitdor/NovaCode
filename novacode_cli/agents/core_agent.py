@@ -827,7 +827,10 @@ def _harden_subagent_specs(
     from novacode_cli.sessions.gateway import SESSION_TOOLS
     from novacode_cli.bootstrap import VisionCaptionMiddleware
     from novacode_cli.bootstrap.vision_router import build_vision_tool
-    from novacode_cli.config.model_capabilities import declare_multimodal_profile, model_supports_images
+    from novacode_cli.config.model_capabilities import (
+        declare_multimodal_profile,
+        model_supports_images,
+    )
     from novacode_cli.errors import is_retryable_model_error
     from novacode_cli.security.middleware import SecurityMiddleware
     from novacode_cli.tracking.loop_guard import LoopGuardMiddleware
@@ -841,8 +844,11 @@ def _harden_subagent_specs(
     # the turn. The main agent keeps them; it's the sole HITL boundary.
     # Workspace transitions also belong only to the owning session.
     _interrupting_tools = {
-        "ask_user_question", "enter_plan_mode", "exit_plan_mode",
-        "EnterWorktreeTool", "ExitWorktreeTool",
+        "ask_user_question",
+        "enter_plan_mode",
+        "exit_plan_mode",
+        "EnterWorktreeTool",
+        "ExitWorktreeTool",
     }
 
     # Agent-to-agent: give each subagent the async-task tools (start / update /
@@ -873,11 +879,15 @@ def _harden_subagent_specs(
         child_model = new_spec.get("model")
         child_images = main_model_supports_images
         if child_model is not None:
-            child_name = child_model if isinstance(child_model, str) else (
-                getattr(child_model, "model_name", None) or getattr(child_model, "model", "")
+            child_name = (
+                child_model
+                if isinstance(child_model, str)
+                else (getattr(child_model, "model_name", None) or getattr(child_model, "model", ""))
             )
             child_images = model_supports_images(
-                "", child_name, profile=getattr(child_model, "profile", None),
+                "",
+                child_name,
+                profile=getattr(child_model, "profile", None),
             )
             declare_multimodal_profile(child_model, images=child_images)
         new_spec["interrupt_on"] = {}
@@ -907,8 +917,11 @@ def _harden_subagent_specs(
         )
 
         has_retry = any(
-            type(m).__name__ in {
-                "ModelRetryMiddleware", "NovaModelRetryMiddleware", "NovaSubagentRetryMiddleware",
+            type(m).__name__
+            in {
+                "ModelRetryMiddleware",
+                "NovaModelRetryMiddleware",
+                "NovaSubagentRetryMiddleware",
             }
             for m in existing
         )
@@ -945,15 +958,8 @@ def _harden_subagent_specs(
             new_spec["skills"] = []  # disable the second, automatic loader
 
         mw_to_add = []
-        # Standing steering: the SHARED list (same instance as the main agent's
-        # middleware) so /steer rules added mid-session reach this subagent's
-        # system prompt without a rebuild. Mirrors the main stack mount in
-        # _build_middleware_stack; skipped for specs that carry their own.
-        if not has_steering:
-            from novacode_cli.bootstrap.steering import SteeringMiddleware
-
-            mw_to_add.append(SteeringMiddleware(instructions=steering_instructions))
         from novacode_cli.security.delegated_approval import DelegatedApprovalMiddleware
+
         if not any(isinstance(m, DelegatedApprovalMiddleware) for m in existing):
             mw_to_add.append(DelegatedApprovalMiddleware())
         if not has_retry:
@@ -967,11 +973,7 @@ def _harden_subagent_specs(
                 )
             )
         if not has_vision:
-            mw_to_add.append(
-                VisionCaptionMiddleware(
-                    main_model_supports_images=child_images
-                )
-            )
+            mw_to_add.append(VisionCaptionMiddleware(main_model_supports_images=child_images))
         if not has_security:
             mw_to_add.append(SecurityMiddleware())
         # Break identical-repeat tool loops inside subagents too. Only the MAIN
@@ -987,9 +989,7 @@ def _harden_subagent_specs(
             mw_to_add.extend(build_pii_middleware(_guardrails))
         # A Claude-style `tools:` allowlist also limits deepagents' file/shell tools.
         fs_allow = new_spec.pop("_nova_fs_allow", None)
-        if fs_allow is not None and not any(
-            isinstance(m, FilesystemToolFilter) for m in existing
-        ):
+        if fs_allow is not None and not any(isinstance(m, FilesystemToolFilter) for m in existing):
             mw_to_add.append(FilesystemToolFilter(fs_allow))
         # Agent-to-agent tools (see _async_mw above): the subagent can now message
         # remote agents on the LangGraph server, not just the orchestrator.
@@ -1029,13 +1029,26 @@ def _harden_subagent_specs(
             mw_to_add.append(PluginHooksMiddleware(lifecycle=False))
         if not any(isinstance(m, CavemanMiddleware) for m in existing):
             mw_to_add.append(CavemanMiddleware(style_only=True))
+        # Standing steering: the SHARED list (same instance as the main agent's
+        # middleware) so /steer rules added mid-session reach this subagent's
+        # system prompt without a rebuild. Mounted last so the approval boundary
+        # stays outermost (tests pin DelegatedApprovalMiddleware at [0]);
+        # injection only appends to the system prompt, so its position in the
+        # wrap chain does not change behavior. Skipped for specs that carry
+        # their own.
+        if not has_steering:
+            from novacode_cli.bootstrap.steering import SteeringMiddleware
+
+            mw_to_add.append(SteeringMiddleware(instructions=steering_instructions))
 
         strict = (
-            [] if any(isinstance(m, StrictToolMiddleware) for m in existing)
+            []
+            if any(isinstance(m, StrictToolMiddleware) for m in existing)
             else [StrictToolMiddleware()]
         )
         guard = (
-            [] if any(isinstance(m, PromptInjectionMiddleware) for m in existing)
+            []
+            if any(isinstance(m, PromptInjectionMiddleware) for m in existing)
             else [PromptInjectionMiddleware()]
         )
         assembled = mw_to_add + existing + guard + strict
@@ -1046,9 +1059,7 @@ def _harden_subagent_specs(
     return out
 
 
-def _seed_summarization_profile(
-    model: object, model_name: str, window: int | None = None
-) -> None:
+def _seed_summarization_profile(model: object, model_name: str, window: int | None = None) -> None:
     """Seed ``model.profile['max_input_tokens']`` so deepagents' built-in
     ``SummarizationMiddleware`` triggers on OUR context budget.
 
@@ -1292,7 +1303,8 @@ def _build_composite_backend(
     shared_skills_dir = settings.get_shared_skills_dir()
     if shared_skills_dir.is_dir():
         _routes["/shared-skills/"] = FilesystemBackend(
-            root_dir=str(shared_skills_dir), virtual_mode=True,
+            root_dir=str(shared_skills_dir),
+            virtual_mode=True,
         )
 
     # Add global Claude Code skills route (~/.claude/skills/)
@@ -1457,9 +1469,7 @@ def _build_composite_backend(
     _drive_routes = _host_drive_roots(workspace_root) if sandbox is None else []
     if sandbox is None:
         for _drive in _drive_routes:
-            _routes.setdefault(
-                _drive, FilesystemBackend(root_dir=_drive, virtual_mode=True)
-            )
+            _routes.setdefault(_drive, FilesystemBackend(root_dir=_drive, virtual_mode=True))
 
     composite_backend = CompositeBackend(
         default=_default_backend,
@@ -1479,9 +1489,7 @@ def _build_composite_backend(
     # time, and it mixed skill files into project search results. They stay
     # reachable by their explicit prefix (/skills/…, /memories/…).
     composite_backend.routes = {
-        prefix: backend
-        for prefix, backend in _routes.items()
-        if prefix in _PROJECT_SEARCH_ROUTES
+        prefix: backend for prefix, backend in _routes.items() if prefix in _PROJECT_SEARCH_ROUTES
     }
 
     return composite_backend, _default_backend
@@ -1677,6 +1685,7 @@ def _build_middleware_stack(
     from novacode_cli.shell import ShellMiddleware
     from novacode_cli.tracking.file_tracker import FileTrackerMiddleware
     from novacode_cli.tracking.loop_guard import LoopGuardMiddleware
+
     # Hermes learning loop is opt-in (persisted config). Off by default so the
     # Task-end review is enabled unless the user explicitly turns learning off.
     from novacode_cli.config.nova_config import NovaConfig
@@ -1720,9 +1729,7 @@ def _build_middleware_stack(
         )
 
         _verdict_config = NovaConfig()
-        _verdict_cache = ToolVerdictCache(
-            path=verdict_cache_path(agent_dir, _verdict_config)
-        )
+        _verdict_cache = ToolVerdictCache(path=verdict_cache_path(agent_dir, _verdict_config))
         _verdict_scorer = VerdictScorer(
             create_system_one_client(_verdict_config),
             _verdict_cache,
@@ -1861,9 +1868,7 @@ def _build_middleware_stack(
     # HumanInTheLoopMiddleware from `interrupt_on`, backed by Nova's policy.
     _guardrail_middleware: list = build_pii_middleware(_guardrails)
     if _guardrails.blocked_keywords:
-        _guardrail_middleware.append(
-            ContentFilterMiddleware(_guardrails.blocked_keywords)
-        )
+        _guardrail_middleware.append(ContentFilterMiddleware(_guardrails.blocked_keywords))
     if _guardrail_middleware:
         agent_middleware[0:0] = _guardrail_middleware
 
@@ -2170,7 +2175,12 @@ def create_agent_with_config(
 
     _have_tool = {getattr(t, "name", None) for t in tools}
     from novacode_cli.sessions.gateway import SESSION_TOOLS
-    _mb_extra = [t for t in (send_agent_message, read_agent_messages, *SESSION_TOOLS) if t.name not in _have_tool]
+
+    _mb_extra = [
+        t
+        for t in (send_agent_message, read_agent_messages, *SESSION_TOOLS)
+        if t.name not in _have_tool
+    ]
     if _mb_extra:
         tools = list(tools) + _mb_extra
 
@@ -2499,8 +2509,13 @@ This file stores your preferences and context that persist across sessions.
             servers = MCP_TOOLS_BY_SUBAGENT.get(spec.get("name", "")) or ()
             names = spec.get("_nova_tool_names") or ()
             if servers or names:
-                existing = [m for m in spec.get("middleware", []) if not isinstance(m, MCPAccessMiddleware)]
-                spec["middleware"] = [MCPAccessMiddleware(mcp_middleware, servers, names), *existing]
+                existing = [
+                    m for m in spec.get("middleware", []) if not isinstance(m, MCPAccessMiddleware)
+                ]
+                spec["middleware"] = [
+                    MCPAccessMiddleware(mcp_middleware, servers, names),
+                    *existing,
+                ]
 
     # Generic calls require this graph's routing middleware. Children receive
     # their explicitly allowed namespaced tools rather than this broad router.
@@ -2548,9 +2563,12 @@ This file stores your preferences and context that persist across sessions.
 
         if not any(_tool_name(tool) == "image_gen" for tool in tools):
             tools.append(build_image_gen_tool(lambda: worktree_middleware.session.root))
-        tools = [*tools, build_knowledge_tool(
-            lambda: worktree_middleware.session.root, assistant_id, composite_backend, model
-        )]
+        tools = [
+            *tools,
+            build_knowledge_tool(
+                lambda: worktree_middleware.session.root, assistant_id, composite_backend, model
+            ),
+        ]
         knowledge_instructions = (
             "\n\nPrefer knowledge_lookup for workspace code/documentation orientation and "
             "explanations. On a miss, search normally; supply relevant paths to build a "
@@ -2592,6 +2610,7 @@ This file stores your preferences and context that persist across sessions.
     # Use provided checkpointer or fallback to InMemorySaver
     final_checkpointer = checkpointer if checkpointer is not None else InMemorySaver()
     from novacode_cli.session.checkpoint_coordinator import coordinate_saver
+
     checkpoint_coordinator = coordinate_saver(final_checkpointer)
 
     # Refresh the injected skills list when the skill dirs change, so a skill
@@ -2610,9 +2629,7 @@ This file stores your preferences and context that persist across sessions.
         sources=skill_sources,
         watch_dirs=skill_watch_dirs,
         listing_chars=listing_budget(_context_window),
-        tools=inventory_resolver(
-            mcp_tools, mcp_middleware._tools_cache if _has_mcp else []
-        ),
+        tools=inventory_resolver(mcp_tools, mcp_middleware._tools_cache if _has_mcp else []),
     )
     agent_middleware.append(skills_middleware)
     # Skill curation — clamp the loaded skills to the user-enabled set. MUST be
@@ -2675,21 +2692,43 @@ This file stores your preferences and context that persist across sessions.
     if extra_middleware:
         agent_middleware.extend(extra_middleware)
         from novacode_cli.cowork.broker_middleware import CoworkBrokerMiddleware
+
         brokers = [m for m in extra_middleware if isinstance(m, CoworkBrokerMiddleware)]
         if brokers:
             from novacode_cli.cowork.broker_middleware import confine_backend
+
             composite_backend = confine_backend(composite_backend)
             # Compiled/remote children cannot inherit this process's workspace
             # permissions. Disable them for restricted Cowork sessions.
-            subagents = [dict(s) for s in subagents if isinstance(s, dict) and "runnable" not in s and "url" not in s and "graph_id" not in s]
-            agent_middleware = [m for m in agent_middleware if type(m).__name__ not in {"AsyncServerOnDemandMiddleware", "AsyncSubAgentMiddleware"}]
+            subagents = [
+                dict(s)
+                for s in subagents
+                if isinstance(s, dict)
+                and "runnable" not in s
+                and "url" not in s
+                and "graph_id" not in s
+            ]
+            agent_middleware = [
+                m
+                for m in agent_middleware
+                if type(m).__name__
+                not in {"AsyncServerOnDemandMiddleware", "AsyncSubAgentMiddleware"}
+            ]
             for spec in subagents:
-                spec["middleware"] = [m for m in (spec.get("middleware") or []) if type(m).__name__ not in {"AsyncServerOnDemandMiddleware", "AsyncSubAgentMiddleware"}] + brokers
+                spec["middleware"] = [
+                    m
+                    for m in (spec.get("middleware") or [])
+                    if type(m).__name__
+                    not in {"AsyncServerOnDemandMiddleware", "AsyncSubAgentMiddleware"}
+                ] + brokers
 
     from novacode_cli.context.snapshot import ContextSnapshotMiddleware
     from novacode_cli.agents.context_compaction import ContextCompactionMiddleware
+
     compactors = [m for m in agent_middleware if isinstance(m, ContextCompactionMiddleware)]
-    agent_middleware = [m for m in agent_middleware if not isinstance(m, ContextCompactionMiddleware)]
+    agent_middleware = [
+        m for m in agent_middleware if not isinstance(m, ContextCompactionMiddleware)
+    ]
     from novacode_cli.agents.attribution import AttributionMiddleware
     from novacode_cli.agents.caveman import CavemanMiddleware
     from novacode_cli.agents.caveman_support import caveman_tool
@@ -2764,9 +2803,13 @@ This file stores your preferences and context that persist across sessions.
     ).with_config(
         config  # type: ignore
     )
-    learning_owner = next((m.owner for m in agent_middleware if type(m).__name__ == "NovaLearningMiddleware"), None)
+    learning_owner = next(
+        (m.owner for m in agent_middleware if type(m).__name__ == "NovaLearningMiddleware"), None
+    )
     if learning_owner:
-        agent = agent.with_config(metadata={**config.get("metadata", {}), "nova_learning_owner": learning_owner})
+        agent = agent.with_config(
+            metadata={**config.get("metadata", {}), "nova_learning_owner": learning_owner}
+        )
 
     # Plugin after_agent_setup hooks — call any registered lifecycle hooks
     # now that the agent graph is fully built.
@@ -2792,10 +2835,18 @@ This file stores your preferences and context that persist across sessions.
 
         agent = agent.with_config(callbacks=callbacks())
     from novacode_cli.session.checkpoint_coordinator import CoordinatedGraph
-    learning = next((m for m in agent_middleware if type(m).__name__ == "NovaLearningMiddleware"), None)
+
+    learning = next(
+        (m for m in agent_middleware if type(m).__name__ == "NovaLearningMiddleware"), None
+    )
     from novacode_cli.hermes.activation import ActivationManager
+
     learning_project = getattr(learning, "_project", "") or ""
-    activation = ActivationManager(learning._agent_dir, learning_project) if learning and learning._agent_dir else None
+    activation = (
+        ActivationManager(learning._agent_dir, learning_project)
+        if learning and learning._agent_dir
+        else None
+    )
     agent = CoordinatedGraph(agent, checkpoint_coordinator, learning_project, activation)
     agent.agent_definitions_signature = definitions_before_build
     agent.agent_definitions_workspace = str(workspace_root)

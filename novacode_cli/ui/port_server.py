@@ -91,6 +91,9 @@ PORT_COMMANDS: dict[str, str] = {
     "share": "_share_command",
     "import": "_import_command",
     "compare": "_compare_command",
+    "ralph": "_ralph_command",
+    "trello": "_trello_command",
+    "create": "_create_command",
 }
 
 # Commands the port serves by building a screen from
@@ -666,6 +669,59 @@ class _AgentExistsError(Exception):
         self.name = name
 
 
+def _plain_markup(message: str) -> str:
+    """Drop Rich markup, for a client that renders plain text.
+
+    Handlers write for the terminal (`[bold]...[/bold]`); the socket carries
+    text. Malformed markup is shown as written rather than swallowed.
+
+    Args:
+        message: Rich markup, or plain text already.
+
+    Returns:
+        The text without markup tags.
+    """
+    from rich.text import Text as RichText
+
+    try:
+        return RichText.from_markup(message).plain
+    except Exception:  # noqa: BLE001 - a stray bracket must not lose the line
+        return message
+
+
+def _first_line(text: str) -> str:
+    """The message a result carries when its handler printed several lines.
+
+    Args:
+        text: Captured output.
+
+    Returns:
+        Its first non-empty line, or the whole text when it has none.
+    """
+    for line in text.splitlines():
+        if line.strip():
+            return line.strip()
+    return text
+
+
+def _capture_printing(call: Callable[[], object]) -> tuple[str, tuple[Block, ...]]:
+    """Run a handler that prints to the console and capture what it printed.
+
+    Args:
+        call: The synchronous handler to run.
+
+    Returns:
+        Its output as plain text, and the same text as transcript blocks.
+    """
+    from novacode_cli.config.config import console
+
+    printed = io.StringIO()
+    with console.capture() as captured, contextlib.redirect_stdout(printed):
+        call()
+    text = strip_ansi(captured.get() + printed.getvalue()).strip()
+    return text, blocks_from_text(text)
+
+
 #: What a subagent name may contain: the create form's placeholder, enforced.
 _AGENT_NAME = re.compile(r"^[A-Za-z0-9_-]+$")
 
@@ -784,6 +840,8 @@ class ServerPort:
         self._proactive_runtime: Any = None
         self._rooms_store_instance: Any = None
         self._council_task: Any = None
+        self._ralph_task: Any = None
+        self._trello_task: Any = None
         self._btw_task: Any = None
         self._reindex_task: Any = None
         self._research_prompt: str | None = None
@@ -2604,6 +2662,14 @@ class ServerPort:
             with contextlib.suppress(Exception):
                 await self._council_task
         self._council_task = None
+        for task_name in ("_ralph_task", "_trello_task"):
+            owned = getattr(self, task_name)
+            if owned is not None and not owned.done():
+                owned.cancel()
+                # `gather` collects the cancellation instead of re-raising it here,
+                # which `suppress(Exception)` cannot do for `CancelledError`.
+                await asyncio.gather(owned, return_exceptions=True)
+            setattr(self, task_name, None)
         if self._rooms_store_instance is not None:
             with contextlib.suppress(Exception):
                 self._rooms_store_instance.close()
@@ -3715,10 +3781,7 @@ class ServerPort:
             return CommandResult(ok=False, message=text, blocks=(Block("text", text),))
         try:
             contexts = await asyncio.gather(
-                *(
-                    asyncio.to_thread(load_import, *selector.split(":", 1))
-                    for selector in selectors
-                )
+                *(asyncio.to_thread(load_import, *selector.split(":", 1)) for selector in selectors)
             )
         except (OSError, ValueError, KeyError, TypeError) as error:
             text = f"Session import: {error}"
@@ -3732,6 +3795,190 @@ class ServerPort:
             blocks=(Block("text", f"Comparing {providers}."),),
             prompt=comparison_prompt(contexts, budget),
         )
+
+    async def _ralph_command(self, args: str | None) -> CommandResult:
+        """Serve `/ralph`: its loop runs as a task whose lines stream back.
+
+        The loop itself is the shared handler. It is started as a task this port
+        owns rather than awaited here, because a socket command must answer: the
+        progress the Textual card painted arrives as transcript blocks instead.
+
+        Args:
+            args: The task, or `--status` / `--resume`.
+
+        Returns:
+            Where the run is, or that it started.
+        """
+        from novacode_cli.commands.ralph_handler import handle_ralph_status
+
+        state = getattr(self._worker, "session_state", None)
+        if state is None:
+            text = "/ralph needs a live session."
+            return CommandResult(ok=False, message=text, blocks=(Block("text", text),))
+        text_args = (args or "").strip()
+        if text_args in {"--status", "-s"}:
+            written: list[str] = []
+
+            def collect(message: str = "") -> None:
+                written.append(message)
+
+            await handle_ralph_status(state, emit=collect)
+            text = "\n".join(
+                line for line in (_plain_markup(line) for line in written) if line.strip()
+            )
+            return CommandResult(
+                ok=True,
+                message=_first_line(text) or "Ralph",
+                blocks=blocks_from_text(text),
+            )
+        if self._ralph_task is not None and not self._ralph_task.done():
+            text = "Ralph is already running. /ralph --status shows where it is."
+            return CommandResult(ok=True, message=text, blocks=(Block("text", text),))
+        self._ralph_task = asyncio.create_task(self._run_ralph(text_args or None))
+        text = "● Ralph started — progress arrives here. /ralph --status reports where it is."
+        return CommandResult(ok=True, message=text, blocks=(Block("text", text),))
+
+    async def _run_ralph(self, args: str | None) -> None:
+        """Run the shared Ralph loop, reporting each line as a transcript block.
+
+        Args:
+            args: The task, already stripped.
+        """
+        from novacode_cli.commands.ralph_handler import handle_ralph_command
+
+        worker = self._worker
+        state = getattr(worker, "session_state", None)
+
+        def emit(message: str = "") -> None:
+            if message.strip():
+                self.log(Block("text", _plain_markup(message)))
+
+        with contextlib.suppress(Exception):
+            await handle_ralph_command(
+                getattr(worker, "agent", None),
+                state,
+                getattr(worker, "assistant_id", ""),
+                getattr(state, "token_tracker", None),
+                args,
+                emit=emit,
+            )
+
+    async def _trello_command(self, args: str | None) -> CommandResult:
+        """Serve `/trello`: status, stop, or start the board and process cards.
+
+        The board's loop is the shared `trello_watch_loop`, run as a task this
+        port owns. Cards execute through the headless executor, so board work
+        never waits for whichever tab the user happens to be looking at.
+
+        Args:
+            args: `stop`, `status`, or nothing to start the board.
+
+        Returns:
+            The board's URL, its status, or why it did not start.
+        """
+        from novacode_cli.commands import trello_handler
+        from novacode_cli.commands.trello_server import TrelloServer
+
+        state = getattr(self._worker, "session_state", None)
+        if state is None:
+            text = "/trello needs a live session."
+            return CommandResult(ok=False, message=text, blocks=(Block("text", text),))
+        action = (args or "").strip().lower()
+        if action in {"stop", "status"}:
+            handler = (
+                trello_handler._handle_stop if action == "stop" else trello_handler._handle_status
+            )
+            text, blocks = _capture_printing(lambda: handler(state))
+            return CommandResult(ok=True, message=_first_line(text), blocks=blocks)
+        existing = getattr(state, "trello_server", None)
+        if existing is not None and getattr(existing, "is_running", False):
+            text = f"Kanban board already running at {existing.url}"
+            return CommandResult(ok=True, message=text, blocks=(Block("text", text),))
+        server = TrelloServer()
+        try:
+            await server.start()
+        except OSError as error:
+            text = f"Could not start the kanban board: {error}"
+            return CommandResult(ok=False, message=text, blocks=(Block("text", text),))
+        from novacode_cli.commands.trello_remote import connect_telegram
+
+        board_id = str(getattr(state, "session_id", "trello"))
+        server.bind_remote(lambda: connect_telegram(state), board_id)
+        state.trello_server = server
+        self._trello_task = asyncio.create_task(self._trello_watch(server, state))
+        text = (
+            f"≡ Kanban board at {server.url} — drag a card to Processing and the agent "
+            "runs it here, one at a time. /trello stop closes the board."
+        )
+        return CommandResult(ok=True, message=text, blocks=(Block("text", text),))
+
+    async def _trello_watch(self, server: Any, state: Any) -> None:  # noqa: ANN401
+        """Run the shared board loop until the server stops.
+
+        Args:
+            server: The board server this task belongs to.
+            state: The session state that owns it.
+        """
+        from novacode_cli.commands.trello_handler import trello_watch_loop
+        from novacode_cli.ui.execution import execute_task
+
+        worker = self._worker
+
+        def log(message: str = "", _style: str = "") -> None:
+            if message.strip():
+                self.log(Block("text", _plain_markup(message)))
+
+        with contextlib.suppress(Exception):
+            await trello_watch_loop(
+                server,
+                getattr(worker, "agent", None),
+                getattr(worker, "assistant_id", ""),
+                state,
+                getattr(state, "token_tracker", None),
+                execute_task,
+                log,
+            )
+
+    async def _create_command(self, args: str | None) -> CommandResult:
+        """Serve `/create`: the Skills & Agents browser, through its handler.
+
+        Args:
+            args: `stop`, or nothing to start the browser.
+
+        Returns:
+            What the handler printed, which names the URL or says it is stopped.
+        """
+        from novacode_cli.commands.create_handler import handle_create_command
+
+        state = getattr(self._worker, "session_state", None)
+        if state is None:
+            text = "/create needs a live session."
+            return CommandResult(ok=False, message=text, blocks=(Block("text", text),))
+        try:
+            text, blocks = await self._capture_awaiting(lambda: handle_create_command(state, args))
+        except Exception as error:  # noqa: BLE001 - a browser command must not kill the session
+            text = f"/create failed: {error}"
+            return CommandResult(ok=False, message=text, blocks=(Block("text", text),))
+        return CommandResult(ok=True, message=_first_line(text), blocks=blocks)
+
+    async def _capture_awaiting(
+        self, call: Callable[[], Awaitable[object]]
+    ) -> tuple[str, tuple[Block, ...]]:
+        """Await a handler that prints, capturing what it printed.
+
+        Args:
+            call: The coroutine factory to run.
+
+        Returns:
+            Its output as plain text, and the same text as transcript blocks.
+        """
+        from novacode_cli.config.config import console
+
+        printed = io.StringIO()
+        with console.capture() as captured, contextlib.redirect_stdout(printed):
+            await call()
+        text = strip_ansi(captured.get() + printed.getvalue()).strip()
+        return text, blocks_from_text(text)
 
     async def _set_conversation(
         self,

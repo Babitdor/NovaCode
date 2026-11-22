@@ -9,6 +9,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+
 def scan_workspace(project_root: Path | None = None) -> dict[str, Any]:
     """Scan current workspace state including git and filesystem.
 

@@ -75,9 +75,7 @@ class _KernelProcess:
             # A vanished/invalid cwd raises NotADirectoryError with NO path in
             # str(); name the cwd so the failure is diagnosable from the tool
             # result alone.
-            raise RuntimeError(
-                f"Python kernel could not start (cwd {self._cwd!r}): {exc}"
-            ) from exc
+            raise RuntimeError(f"Python kernel could not start (cwd {self._cwd!r}): {exc}") from exc
         return self._proc
 
     async def _kill(self) -> None:

@@ -21,9 +21,10 @@
 | 9   | Parity harness: corpora, gates, ledger automation | **6 of 7 corpora**                         | `uv run python scripts/verify_tui.py`                                                 |
 | 10  | Default flip + release                            | **blocked by 3–9**                         | `uv run pytest tests/test_ledger_gate.py -q`                                          |
 
-Command surface right now: **105 TUI table entries — 94 served** (42 through the shared
-handler, 3 client actions, 20 port screens, 29 port commands) and **11 waiting**
-(8 app-side behaviour, 0 modals, 3 background tasks). `make` is not available on this workstation: the `make
+Command surface right now: **105 TUI table entries — 99 served** (37 through the shared
+handler, 3 client actions, 14 port screens, 45 port commands) and **6 waiting**
+(all app-side behaviour: `claude-plan`, `codex-plan`, `claude-review`, `codex-review`,
+`remote`, `loop`). `make` is not available on this workstation: the `make
 rust-test` / `make rust-frames` targets map to the cargo commands written out below.
 
 ## Approach (unchanged)
@@ -189,9 +190,10 @@ status bar names the theme in force. `/theme` now repaints the client for real.
 
 ## 8. Remaining command handlers (bulk flip)
 
-**Now:** 53 served (42 shared-handler, 3 client actions, 4 port screens, 4 port commands).
-**Waiting:** 52 — 33 app-side, 15 modal (step 3), 4 background (`/council`, `/create`,
-`/ralph`, `/trello`).
+**Now:** 99 served (37 shared-handler, 3 client actions, 14 port screens, 45 port
+commands).
+**Waiting:** 6 — all app-side: `claude-plan`, `codex-plan`, `claude-review`,
+`codex-review`, `remote`, `loop`.
 
 - [x] `/auto-approve` — the first app-side command served natively: `PORT_COMMANDS` in the
       port, evidence `port-command`, wording identical to the Textual handler, and the
@@ -204,6 +206,11 @@ status bar names the theme in force. `/theme` now repaints the client for real.
 - [x] `/tokens` + `/cost` (detail screen), `/copy`/`/copy all` (clipboard action),
       `/steer` (add/list/remove/clear), `/redirect` (cancel + prompt), `/nova` (avatar action).
 - [x] `/export` (HTML write), `/worktree` (list/create/remove with confirm).
+- [x] `/import` and `/compare` — one bounded reference message and one bounded
+      comparison prompt; the pure parts moved to `novacode_cli/session/imported_context.py`
+      so the port does not reach into Textual
+- [x] `/ralph`, `/trello`, `/create` — the background trio, each a port-owned task over
+      the shared handler; the kanban board runs cards through the headless executor
 - [x] `/agent-server` (status/logs/start/stop/restart), `/ci-fix` (fetch → prompt).
 - [x] `/btw` — side question as a background task, answer logged to the transcript.
 - [x] `/reindex` — background rebuild with status events and a log block.
@@ -213,8 +220,9 @@ status bar names the theme in force. `/theme` now repaints the client for real.
 - [ ] Serve the remaining app-side handlers (`/tasks`, `/computer`…) one at a time, each with a test
 - [ ] Keep `git grep -n "NovaApp" novacode_cli/commands/` at zero (the gate asserts it)
 - [ ] Long work (`/voice download`, `/tests`, `/reindex`) → host task + `notice` progress
-- [ ] Blocking handlers (`/trello`, `/create`, `/ralph`, `/council`) → host task, never the
-      command coroutine
+- [x] Blocking handlers (`/trello`, `/create`, `/ralph`) never run on the command
+      coroutine: the port starts a task it owns, streams progress as blocks, and cancels
+      the tasks in `close()`
 - [x] `tests/test_tui_no_textual_in_server.py`: AST + subprocess gate over
       `server/`, `commands/`, `ui/`; it caught `ui/stream_preview.py` reaching into
       `novacode_cli.tui.output_buffer` (now `ui/output_buffer.py`, re-exported)

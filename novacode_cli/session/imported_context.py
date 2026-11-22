@@ -151,9 +151,7 @@ def comparison_prompt(contexts: Sequence[ImportedContext], max_tokens: int) -> s
     agent runtimes are resumed, and the budget is halved per session so two
     transcripts fit where one import would.
     """
-    return COMPARISON_REQUEST + "\n\n".join(
-        context.build(max_tokens) for context in contexts
-    )
+    return COMPARISON_REQUEST + "\n\n".join(context.build(max_tokens) for context in contexts)
 
 
 def transcript(session: ImportedSession) -> str:
@@ -359,6 +357,6 @@ def restore_imported_reference(
             "Imported reference could not be restored; use /context imported compact", exc_info=True
         )
         return [message for message in messages if message.id != MESSAGE_ID]
-    return [
-        message for message in messages if message.id != MESSAGE_ID
-    ] + import_message(context, max_tokens)
+    return [message for message in messages if message.id != MESSAGE_ID] + import_message(
+        context, max_tokens
+    )

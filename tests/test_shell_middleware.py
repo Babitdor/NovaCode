@@ -64,7 +64,7 @@ def test_command_longer_than_5s_runs_to_completion():
     # Regression: the old path killed every command at 5s. A ~6s command must
     # complete successfully, not return a timeout error.
     r = _mw(timeout=30.0)._run_local_command(
-        'python -c "import time; time.sleep(6); print(\'finished\')"',
+        "python -c \"import time; time.sleep(6); print('finished')\"",
         tool_call_id="t",
     )
     assert r.status == "success", r.content

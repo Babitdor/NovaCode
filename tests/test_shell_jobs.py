@@ -176,7 +176,9 @@ def test_execute_tool_is_intercepted_for_background_parity() -> None:
             from langchain_core.tools import StructuredTool
 
             self.tool = StructuredTool.from_function(
-                lambda command: "backend", name="execute", description="Backend shell",
+                lambda command: "backend",
+                name="execute",
+                description="Backend shell",
             )
 
         def override(self, **kwargs):

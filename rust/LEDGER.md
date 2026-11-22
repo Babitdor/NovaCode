@@ -70,7 +70,7 @@ per row. Nothing may be deleted from `novacode_cli/tui/` until every row is
 | `novacode_cli/tui/background_tasks.py` | not-started | Owned by this wave; no ratatui counterpart yet. |
 | `novacode_cli/tui/resume_picker.py` | not-started | Owned by this wave; no ratatui counterpart yet. |
 | `novacode_cli/tui/history_tree_screen.py` | not-started | Owned by this wave; no ratatui counterpart yet. |
-| `novacode_cli/tui/session_import.py` | not-started | Owned by this wave; no ratatui counterpart yet. |
+| `novacode_cli/tui/session_import.py` | server-side | `/import` and `/compare` go through `novacode_cli/session/imported_context.py`, which now owns the parser, the loader, the token budget and `comparison_prompt`; the Textual module keeps `/sessions`, `/context imported` and its screens. Evidence: `tests/test_session_import.py`, `tests/test_tui_import_commands.py`. |
 | `novacode_cli/tui/handoff_screen.py` | not-started | Owned by this wave; no ratatui counterpart yet. |
 | `novacode_cli/tui/pickers.py` | not-started | Owned by this wave; no ratatui counterpart yet. |
 | `novacode_cli/tui/command_center.py` | server-side | The row model, ordering, ages and filters moved to `novacode_cli/ui/command_center.py`; the modal keeps only the Textual widgets and `pane_activity`. |
@@ -82,7 +82,7 @@ per row. Nothing may be deleted from `novacode_cli/tui/` until every row is
 | `novacode_cli/tui/harness.py` | not-started | Owned by this wave; no ratatui counterpart yet. |
 | `novacode_cli/tui/gc_tuning.py` | not-started | Owned by this wave; no ratatui counterpart yet. |
 | `novacode_cli/tui/loop_commands.py` | not-started | Owned by this wave; no ratatui counterpart yet. |
-| `novacode_cli/tui/ralph.py` | not-started | Owned by this wave; no ratatui counterpart yet. |
+| `novacode_cli/tui/ralph.py` | server-side | `/ralph` starts the shared `handle_ralph_command` as a task the port owns and turns its progress lines into transcript blocks; `/ralph --status` collects `handle_ralph_status`. Evidence: `tests/test_tui_background_commands.py`. |
 
 ### Agent surface panels (wave 4)
 
@@ -142,8 +142,8 @@ path with no registry entry of its own.
 | `novacode_cli/commands/claude_plan.py` | — | not-started | No registry entry; reached from `commands.py`, the TUI, or imported as a helper. |
 | `novacode_cli/commands/codex_plan.py` | — | not-started | No registry entry; reached from `commands.py`, the TUI, or imported as a helper. |
 | `novacode_cli/commands/commands.py` | — | server-side | Special-cases `/help`, `/clear`, `/quit`, `/exit` (and 15 more) before the registry; `/help`, `/clear`, `/quit` are routed through `UIPort` in increment 1. |
-| `novacode_cli/commands/create_handler.py` | `create` | not-started | Picked by wave 2 (command handlers + pickers) unless its UI is screen-only. |
-| `novacode_cli/commands/create_server.py` | — | not-started | No registry entry; reached from `commands.py`, the TUI, or imported as a helper. |
+| `novacode_cli/commands/create_handler.py` | `create` | server-side | `/create` awaits `handle_create_command` under console capture and reports its URL or stop text. Evidence: `tests/test_tui_background_commands.py`. |
+| `novacode_cli/commands/create_server.py` | — | server-side | Started by `/create` through `handle_create_command`; the browser opens on the machine running the server. Evidence: `tests/test_tui_background_commands.py`. |
 | `novacode_cli/commands/cron_handler.py` | `cron` | server-side | Dispatched inline by `commands/commands.py` rather than a registry entry, so the port delegates with `_passthrough`; the handler prints what it always printed. Evidence: `tests/test_tui_app_commands.py`. |
 | `novacode_cli/commands/dream_handler.py` | `dream` | not-started | Picked by wave 2 (command handlers + pickers) unless its UI is screen-only. |
 | `novacode_cli/commands/effort_handler.py` | `effort` | not-started | Picked by wave 2 (command handlers + pickers) unless its UI is screen-only. |
@@ -168,7 +168,7 @@ path with no registry entry of its own.
 | `novacode_cli/commands/prompt_handler.py` | `prompt` | server-side | Dispatched inline by `commands/commands.py` rather than a registry entry, so the port delegates with `_passthrough`; the handler prints what it always printed. Evidence: `tests/test_tui_app_commands.py`. |
 | `novacode_cli/commands/provider_usage.py` | — | server-side | `all_usage()` is read off the event loop by `/usage`; each provider read is best-effort, so a failure becomes a message, not a dead session. Evidence: `tests/test_tui_report_screens.py`. |
 | `novacode_cli/commands/ralph_events.py` | — | not-started | No registry entry; reached from `commands.py`, the TUI, or imported as a helper. |
-| `novacode_cli/commands/ralph_handler.py` | `ralph` | not-started | Picked by wave 2 (command handlers + pickers) unless its UI is screen-only. |
+| `novacode_cli/commands/ralph_handler.py` | `ralph` | server-side | `/ralph` runs `handle_ralph_command` as a port-owned task; `emit` becomes transcript blocks and `--status` collects `handle_ralph_status`. Evidence: `tests/test_tui_background_commands.py`. |
 | `novacode_cli/commands/refine_handler.py` | `refine` | not-started | Picked by wave 2 (command handlers + pickers) unless its UI is screen-only. |
 | `novacode_cli/commands/research_handler.py` | `research` | not-started | Picked by wave 2 (command handlers + pickers) unless its UI is screen-only. |
 | `novacode_cli/commands/rootapp_remote.py` | — | not-started | No registry entry; reached from `commands.py`, the TUI, or imported as a helper. |
@@ -180,9 +180,9 @@ path with no registry entry of its own.
 | `novacode_cli/commands/skill_invoke.py` | — | not-started | No registry entry; reached from `commands.py`, the TUI, or imported as a helper. |
 | `novacode_cli/commands/skills_commands.py` | `skills` | not-started | Picked by wave 2 (command handlers + pickers) unless its UI is screen-only. |
 | `novacode_cli/commands/trace_handler.py` | `trace` | not-started | Picked by wave 2 (command handlers + pickers) unless its UI is screen-only. |
-| `novacode_cli/commands/trello_handler.py` | `trello` | not-started | Picked by wave 2 (command handlers + pickers) unless its UI is screen-only. |
+| `novacode_cli/commands/trello_handler.py` | `trello` | server-side | `/trello` starts `TrelloServer` and runs `trello_watch_loop` as a port-owned task with the headless `execute_task`; `stop`/`status` print through their handlers. Evidence: `tests/test_tui_background_commands.py`. |
 | `novacode_cli/commands/trello_remote.py` | — | not-started | No registry entry; reached from `commands.py`, the TUI, or imported as a helper. |
-| `novacode_cli/commands/trello_server.py` | — | not-started | No registry entry; reached from `commands.py`, the TUI, or imported as a helper. |
+| `novacode_cli/commands/trello_server.py` | — | server-side | Started by `/trello` in the port; the board is served over HTTP and the port keeps the process alive. Evidence: `tests/test_tui_background_commands.py`. |
 | `novacode_cli/commands/vision_handler.py` | `vision` | not-started | Picked by wave 2 (command handlers + pickers) unless its UI is screen-only. |
 | `novacode_cli/commands/voice_handler.py` | — | not-started | No registry entry; reached from `commands.py`, the TUI, or imported as a helper. |
 | `novacode_cli/commands/webhook_handler.py` | `webhook` | server-side | Dispatched inline by `commands/commands.py` rather than a registry entry, so the port delegates with `_passthrough`; the handler prints what it always printed. Evidence: `tests/test_tui_app_commands.py`. |
@@ -199,7 +199,7 @@ protocol. Everything below is checked by the test named in its row.
 | Loopback token server, session registry, real `attach` | `server-side` | `novacode_cli/server/transport.py`, `novacode_cli/server/sessions.py`, `tests/test_tui_multi_session.py` |
 | Session host: prompt/cancel/interrupt/command | `server-side` | `novacode_cli/server/host.py`, `tests/test_tui_server_protocol.py` |
 | Command catalogue: all 105 `TUI_COMMANDS` rows, generated, drift-checked | `server-side` | `novacode_cli/server/catalog.py`, `tests/test_tui_command_catalog.py` |
-| Command routing by catalogue (94 served, the rest answer explicitly) | `server-side` | `novacode_cli/ui/port_server.py`, `tests/test_tui_command_port.py` |
+| Command routing by catalogue (99 served, the rest answer explicitly) | `server-side` | `novacode_cli/ui/port_server.py`, `tests/test_tui_command_port.py` |
 | First wave-2 screen: `/context` report + breakdown table | `ported` | `novacode_cli/ui/screen_specs.py`, `tests/test_tui_screen_specs.py`, `rust/nova-tui/src/ui/screen.rs` |
 | `/theme`: generated table, picker, persisted choice, live repaint | `ported` | `novacode_cli/ui/theme_table.py`, `tests/test_tui_theme_command.py`, `rust/nova-tui/src/theme.rs` |
 | `/statusline`: toggle form, persisted field list, boolean answers | `ported` | `novacode_cli/ui/statusline_fields.py`, `tests/test_tui_statusline_command.py`, `rust/nova-tui/tests/screens.rs` |
@@ -221,6 +221,11 @@ protocol. Everything below is checked by the test named in its row.
 | `/resume`: saved-session picker → tab that continues it (`--continue <id>`) in its own folder | `ported` | `novacode_cli/ui/screen_specs.py`, `novacode_cli/ui/port_server.py`, `novacode_cli/server/children.py`, `novacode_cli/server/transport.py`, `tests/test_tui_tree_resume_commands.py`, `tests/test_tui_child_sessions.py`, `rust/nova-tui/tests/screens.rs` |
 | `/command-center`: saved conversations overlaid with live tabs, status filter, attach or resume | `ported` | `novacode_cli/ui/command_center.py`, `novacode_cli/ui/screen_specs.py`, `novacode_cli/ui/port_server.py`, `tests/test_tui_command_center_share.py` |
 | `/share`: tunnel sub-commands through their handler; no argument publishes the export page as a secret gist | `ported` | `novacode_cli/ui/screen_specs.py`, `novacode_cli/ui/port_server.py`, `novacode_cli/commands/share_handler.py`, `tests/test_tui_command_center_share.py` |
+| `/import <provider> <id|path> [--mode]`: one bounded reference message, imported context stored beside the session | `ported` | `novacode_cli/session/imported_context.py`, `novacode_cli/ui/port_server.py`, `tests/test_tui_import_commands.py` |
+| `/compare <provider>:<id> <provider>:<id>`: one bounded prompt returned for the host to run | `ported` | `novacode_cli/session/imported_context.py`, `novacode_cli/ui/port_server.py`, `tests/test_tui_import_commands.py` |
+| `/ralph`: autonomous loop as a port-owned task; lines arrive as blocks, `--status` reports | `ported` | `novacode_cli/commands/ralph_handler.py`, `novacode_cli/ui/port_server.py`, `tests/test_tui_background_commands.py` |
+| `/trello`: board server + watcher as a port-owned task; cards run through the headless executor | `ported` | `novacode_cli/commands/trello_handler.py`, `novacode_cli/commands/trello_server.py`, `novacode_cli/ui/port_server.py`, `tests/test_tui_background_commands.py` |
+| `/create`: Skills & Agents browser through its handler; `stop` closes it | `ported` | `novacode_cli/commands/create_handler.py`, `novacode_cli/ui/port_server.py`, `tests/test_tui_background_commands.py` |
 | `/rewind`: checkpoint list → what to restore → rewritten checkpoint, transcript replayed | `ported` | `novacode_cli/ui/transcript.py`, `novacode_cli/ui/screen_specs.py`, `novacode_cli/ui/port_server.py`, `tests/test_tui_rewind_command.py`, `rust/nova-tui/tests/frames_replay.rs` |
 | App-side commands answered directly: `/computer`, `/artifacts`, `/cowork`, `/reload-plugins`, `/cron`, `/webhook`, `/prompt`, `/ponytail-*` | `ported` | `novacode_cli/ui/port_server.py`, `tests/test_tui_app_commands.py` |
 | `/auto-approve`, `/verbose`, `/stop`: session toggles + a client `cancel` action | `ported` | `novacode_cli/ui/port_server.py`, `tests/test_tui_port_commands.py`, `tests/test_tui_auto_approve_command.py`, `rust/nova-tui/src/state.rs` |

@@ -17,7 +17,9 @@ from novacode_cli.bootstrap import VisionCaptionMiddleware
 from novacode_cli.security.middleware import SecurityMiddleware
 
 
-def test_roster_combines_sources_without_duplicate_tool_routes(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_roster_combines_sources_without_duplicate_tool_routes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     import novacode_cli.agents.core_agent as core
     from novacode_cli.plugins import claude_plugins
 
@@ -29,7 +31,7 @@ def test_roster_combines_sources_without_duplicate_tool_routes(monkeypatch: pyte
     monkeypatch.setattr(core, "build_named_subagents", lambda **_kw: [named])
     monkeypatch.setattr(claude_plugins, "plugin_agent_specs", lambda: [plugin, plugin])
     monkeypatch.setattr(core, "retrieve_async_subagents", lambda: [remote])
-    monkeypatch.setattr(core, "_harden_subagent_specs", lambda specs, *_args: specs)
+    monkeypatch.setattr(core, "_harden_subagent_specs", lambda specs, **_kw: specs)
     result = core._build_subagent_roster(
         assistant_id="nova", tools=[], plugin_specs=[], skill_sources=[]
     )
@@ -232,9 +234,17 @@ async def test_local_graph_has_one_retry_owner_and_preserves_shared_client(name)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(rate_limited)) as client:
         model = ChatOpenAI(api_key="test", max_retries=5, http_async_client=client)
-        spec = _harden_subagent_specs([{
-            "name": name, "description": "probe", "system_prompt": "probe", "tools": [], "model": model,
-        }])[0]
+        spec = _harden_subagent_specs(
+            [
+                {
+                    "name": name,
+                    "description": "probe",
+                    "system_prompt": "probe",
+                    "tools": [],
+                    "model": model,
+                }
+            ]
+        )[0]
         retry = next(m for m in spec["middleware"] if isinstance(m, NovaSubagentRetryMiddleware))
         retry.initial_delay = 0
         retry.jitter = False
@@ -266,10 +276,17 @@ async def test_local_graph_deadline_cancels_provider_wait():
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(stalled)) as client:
         model = ChatOpenAI(api_key="test", max_retries=5, http_async_client=client)
-        spec = _harden_subagent_specs([{
-            "name": "deadline-probe", "description": "probe", "system_prompt": "probe",
-            "tools": [], "model": model,
-        }])[0]
+        spec = _harden_subagent_specs(
+            [
+                {
+                    "name": "deadline-probe",
+                    "description": "probe",
+                    "system_prompt": "probe",
+                    "tools": [],
+                    "model": model,
+                }
+            ]
+        )[0]
         retry = next(m for m in spec["middleware"] if isinstance(m, NovaSubagentRetryMiddleware))
         # Leave enough time for config-reading middleware to reach the transport.
         # The deadline still interrupts a 60-second provider wait, rather than

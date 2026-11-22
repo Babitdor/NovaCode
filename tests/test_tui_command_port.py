@@ -191,7 +191,7 @@ async def test_a_failing_handler_becomes_an_explicit_failure(
     assert "failed" in result.message
 
 
-@pytest.mark.parametrize("name", ["import", "ralph", "loop"])
+@pytest.mark.parametrize("name", ["claude-plan", "remote", "loop"])
 async def test_commands_waiting_on_a_screen_name_themselves(name: str) -> None:
     # Unlanded waves must fail loudly, never pass the text to the agent.
     port, _ = _port()

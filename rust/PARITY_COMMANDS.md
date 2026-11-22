@@ -19,8 +19,8 @@ and Evidence is how that was decided:
 ## Summary
 
 * 105 commands in the TUI table.
-* **96 served** by the socket port today.
-* **9 waiting**, by evidence - app-side: 6, background: 3.
+* **99 served** by the socket port today.
+* **6 waiting**, by evidence - app-side: 6.
 
 ## Worklist
 
@@ -96,9 +96,9 @@ and Evidence is how that was decided:
 | /rewind | screen | yes | port-screen | _run_rewind | - |
 | /hooks | passthrough | yes | shared-command | _run_hooks | - |
 | /browser-use | passthrough | yes | shared-command | _run_browser_use | - |
-| /ralph | passthrough | **no** | background | _run_ralph | - |
-| /trello | passthrough | **no** | background | _run_trello | - |
-| /create | passthrough | **no** | background | _run_create | - |
+| /ralph | passthrough | yes | port-command | _run_ralph | - |
+| /trello | passthrough | yes | port-command | _run_trello | - |
+| /create | passthrough | yes | port-command | _run_create | - |
 | /council | passthrough | yes | port-command | _run_council | - |
 | /clear | client | yes | client-action | _run_clear | - |
 | /tokens | passthrough | yes | port-command | _run_token_view | - |

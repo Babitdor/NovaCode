@@ -134,7 +134,7 @@ def test_unknown_commands_have_no_route() -> None:
     assert served_by("definitely-not-a-command") is False
 
 
-@pytest.mark.parametrize("name", ["import", "ralph", "loop"])
+@pytest.mark.parametrize("name", ["claude-plan", "remote", "loop"])
 def test_unlanded_waves_are_explicitly_not_served(name: str) -> None:
     assert served_by(name) is False
 
@@ -152,13 +152,13 @@ def test_theme_is_served_by_a_port_screen() -> None:
 
 
 @pytest.mark.parametrize("name", ["trello", "create", "ralph"])
-def test_blocking_handlers_wait_for_a_host_task(name: str) -> None:
-    # These open browsers or run subprocesses; they stay unserved until a host
-    # task with progress frames exists, so the command coroutine cannot wedge.
+def test_blocking_handlers_are_served_by_an_owned_task(name: str) -> None:
+    # These open browsers or loop forever, so the port starts a task it owns and
+    # answers immediately; the command coroutine can never wedge on them.
     spec = get(name)
     assert spec is not None
-    assert spec.evidence == "background", spec
-    assert spec.served is False
+    assert spec.served is True, spec
+    assert spec.route == "passthrough", spec
 
 
 def test_the_parity_worklist_lists_every_command() -> None:

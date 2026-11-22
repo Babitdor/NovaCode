@@ -971,11 +971,7 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
         for key in result.update:
             if key in {"messages", "files"}:
                 continue
-            if (
-                key.startswith("_")
-                or key in SUBAGENT_EXCLUDED_KEYS
-                or key in SUBAGENT_CAVEMAN_KEYS
-            ):
+            if key.startswith("_") or key in SUBAGENT_EXCLUDED_KEYS or key in SUBAGENT_CAVEMAN_KEYS:
                 internal_keys.append(key)
             else:
                 raise TypeError("Subagent returned unsupported state mutation.")
