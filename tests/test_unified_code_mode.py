@@ -397,7 +397,6 @@ async def test_repeated_native_file_reads_round_trip_exact_text_through_edits(
 
     from novacode_cli.backends.filesystem import OptimizedFilesystemBackend
     from novacode_cli.tracking.file_tracker import FileTrackerMiddleware
-    from novacode_cli.tracking.loop_guard import LoopGuardMiddleware
 
     # These strings are real source, not presentation markers to strip heuristically.
     path = tmp_path / "guide.md"
@@ -421,7 +420,6 @@ first === again;
         middleware=[
             CodeModeMiddleware(),
             FileTrackerMiddleware(workspace_root=str(tmp_path)),
-            LoopGuardMiddleware(),
             FilesystemMiddleware(
                 backend=OptimizedFilesystemBackend(root_dir=tmp_path, virtual_mode=True)
             ),
@@ -456,66 +454,6 @@ async def test_raw_file_reads_do_not_bypass_display_truncation(tmp_path: Path, s
     message = await invoke(graph)
     assert message.status == "error"
     assert "smaller" in message.content
-
-
-async def test_loop_notes_remain_visible_but_do_not_change_structured_native_data(monkeypatch):
-    from novacode_cli.tracking.loop_guard import LoopGuardMiddleware
-
-    @tool
-    def records() -> str:
-        """Return structured records without presentation notes."""
-        return '{"count":42,"private":"INTERMEDIATE_ONLY"}'
-
-    guard = LoopGuardMiddleware()
-    record = guard._record
-    traces = []
-
-    def traced(signature, result) -> ToolMessage:
-        result = record(signature, result)
-        traces.append(result)
-        return result
-
-    monkeypatch.setattr(guard, "_record", traced)
-    get_policy().tool_tiers["records"] = "allow"
-    graph = scripted(
-        [
-            (
-                "eval",
-                "await tools.call('records'); var selected = await tools.call('records'); "
-                "selected.count;",
-            )
-        ],
-        tools=[records],
-        middleware=[CodeModeMiddleware(), guard],
-    )
-    message = await invoke(graph)
-    assert message.status == "success", message.content
-    assert json.loads(message.content)["result"] == "42"
-    assert "INTERMEDIATE_ONLY" not in message.content
-    assert any("[note: this is the same result" in trace.content for trace in traces)
-
-
-async def test_raw_file_capture_does_not_bypass_repeat_blocks(tmp_path: Path):
-    from deepagents.middleware.filesystem import FilesystemMiddleware
-
-    from novacode_cli.backends.filesystem import OptimizedFilesystemBackend
-    from novacode_cli.tracking.loop_guard import LoopGuardMiddleware
-
-    (tmp_path / "guide.md").write_text("unchanged\n", encoding="utf-8")
-    get_policy().tool_tiers["read_file"] = "allow"
-    graph = scripted(
-        [("eval", "for(var i=0;i<3;i++) await tools.call('read_file', {file_path:'/guide.md'});")],
-        middleware=[
-            CodeModeMiddleware(),
-            LoopGuardMiddleware(threshold=2),
-            FilesystemMiddleware(
-                backend=OptimizedFilesystemBackend(root_dir=tmp_path, virtual_mode=True)
-            ),
-        ],
-    )
-    message = await invoke(graph)
-    assert message.status == "error"
-    assert "LOOP STOPPED" in message.content
 
 
 async def test_parallel_file_pages_keep_their_own_exact_text(tmp_path: Path):
@@ -723,6 +661,51 @@ async def test_runtime_syntax_error_does_not_claim_an_earlier_write_was_skipped(
     assert body["outcomes"][0]["dispatched"]
     assert "no host tool calls" not in body["hint"]
     assert writes == ["/guide.md"]
+
+
+async def test_read_only_failure_does_not_claim_side_effects():
+    """A failed read made no changes — the hint must not demand state verification.
+
+    The generic boilerplate ("verify the state of any interrupted operation")
+    fired on every snippet failure, including plain bad-path reads, and sent
+    the model re-checking harmless completed reads.
+    """
+    @tool
+    def read_file(file_path: str) -> str:
+        """Return the backend's missing-file error."""
+        return f"Error: File '{file_path}' not found"
+
+    get_policy().tool_tiers["read_file"] = "allow"
+    graph = scripted(
+        [("eval", "await tools.call('read_file', {file_path:'/missing.md'}); 'unused'")],
+        tools=[read_file],
+        middleware=[CodeModeMiddleware()],
+    )
+    body = json.loads((await invoke(graph)).content)
+    assert body["failed_calls"] == 1
+    assert "side effects" not in body["hint"]
+    assert "reads" in body["hint"].lower()
+    assert "no state changed" in body["hint"]
+
+
+async def test_timeout_keeps_the_conservative_side_effects_hint():
+    """A timeout can kill a call that never reached the outcomes ledger."""
+    @tool
+    def slow_write(file_path: str) -> str:
+        """A write that outlives the snippet deadline."""
+        import time
+
+        time.sleep(5)
+        return "saved"
+
+    get_policy().tool_tiers["slow_write"] = "allow"
+    graph = scripted(
+        [("eval", "await tools.call('slow_write', {file_path:'/guide.md'}); 'done'")],
+        tools=[slow_write],
+        middleware=[CodeModeMiddleware(call_timeout=1)],
+    )
+    body = json.loads((await invoke(graph)).content)
+    assert "side effects" in body["hint"], "a timed-out call must stay conservative"
 
 
 def test_media_surface_does_not_advertise_ordinary_text_reads_or_mutate_host_tool():

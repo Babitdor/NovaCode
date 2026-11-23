@@ -33,7 +33,6 @@ from novacode_cli.config.plan_mode import (
 from novacode_cli.errors import is_retryable_model_error
 from novacode_cli.hitl.interrupts import get_interrupt_configs
 from novacode_cli.prompts import render_template
-from novacode_cli.tracking.loop_guard import LoopGuardMiddleware
 
 logger = logging.getLogger("nova.plan_agent")
 
@@ -289,10 +288,6 @@ def create_plan_agent_with_config(
             initial_delay=1.0,
         ),
         PlanModeMiddleware(workspace_root=workspace_root),
-        # Break identical-repeat tool loops (same tool + args + result).
-        # The main agent has this guard; plan mode lacked it, so a stuck
-        # model could re-read the same file indefinitely while planning.
-        LoopGuardMiddleware(threshold=3),
         # Keep the SHARED session list reference even when empty — using
         # `or []` would swap in a fresh list and break live steering, since
         # the list is usually empty at plan-agent creation time.

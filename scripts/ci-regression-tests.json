@@ -11,8 +11,6 @@
   "tests/test_scratchpad.py": 2,
   "tests/test_rebuild_keeps_backend.py": 2,
   "tests/test_worktree_tools.py": 12,
-  "tests/test_loop_guard.py": 1,
-  "tests/test_loop_guard_halts.py": 1,
   "tests/test_knowledge_retrieval_improvements.py": 1,
   "tests/test_llm_memory_recall.py": 1,
   "tests/test_tui_animation_rate.py": 7.48,

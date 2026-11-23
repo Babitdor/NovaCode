@@ -63,8 +63,6 @@ def test_declarative_specs_get_retry_vision_security_first_and_no_interrupts():
 
 
 def test_existing_subagent_middleware_is_preserved_after_hardening():
-    from novacode_cli.tracking.loop_guard import LoopGuardMiddleware
-
     sentinel = object()
     specs = [{"name": "x", "system_prompt": "p", "middleware": [sentinel]}]
     out = _harden_subagent_specs(specs)
@@ -74,7 +72,6 @@ def test_existing_subagent_middleware_is_preserved_after_hardening():
     assert isinstance(mw[0], ModelRetryMiddleware)
     assert isinstance(mw[1], VisionCaptionMiddleware)
     assert isinstance(mw[2], SecurityMiddleware)
-    assert isinstance(mw[3], LoopGuardMiddleware)
     # Preserve caller middleware before the new input guard and wire observers.
     assert mw[-5] is sentinel
     assert type(mw[-4]).__name__ == "PromptInjectionMiddleware"

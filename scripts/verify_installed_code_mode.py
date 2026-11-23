@@ -19,7 +19,6 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from novacode_cli.agents.code_mode import CodeModeMiddleware
 from novacode_cli.agents.code_runtime import run_script
 from novacode_cli.backends.filesystem import OptimizedFilesystemBackend
-from novacode_cli.tracking.loop_guard import LoopGuardMiddleware
 
 if TYPE_CHECKING:
     from typing import Any
@@ -69,7 +68,6 @@ async def _verify_read_edit_round_trip() -> None:
             "list[AgentMiddleware[AgentState[Any], None, Any]]",
             [
                 mode,
-                LoopGuardMiddleware(),
                 FilesystemMiddleware(
                     backend=OptimizedFilesystemBackend(root_dir=root, virtual_mode=True)
                 ),

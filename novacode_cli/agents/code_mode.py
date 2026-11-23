@@ -81,6 +81,64 @@ def _error_text(exc: BaseException) -> str:
     return text
 
 
+#: Tools whose dispatched calls can change state — the complement of this set
+#: is read-only, and a failed snippet that only dispatched reads must NOT claim
+#: "side effects remain in place": reads cannot corrupt anything, and that
+#: boilerplate sent models re-verifying harmless completed reads after a plain
+#: bad-path or oversized-page failure. Anything unknown (MCP tools) is assumed
+#: to have side effects.
+_SIDE_EFFECT_TOOLS = frozenset(
+    {
+        "write_file",
+        "edit_file",
+        "execute",
+        "bash",
+        "shell",
+        "powershell",
+        "NotebookEditTool",
+        "notebook_edit",
+        "write_memory",
+        "remember",
+        "forget",
+        "wiki_write",
+        "wiki_update_index",
+        "daemon",
+        "CronCreateTool",
+        "CronDeleteTool",
+        "schedule_wakeup",
+        "send_agent_message",
+        "SendMessage",
+        "send_session_message",
+        "reply_session_message",
+        "task",
+        "start_async_task",
+        "update_async_task",
+        "cancel_async_task",
+        "terminate_task",
+        "restart_task",
+        "computer_action",
+        "image_gen",
+        "skill_manage",
+        "create_artifact",
+        "update_artifact",
+        "EnterWorktreeTool",
+        "ExitWorktreeTool",
+        "handoff_save",
+        "publish_note",
+        "MCPTool",
+    }
+)
+
+
+def _side_effects_possible(outcomes: list[dict]) -> bool:
+    """Whether any dispatched call in *outcomes* could have changed state."""
+    return any(
+        str(step.get("tool_name") or "") in _SIDE_EFFECT_TOOLS
+        for step in outcomes
+        if step.get("dispatched")
+    )
+
+
 def _recovery_hint(exc: Exception, outcomes: list[dict], *, omitted: bool) -> str:
     """Tell the next attempt what it can safely resume."""
     if not outcomes and "SyntaxError" in str(exc):
@@ -91,15 +149,25 @@ def _recovery_hint(exc: Exception, outcomes: list[dict], *, omitted: bool) -> st
             "Escape template backticks once."
         )
     hints = []
-    if _failure_kind(exc) == "timeout" or any("timeout_seconds" in step for step in outcomes):
+    timed_out = _failure_kind(exc) == "timeout" or any(
+        "timeout_seconds" in step for step in outcomes
+    )
+    if timed_out:
         hints.append("Use a smaller snippet or run long local commands as background jobs.")
     if any(step.get("task_id") for step in outcomes):
         hints.append("Check recorded task IDs with wait_for_task or tools.call for get_task_logs.")
-    if any(step.get("dispatched") for step in outcomes) or omitted:
+    # A timeout can interrupt a call that never made it into the outcomes, and
+    # elided outcomes hide what ran — both must keep the conservative boilerplate.
+    if omitted or timed_out or _side_effects_possible(outcomes):
         hints.append(
             "Completed side effects remain in place. Resume unstarted work. "
             "Skip completed steps and verify the state of any "
             "interrupted operation before repeating it."
+        )
+    elif any(step.get("dispatched") for step in outcomes):
+        hints.append(
+            "The dispatched calls were reads — no state changed. "
+            "Fix the reported error and retry."
         )
     elif outcomes or not hints:
         hints.append("No host tools started. Fix the reported error before retrying.")

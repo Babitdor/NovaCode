@@ -474,8 +474,8 @@ async def _iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
     file_op_tracker = get_session_file_op_tracker(assistant_id=assistant_id, backend=backend)
     subagent_tracker = SubagentTracker()
 
-    # Watches the model's own prose for a verbatim-repeat cycle — the failure
-    # LoopGuardMiddleware can't see, because no tool is ever called.
+    # Watches the model's own prose for a verbatim-repeat cycle — a failure
+    # no tool-loop guard can see, because no tool is ever called.
     text_guard = TextRepetitionGuard()
 
     displayed_tool_ids: set[str] = set()
@@ -731,7 +731,7 @@ async def _iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
     # Resuming after an interrupt restarts LangGraph's recursion counter, so a
     # rejection the *policy* resolves on its own (plan-mode block, deny rule) can
     # spin forever: reject -> model retries the same call -> reject -> ... with no
-    # user in the way and no step limit to hit. LoopGuardMiddleware can't see it
+    # user in the way and no step limit to hit. No tool-loop guard sees it
     # (the tool never executes), so cap the streak here.
     auto_reject_streak = 0
     announced_memories: set[tuple[str, str, str, str]] = set()

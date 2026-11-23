@@ -666,6 +666,10 @@ class OptimizedFilesystemBackend(FilesystemBackend):
         file returns a decode error and reads *nothing*. On that error we re-read
         the bytes through a short encoding ladder (``latin-1`` always succeeds),
         returning the same windowed ``ReadResult`` the tool expects.
+
+        A not-found error gains "did you mean" suggestions: bad paths were the
+        most common Code Mode snippet failure, and a bare "File not found" cost
+        a discover round trip before the model could retry.
         """
         result = super().read(file_path, offset, limit)
         if result.error and "codec can't decode" in result.error:
@@ -682,10 +686,80 @@ class OptimizedFilesystemBackend(FilesystemBackend):
                     f"with offset={last_page}, or start again with offset=0."
                 )
             )
+        elif result.error and "not found" in result.error.lower():
+            suggestion = self._path_suggestion(file_path)
+            if suggestion:
+                result = ReadResult(error=f"{result.error}{suggestion}")
         capture = current_read_capture.get()
         if capture is not None:
             capture.record(result)
         return result
+
+    def _path_suggestion(self, file_path: str) -> str:
+        """Closest existing files to a not-found path, or "" when none or too slow.
+
+        Bounded: one ``rg --files`` pass (the same ripgrep grep already uses)
+        with a hard timeout, matched on the requested basename — substring
+        first, then difflib near-misses. Never raises.
+        """
+        import difflib
+
+        try:
+            requested = Path(file_path.replace("\\", "/")).name.strip().lower()
+            if not requested:
+                return ""
+            rg_path = _resolve_ripgrep_path()
+            files: list[str] = []
+            if rg_path is not None:
+                proc = subprocess.run(  # noqa: S603
+                    [rg_path, "--files", "."],
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=3,
+                    check=False,
+                    cwd=str(self.cwd),
+                )
+                if proc.returncode == 0:
+                    files = proc.stdout.splitlines()
+            if not files:
+                return ""
+
+            def to_virtual(relative: str) -> str:
+                relative = relative.replace("\\", "/").removeprefix("./")
+                if self.virtual_mode:
+                    return "/" + relative
+                return relative
+
+            basenames = [(relative, Path(relative).name.lower()) for relative in files[:50_000]]
+            starts = [relative for relative, base in basenames if base.startswith(requested)]
+            contains = [
+                relative
+                for relative, base in basenames
+                if requested in base and relative not in starts
+            ]
+            close_names = difflib.get_close_matches(
+                requested, [base for _, base in basenames], n=3, cutoff=0.75
+            )
+            close = [
+                relative
+                for relative, base in basenames
+                if base in close_names and relative not in starts and relative not in contains
+            ]
+            ordered: list[str] = []
+            for group in (starts, contains, close):
+                for relative in group:
+                    if relative not in ordered:
+                        ordered.append(relative)
+                if len(ordered) >= 3:
+                    break
+            if not ordered:
+                return ""
+            shown = ", ".join(f"`{to_virtual(relative)}`" for relative in ordered[:3])
+            return f" Closest matches: {shown}."
+        except Exception:  # noqa: BLE001 — a suggestion must never break the read
+            return ""
 
     def _read_fallback_encoding(
         self, file_path: str, offset: int, limit: int

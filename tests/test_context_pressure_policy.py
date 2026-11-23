@@ -53,7 +53,7 @@ def test_disabled_auto_compact_never_requests_compaction() -> None:
     assert not d.disable_auto_compact
 
 
-def test_warning_threshold_resets_the_loop_guard() -> None:
+def test_warning_threshold_does_not_request_compaction() -> None:
     d = assess_pressure(CONTEXT_WARNING_THRESHOLD * 100)
     assert d.compacted_last_turn is False
 

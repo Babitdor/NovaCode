@@ -1414,14 +1414,20 @@ class McpScreen(ModalScreen[None]):
         except Exception as exc:
             app.notify(f"MCP {name}: retry failed ({type(exc).__name__}).", severity="warning")
         finally:
-            if self.is_mounted:
+            if self.is_mounted and self.is_attached:
                 button.disabled = False
                 self._reload()
 
     def _reload(self) -> None:
         """Refresh both configured servers and presets lists (non-blocking)."""
-        # Configured servers
-        configured = self.query_one("#mcp-configured", OptionList)
+        try:
+            configured = self.query_one("#mcp-configured", OptionList)
+            presets_list = self.query_one("#mcp-presets", OptionList)
+        except NoMatches:
+            # The screen was dismissed while an async worker awaited —
+            # `is_mounted` can still read True during teardown, but the DOM is
+            # already gone. There is nothing left to refresh.
+            return
         configured.clear_options()
         self._config_names = []
         try:
@@ -1514,7 +1520,6 @@ class McpScreen(ModalScreen[None]):
         self._update_toggle_button(configured.highlighted)
 
         # Available presets
-        presets_list = self.query_one("#mcp-presets", OptionList)
         presets_list.clear_options()
         self._preset_ids = []
         self._presets = {}
@@ -1641,6 +1646,8 @@ class McpScreen(ModalScreen[None]):
         except Exception:  # noqa: BLE001 - OAuth errors may contain secrets or callback codes
             pass
         finally:
+            if not (self.is_mounted and self.is_attached):
+                return
             self._reload()
             self.query_one("#mcp-hint", Static).update(status)
             button.disabled = False
@@ -1665,12 +1672,14 @@ class McpScreen(ModalScreen[None]):
         try:
             tools = await list_server_tools(name, config)
         except Exception:  # noqa: BLE001 - a server that cannot be reached is reported, not raised
-            hint.update(
-                Text(f"Could not list {name}'s tools. Is the server reachable?", style="red")
-            )
+            if self.is_mounted and self.is_attached:
+                hint.update(
+                    Text(f"Could not list {name}'s tools. Is the server reachable?", style="red")
+                )
             return
         if not tools:
-            hint.update(Text(f"{name} offers no tools.", style="yellow"))
+            if self.is_mounted and self.is_attached:
+                hint.update(Text(f"{name} offers no tools.", style="yellow"))
             return
         chosen = await self.app.push_screen_wait(McpToolsScreen(name, tools, config.tools))
         if chosen is None:
@@ -1691,7 +1700,8 @@ class McpScreen(ModalScreen[None]):
             except Exception:  # noqa: BLE001 - saved; the next session picks it up
                 status = Text(f"{name}: saved. Restart the session to apply it.", style="yellow")
         self._reload()
-        hint.update(status)
+        if self.is_mounted and self.is_attached:
+            hint.update(status)
 
     @work
     async def _toggle_highlighted(self) -> None:

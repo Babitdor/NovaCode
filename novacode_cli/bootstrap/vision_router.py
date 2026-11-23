@@ -62,12 +62,15 @@ _MIME_BY_SUFFIX: dict[str, str] = {
 
 #: Appended to every failure placeholder. Without it the model is handed a
 #: bracketed note about an image it cannot see and improvises — in practice it
-#: writes a script to decode the file and read raw pixel values, which answers
-#: nothing and costs a tool round-trip. Saying so explicitly stops that.
+#: writes a script to decode the file and read raw pixel values, or defers the
+#: image-dependent work to "later" and never asks. Both waste the turn: say
+#: what to do NOW, and make dependent work wait on the fix.
 _NO_PIXEL_ARCHAEOLOGY = (
     " Do not try to inspect the image yourself (no pixel decoding, no PIL/ffmpeg "
-    "scripts) — it cannot be read that way. Ask the user what it shows, or "
-    "suggest `/vision on` if their model can see images."
+    "scripts) — it cannot be read that way. Do not defer image-dependent work to "
+    "later in this task. Instead, ask the user RIGHT NOW to either run `/vision on` "
+    "(their model may see images directly) or describe the image in text, and "
+    "continue only with the work that does not depend on it."
 )
 
 # Placeholder captions returned (instead of leaking an image) when vision fails.

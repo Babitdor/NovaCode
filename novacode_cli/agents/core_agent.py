@@ -833,7 +833,6 @@ def _harden_subagent_specs(
     )
     from novacode_cli.errors import is_retryable_model_error
     from novacode_cli.security.middleware import SecurityMiddleware
-    from novacode_cli.tracking.loop_guard import LoopGuardMiddleware
 
     _guardrails = NovaConfig().get_guardrails()
 
@@ -928,7 +927,6 @@ def _harden_subagent_specs(
         has_vision = any(type(m).__name__ == "VisionCaptionMiddleware" for m in existing)
         has_security = any(type(m).__name__ == "SecurityMiddleware" for m in existing)
         has_curation = any(type(m).__name__ == "SkillCurationMiddleware" for m in existing)
-        has_loopguard = any(type(m).__name__ == "LoopGuardMiddleware" for m in existing)
         has_async = any(type(m).__name__ == "AsyncSubAgentMiddleware" for m in existing)
         has_pii = any(type(m).__name__ == "PIIMiddleware" for m in existing)
         has_steering = any(type(m).__name__ == "SteeringMiddleware" for m in existing)
@@ -976,12 +974,6 @@ def _harden_subagent_specs(
             mw_to_add.append(VisionCaptionMiddleware(main_model_supports_images=child_images))
         if not has_security:
             mw_to_add.append(SecurityMiddleware())
-        # Break identical-repeat tool loops inside subagents too. Only the MAIN
-        # agent had a LoopGuard, so a stuck subagent (e.g. re-reading the same
-        # SKILL.md forever) looped unguarded until its recursion limit. Fresh
-        # instance per spec — the guard keeps per-instance history state.
-        if not has_loopguard:
-            mw_to_add.append(LoopGuardMiddleware(threshold=3))
         # Apply the same PII rules inside subagents: their tool results and
         # model text also reach the parent and the UI. Fresh instances per spec;
         # the main agent remains the sole HITL boundary.
@@ -1684,7 +1676,6 @@ def _build_middleware_stack(
     from novacode_cli.security.middleware import SecurityMiddleware
     from novacode_cli.shell import ShellMiddleware
     from novacode_cli.tracking.file_tracker import FileTrackerMiddleware
-    from novacode_cli.tracking.loop_guard import LoopGuardMiddleware
 
     # Hermes learning loop is opt-in (persisted config). Off by default so the
     # Task-end review is enabled unless the user explicitly turns learning off.
@@ -1811,11 +1802,6 @@ def _build_middleware_stack(
             # read in full first. Local mode only; sandbox paths are not on disk here.
             workspace_root=str(workspace_root) if sandbox is None else None,
         ),
-        # Break stuck tool-call loops: if the model fires the same tool with the
-        # same args and gets the same result 3× in a row (e.g. a grep that keeps
-        # returning "no matches"), short-circuit the next identical call with a
-        # nudge to change approach instead of letting it spin indefinitely.
-        LoopGuardMiddleware(threshold=3),
         # Rubric self-evaluation (deepagents). Dormant unless a `rubric` is passed
         # on the invoke state — set via `/goal rubric <criteria>`. When present, a
         # grader sub-agent scores the finished run against the criteria and, on a
