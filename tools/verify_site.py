@@ -260,15 +260,40 @@ def main():
             motion_page.wait_for_function("document.documentElement.classList.contains('has-motion')", timeout=6000)
             assert motion_page.evaluate("!!window.gsap && !!window.ScrollTrigger")
             assert motion_page.evaluate("document.documentElement.classList.contains('lenis')")
-            assert motion_page.evaluate("getComputedStyle(document.querySelector('[data-cursor]')).display === 'block'")
+            assert motion_page.evaluate("document.documentElement.classList.contains('lenis')")
             motion_page.goto(base)
             motion_page.wait_for_function("() => !document.querySelector('#boot')", timeout=6000)
             motion_page.wait_for_function("document.documentElement.classList.contains('has-motion')", timeout=6000)
             motion_page.wait_for_function("() => !document.documentElement.classList.contains('enter')", timeout=6000)
             assert motion_page.evaluate("[...document.querySelectorAll('[data-enter]')].every(e => getComputedStyle(e).opacity === '1')")
+            # A struck chapter carries its engraving hairline (the sheen hook).
+            motion_page.evaluate("document.querySelector('.divider').scrollIntoView()")
+            motion_page.wait_for_timeout(1100)
+            assert motion_page.evaluate("document.querySelector('.divider').classList.contains('struck')")
             assert motion_page.evaluate("document.querySelectorAll('.mo-word').length > 40")
-            # The record strip pins and runs sideways on a wide screen.
-            assert motion_page.evaluate("document.querySelector('[data-horizontal-gallery]').classList.contains('rail-pinned')")
+            # The record rail is a native scroller: it must run sideways inside its own box,
+            # never translate out of the content column, and its progress hairline must follow.
+            motion_page.evaluate("document.getElementById('record').scrollIntoView({block:'center'})")
+            motion_page.wait_for_timeout(600)
+            motion_page.hover('[data-horizontal-track]')
+            for _ in range(6):
+                motion_page.mouse.wheel(0, 600)
+                motion_page.wait_for_timeout(120)
+            motion_page.wait_for_timeout(400)
+            rail = motion_page.evaluate(
+                "(() => { const t = document.querySelector('[data-horizontal-track]');"
+                " const r = t.getBoundingClientRect(); const w = document.querySelector('.rail-wrap').getBoundingClientRect();"
+                " return {left: t.scrollLeft, x: new DOMMatrixReadOnly(getComputedStyle(t).transform).m41,"
+                " boxLeft: Math.round(r.left), wrapLeft: Math.round(w.left),"
+                " p: getComputedStyle(document.querySelector('.rail-progress i')).getPropertyValue('--p')}; })()"
+            )
+            assert not motion_page.evaluate("!!document.querySelector('.pin-spacer')"), 'rail must not pin'
+            assert rail['x'] == 0, f"rail must not translate out of its column (x={rail['x']})"
+            assert abs(rail['boxLeft'] - rail['wrapLeft']) <= 1, rail
+            assert rail['left'] > 200, f"rail did not scroll: {rail['left']}"
+            assert float(rail['p'].strip() or 0) > 0.05, f"progress hairline not following: {rail['p']}"
+            # The wheel was bound to the rail while hovered; move off it and run to the page end.
+            motion_page.mouse.move(4, 4)
             last = -1
             for _ in range(40):
                 seen = motion_page.evaluate("Math.round(scrollY)")
@@ -278,17 +303,12 @@ def main():
                 motion_page.mouse.wheel(0, 800)
                 motion_page.wait_for_timeout(220)
             motion_page.wait_for_timeout(1200)
-            assert motion_page.evaluate(
-                "(() => { const t = document.querySelector('[data-horizontal-track]');"
-                " const x = new DOMMatrixReadOnly(getComputedStyle(t).transform).m41;"
-                " return x < -200; })()"
-            )
             assert motion_page.evaluate("[...document.querySelectorAll('[data-fade]')].every(e => getComputedStyle(e).opacity > 0.9)")
             assert motion_page.evaluate("[...document.querySelectorAll('.mo-word')].every(e => getComputedStyle(e).opacity > 0.9)")
             assert motion_page.evaluate("[...document.querySelectorAll('[data-image-reveal]')].every(e => /inset\\(0px(\\)| 0px 0%)/.test(getComputedStyle(e).clipPath) || getComputedStyle(e).clipPath === 'none')")
             assert not motion_errors, motion_errors
             motion_context.close()
-            results['checks'].append('Motion layer settles every reveal, clip and word; record strip pins and runs sideways; Lenis and cursor live')
+            results['checks'].append('Motion layer settles every reveal, clip and word; the record rail scrolls natively inside its column; chapters strike and fill')
 
             nojs = browser.new_context(java_script_enabled=False)
             off = nojs.new_page()

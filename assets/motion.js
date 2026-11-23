@@ -1,11 +1,13 @@
 /* Motion: GSAP + ScrollTrigger on top of the self-hosted Lenis ticker.
    - Nothing runs without GSAP or under prefers-reduced-motion, and every hidden
-     state is set from here after the gate, so the sheet is complete with script
+     state is set from here after the gate, so the mint is complete with script
      blocked, reduced motion, or a failed script fetch.
-   - Markup API: data-motion-text="words", data-image-reveal, data-magnetic and the
-     [data-cursor] element. [data-fade] and [data-draw] keep their old meaning and now settle
-     through ScrollTrigger.
-   - Reveals run once. The release strip outside this file stays a native
+   - The verb is strike and settle: every entrance lands as a die press — a fast
+     press, one tiny rebound, then still — and big plates press slower than chips.
+   - Markup API: data-motion-text="words", data-image-reveal, data-magnetic.
+     [data-fade] and [data-draw] settle through ScrollTrigger; a struck chapter
+     divider gets .struck so its engraving hairline can fill (CSS owns the sheen).
+   - Reveals run once. The record rail outside this file stays a native
      scroller; pinning it would fight touch, keyboard and the agent view. */
 (function () {
   "use strict";
@@ -39,78 +41,43 @@
   syncSmoothScroll();
   document.addEventListener("themechange", function () { ST.refresh(); });
 
-  /* ---- entrance: the cover plate is already developing, so the type lands after it in reading
-     order — headline, claim rule, copy, actions, then the title block's rows */
+  /* ---- the die press: one press, one rebound, then still. The hero types land after the
+     picture starts developing, in reading order; the same press, slower, strikes a chapter. */
+  function press(targets, vars) {
+    vars = vars || {};
+    var rebound = vars.rebound || 2;
+    return gsap.timeline()
+      .to(targets, { y: rebound, autoAlpha: 1, duration: vars.press || 0.55, stagger: vars.stagger || 0.06, ease: "power4.in" })
+      .to(targets, { y: 0, duration: vars.settle || 0.5, stagger: vars.stagger || 0.06, ease: "power3.out" }, "-=" + (vars.overlap || 0.28));
+  }
   var hero = document.querySelector(".hero");
   if (hero) {
     var enter = gsap.utils.toArray("[data-enter]").filter(function (el) { return hero.contains(el); });
     if (enter.length) {
-      gsap.set(enter, { y: 22, autoAlpha: 0 });
+      gsap.set(enter, { y: -18, autoAlpha: 0 });
       gsap.timeline({ delay: 0.14, onComplete: function () { doc.classList.remove("enter"); } })
-        .to(enter, { y: 0, autoAlpha: 1, duration: 1.05, stagger: 0.09, ease: "power4.out" });
+        .add(press(enter, { press: 0.55, stagger: 0.07 }));
     } else {
       doc.classList.remove("enter");
     }
   }
 
-  /* ---- the record strip: on a wide screen the sheet pins and the scroll runs the strip
-     sideways. Everything narrower, reduced motion and the agent view keep the native scroller,
-     and a card reached by Tab is scrolled into view instead of being left off-screen. */
-  var gallery = document.querySelector("[data-horizontal-gallery]");
-  var track = gallery && gallery.querySelector("[data-horizontal-track]");
-  if (gallery && track) {
-    var galleryMM = gsap.matchMedia();
-    var paintBar = function (self) {
-      var bar = gallery.querySelector(".rail-progress i");
-      var wrap = gallery.querySelector(".rail-wrap");
-      if (bar) bar.style.setProperty("--p", self.progress.toFixed(3));
-      if (wrap) {
-        wrap.classList.toggle("at-end", self.progress > 0.995);
-        wrap.classList.toggle("scrolled", self.progress > 0.004);
-      }
-    };
-    var buildGallery = function () {
-      if (doc.getAttribute("data-view") === "agent") return;
-      galleryMM.add("(min-width: 1024px)", function () {
-        gallery.classList.add("rail-pinned");
-        var travel = function () {
-          return Math.max(0, track.scrollWidth - track.parentElement.clientWidth);
-        };
-        var tween = gsap.to(track, {
-          x: function () { return -travel(); }, ease: "none",
-          scrollTrigger: {
-            trigger: gallery, start: "top top",
-            end: function () { return "+=" + travel(); },
-            scrub: 1, pin: true, anticipatePin: 1, invalidateOnRefresh: true,
-            onUpdate: paintBar
-          }
-        });
-        var st = tween.scrollTrigger;
-        function focusCard(e) {
-          var card = e.target.closest && e.target.closest("li");
-          if (!card) return;
-          var r = card.getBoundingClientRect();
-          if (r.left >= 0 && r.right <= window.innerWidth) return;
-          var p = Math.min(1, Math.max(0, card.offsetLeft / (travel() || 1)));
-          var y = st.start + p * (st.end - st.start);
-          if (lenis) lenis.scrollTo(y, { duration: 0.8 }); else window.scrollTo(0, y);
-        }
-        gallery.addEventListener("focusin", focusCard);
-        return function () {
-          gallery.removeEventListener("focusin", focusCard);
-          gallery.classList.remove("rail-pinned");
-          gsap.set(track, { clearProps: "transform" });
-          tween.kill();
-        };
-      });
-    };
-    buildGallery();
-    document.addEventListener("viewchange", function () {
-      galleryMM.revert();
-      buildGallery();
-      ST.refresh();
+  /* ---- the record rail is a native horizontal scroller (index.html owns the wheel mapping and
+     the progress hairline). It is deliberately NOT pinned: translating a scroll container moves
+     its own clipping box, so cards slid out of the content column and lost their edges. The only
+     thing motion adds here is bringing a tabbed card into view inside the scroller. */
+  (function () {
+    var rail = document.querySelector("[data-horizontal-track]");
+    if (!rail) return;
+    rail.addEventListener("focusin", function (e) {
+      var card = e.target.closest && e.target.closest("li");
+      if (!card) return;
+      var r = card.getBoundingClientRect(), v = rail.getBoundingClientRect();
+      if (r.left >= v.left && r.right <= v.right) return;
+      var reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      rail.scrollTo({ left: card.offsetLeft - rail.offsetLeft, behavior: reduce ? "auto" : "smooth" });
     });
-  }
+  })();
 
   /* The screenshot stays still while each explanation selects its source region. */
   gsap.utils.toArray(".tutorial").forEach(function (tutorial) {
@@ -150,6 +117,18 @@
     });
   });
 
+  /* ---- the strike: a chapter plate lands as a die press, slower than the hero chips,
+     then its engraving fills — the hairline under the headline draws and holds */
+  gsap.utils.toArray(".divider").forEach(function (divider) {
+    var inner = divider.querySelector(".wrap");
+    if (!inner) return;
+    var tl = gsap.timeline({ scrollTrigger: { trigger: divider, start: "top 82%", once: true } });
+    gsap.set(inner, { y: -26, autoAlpha: 0 });
+    tl.add(press(inner, { press: 0.7, settle: 0.55, stagger: 0.08 }));
+    tl.add(function () { divider.classList.add("struck"); });
+  });
+  /* the slow sheen: the struck headline's hairline breathes, nothing else idles */
+
   /* ---- type: whole words rise out of their own mask, in reading order */
   function splitWords(el) {
     if (el.getAttribute("data-split") || el.children.length) return null;
@@ -172,20 +151,22 @@
   gsap.utils.toArray("[data-motion-text]").forEach(function (el) {
     var words = splitWords(el);
     if (!words || !words.length) return;
-    gsap.fromTo(words, { yPercent: 108, autoAlpha: 0 }, {
-      yPercent: 0, autoAlpha: 1, duration: 0.95, stagger: 0.055, ease: "power4.out",
+    gsap.fromTo(words, { yPercent: 112, autoAlpha: 0 }, {
+      yPercent: 0, autoAlpha: 1, duration: 0.75, stagger: 0.05, ease: "power4.inOut",
       scrollTrigger: { trigger: el, start: "top 84%", once: true }
     });
   });
 
-  /* ---- blocks: [data-fade] settles as it enters, [data-draw] rules draw left to right */
+  /* ---- blocks: [data-fade] presses in as it enters, [data-draw] rules draw left to right */
   var fades = gsap.utils.toArray("[data-fade]");
   if (fades.length) {
-    gsap.set(fades, { y: 26, autoAlpha: 0 });
+    gsap.set(fades, { y: -14, autoAlpha: 0 });
     ST.batch(fades, {
       start: "top 88%", once: true,
       onEnter: function (batch) {
-        gsap.to(batch, { y: 0, autoAlpha: 1, duration: 0.95, stagger: 0.07, overwrite: true });
+        var tl = gsap.timeline({ overwrite: true });
+        tl.to(batch, { y: 2, autoAlpha: 1, duration: 0.5, stagger: 0.06, ease: "power4.in" })
+          .to(batch, { y: 0, duration: 0.42, ease: "power3.out" }, "-=0.26");
       }
     });
   }
@@ -204,15 +185,6 @@
     if (img) tl.fromTo(img, { scale: 1.07 }, { scale: 1, duration: 1.2, ease: "power4.out" }, 0);
   });
 
-  /* ---- chapter numerals drift against the sheet: the one scroll-linked scene on the page,
-     decorative (aria-hidden), transform-only, 8% of its own height */
-  gsap.utils.toArray(".divider .num").forEach(function (num) {
-    gsap.fromTo(num, { yPercent: 6 }, {
-      yPercent: -6, ease: "none",
-      scrollTrigger: { trigger: num.closest(".divider"), start: "top bottom", end: "bottom top", scrub: 1.2 }
-    });
-  });
-
   /* ---- magnetic: the two controls worth aiming at lean toward the pointer */
   if (fine) {
     gsap.utils.toArray("[data-magnetic]").forEach(function (el) {
@@ -228,21 +200,6 @@
     });
   }
 
-  /* ---- cursor: a ring that widens over anything the visitor can act on. Atmosphere only;
-     it never replaces the native pointer and it disappears on touch. */
-  var cursor = document.querySelector("[data-cursor]");
-  if (cursor && !fine) {
-    cursor.remove();
-  } else if (cursor) {
-    var cx = gsap.quickTo(cursor, "x", { duration: 0.35, ease: "power3.out" });
-    var cy = gsap.quickTo(cursor, "y", { duration: 0.35, ease: "power3.out" });
-    document.addEventListener("pointermove", function (e) { cx(e.clientX); cy(e.clientY); });
-    document.addEventListener("pointerover", function (e) {
-      var hot = e.target.closest && e.target.closest("a,button,summary,input,[data-magnetic]");
-      gsap.to(cursor, { scale: hot ? 1.9 : 1, duration: 0.35, ease: "power3.out" });
-    });
-  }
-
   function syncMotionMode() {
     syncSmoothScroll();
     var agent = doc.getAttribute("data-view") === "agent";
@@ -254,4 +211,99 @@
   document.addEventListener("viewchange", syncMotionMode);
   syncMotionMode();
   window.addEventListener("load", function () { ST.refresh(); });
+})();
+
+/* ---- the starfield: its own gate, because it must also work without GSAP and
+   with reduced motion on (then it builds once and never moves). Pointer movement
+   parallaxes each star by its depth, the nearest star takes a halo, and a click
+   sends a ring out from that point. Pure transforms, one rAF loop, passive
+   listeners; nothing here paints on scroll. */
+(function () {
+  var field = document.querySelector("[data-starfield]");
+  if (!field) return;
+
+  var calm = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  var count = window.innerWidth < 760 ? 40 : 110;
+  var stars = [];
+  var mx = 0, my = 0, cx = 0, cy = 0, frame = 0;
+
+  function build() {
+    field.textContent = "";
+    stars = [];
+    var w = field.clientWidth || 600, h = field.clientHeight || 400;
+    for (var i = 0; i < count; i++) {
+      var el = document.createElement("span");
+      var depth = 0.25 + Math.random() * 0.75;
+      el.className = "star" + (i % 4 === 0 ? " star--cool" : "") + (depth > 0.72 ? " star--deep" : "");
+      el.style.width = el.style.height = (1.4 + depth * 1.2).toFixed(1) + "px";
+      el.style.opacity = (0.32 + depth * 0.5).toFixed(2);
+      var x = Math.random() * w, y = Math.random() * h;
+      el.style.transform = "translate3d(" + x.toFixed(1) + "px," + y.toFixed(1) + "px,0)";
+      field.appendChild(el);
+      stars.push({ el: el, x: x, y: y, d: depth });
+    }
+  }
+
+  function paint() {
+    frame = 0;
+    cx += (mx - cx) * 0.07;
+    cy += (my - cy) * 0.07;
+    for (var i = 0; i < stars.length; i++) {
+      var s = stars[i], k = 16 * s.d;
+      s.el.style.transform = "translate3d(" + (s.x - cx * k).toFixed(1) + "px," + (s.y - cy * k).toFixed(1) + "px,0)";
+    }
+    if (Math.abs(mx - cx) > 0.002 || Math.abs(my - cy) > 0.002) queue();
+  }
+  function queue() { if (!frame) frame = requestAnimationFrame(paint); }
+
+  build();
+  if (calm) return;
+
+  var lit = -1;
+  function light(px, py) {
+    var next = -1, best = 130 * 130;
+    for (var i = 0; i < stars.length; i++) {
+      var s = stars[i], dx = px - s.x, dy = py - s.y, dist = dx * dx + dy * dy;
+      if (dist < best) { best = dist; next = i; }
+    }
+    if (next === lit) return;
+    if (lit > -1) stars[lit].el.classList.remove("star--halo");
+    if (next > -1) stars[next].el.classList.add("star--halo");
+    lit = next;
+  }
+
+  window.addEventListener("pointermove", function (e) {
+    mx = (e.clientX / window.innerWidth - 0.5) * 2;
+    my = (e.clientY / window.innerHeight - 0.5) * 2;
+    light(e.clientX, e.clientY);
+    queue();
+  }, { passive: true });
+
+  document.addEventListener("mouseleave", function () { mx = my = 0; queue(); });
+
+  window.addEventListener("click", function (e) {
+    // a click on a real control is the visitor's business, not the field's
+    if (e.target.closest && e.target.closest("a,button,summary,input,textarea,select")) return;
+    var px = e.clientX, py = e.clientY;
+    var ring = document.createElement("span");
+    ring.className = "starwave";
+    ring.style.left = px + "px";
+    ring.style.top = py + "px";
+    field.appendChild(ring);
+    ring.addEventListener("animationend", function () { ring.remove(); });
+    for (var i = 0; i < stars.length; i++) {
+      var s = stars[i], dx = s.x - px, dy = s.y - py;
+      if (dx * dx + dy * dy < 90000) { (function (el) {
+        if (el.classList.contains("star--halo")) return;
+        el.classList.add("star--halo");
+        setTimeout(function () { el.classList.remove("star--halo"); }, 900);
+      })(s.el); }
+    }
+  });
+
+  var resize;
+  window.addEventListener("resize", function () {
+    clearTimeout(resize);
+    resize = setTimeout(build, 220);
+  });
 })();

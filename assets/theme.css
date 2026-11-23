@@ -1,4 +1,5 @@
-/* The palette prints behind a travelling rule; returning to paper reverses the pass. */
+/* The palette is struck behind a travelling rule; returning to paper reverses the pass.
+   Names are bound by tools/verify_theme.py — keep theme-sheet-*/theme-rule-*/theme-scan. */
 ::view-transition{pointer-events:none}
 ::view-transition-group(root){animation:none}
 ::view-transition-old(root){animation:none;mix-blend-mode:normal}

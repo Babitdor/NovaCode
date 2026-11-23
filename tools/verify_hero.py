@@ -1,7 +1,7 @@
-"""Browser proof for the hero's signature element, the measure. Run: python -m tools.verify_hero.
+"""Browser proof for the hero's signature element, the engraved headline. Run: python -m tools.verify_hero.
 
-The hero claims a width in pixels, so the check recomputes that width from the
-rendered type instead of trusting the page's own number.
+The mint's hero sets its claim in Instrument Serif over a brass hairline, so the
+check proves the engraved face is live, the rule draws, and nothing hides.
 """
 from functools import partial
 from http.server import ThreadingHTTPServer
@@ -13,8 +13,7 @@ from tools.verify_site import Handler, ROOT
 
 # Independent measurement: per-line left/right bounds of the claim's text.
 PROBE = """(() => {
-  const m = document.querySelector('[data-measure]');
-  const h1 = m.querySelector('h1');
+  const h1 = document.querySelector('#what');
   const range = document.createRange();
   range.selectNodeContents(h1);
   const lines = new Map();
@@ -25,17 +24,14 @@ PROBE = """(() => {
     lines.set(key, {left: Math.min(box.left, r.left), right: Math.max(box.right, r.right)});
   }
   const widths = [...lines.values()].map(b => b.right - b.left);
-  const line = getComputedStyle(m.querySelector('.measure-line'));
+  const rule = document.querySelector('.claim-line');
   const cs = getComputedStyle(h1);
   return {
     lines: widths.length,
     widest: Math.max(...widths),
-    css: parseFloat(m.style.getPropertyValue('--w')),
-    number: m.querySelector('.measure-num').textContent.trim(),
-    ruleScale: new DOMMatrix(line.transform).a,
-    ruleWidth: m.querySelector('.measure-line').getBoundingClientRect().width,
+    ruleScale: rule ? new DOMMatrix(getComputedStyle(rule).transform).a : 0,
     family: cs.fontFamily,
-    stretch: cs.fontStretch,
+    chips: document.querySelectorAll('.assay span').length,
     overflowX: document.documentElement.scrollWidth - window.innerWidth,
     boot: (() => { const b = document.querySelector('#boot');
       return !!b && getComputedStyle(b).display !== 'none'; })(),
@@ -51,15 +47,13 @@ def hero(page, label):
     page.wait_for_timeout(900)
     m = page.evaluate(PROBE)
     assert not m['boot'], f'{label}: boot overlay still covering the page'
-    assert 'Archivo' in m['family'], f'{label}: display face not loaded, {m["family"]}'
-    assert abs(float(m['stretch'].rstrip('%')) - 112) < 1, f'{label}: stretch {m["stretch"]}'
-    assert m['lines'] >= 2, f'{label}: claim collapsed to {m["lines"]} line(s)'
-    assert abs(m['widest'] - m['css']) <= 1.5, f'{label}: rule {m["css"]} vs widest line {m["widest"]}'
-    assert m['number'] == f'{round(m["css"])} px', f'{label}: printed {m["number"]!r}'
-    assert abs(m['ruleWidth'] - m['css']) <= 1.5, f'{label}: rule drew {m["ruleWidth"]}'
+    assert 'Instrument Serif' in m['family'], f'{label}: engraved face not loaded, {m["family"]}'
+    assert m['lines'] >= 1, f'{label}: claim collapsed'
+    assert m['ruleScale'] >= 0.99, f'{label}: claim rule not drawn (scale {m["ruleScale"]})'
+    assert m['chips'] == 3, f'{label}: {m["chips"]} assay chips, expected 3'
     assert m['overflowX'] <= 0, f'{label}: {m["overflowX"]}px of horizontal overflow'
     assert m['hidden'] == 0, f'{label}: {m["hidden"]} element(s) left invisible'
-    print(f'  {label}: {m["lines"]} lines, widest {m["widest"]:.1f}, rule {m["number"]}')
+    print(f'  {label}: {m["lines"]} lines, widest {m["widest"]:.1f}, {m["chips"]} chips')
     return m
 
 
@@ -69,6 +63,8 @@ def parallax(browser, base, errors):
     page.on('pageerror', lambda e: errors.append(str(e)))
     page.goto(base)
     page.wait_for_function("document.querySelector('.art').matches('.layered.art-ready')", timeout=15000)
+    # The die press covers the viewport until it is removed; a pointer move under it never lands.
+    page.wait_for_function("!document.querySelector('#boot')", timeout=8000)
     assert page.locator('.scene-layer').count() == 4
     assert float(page.locator('.plate').evaluate("e => e.style.getPropertyValue('--ps')")) == 0
     assert page.locator('.scene-layer img').evaluate_all(
@@ -77,7 +73,10 @@ def parallax(browser, base, errors):
     art = page.locator('.art')
     subject_source = page.locator('.scene-subject img').evaluate('e => e.currentSrc')
     box = art.bounding_box()
+    # Two moves: the first establishes hover, the second is the one the depth reads.
+    page.mouse.move(box['x'] + box['width'] * .5, box['y'] + box['height'] * .5)
     page.mouse.move(box['x'] + box['width'] * .8, box['y'] + box['height'] * .3)
+    page.wait_for_function("document.querySelector('.art').style.getPropertyValue('--mx') !== ''")
     page.wait_for_timeout(600)
     shifts = page.locator('.scene-layer').evaluate_all(
         "es => es.map(e => new DOMMatrix(getComputedStyle(e).transform).m41)"
@@ -165,7 +164,7 @@ def main():
             page.wait_for_timeout(700)
             dark = page.get_attribute('meta[name="theme-color"]', 'content')
             assert page.evaluate("document.documentElement.dataset.theme") == 'dark'
-            assert (light, dark) == ('#EFEDE7', '#121316'), (light, dark)
+            assert (light, dark) == ('#FAD9B6', '#030E3E'), (light, dark)
             page.reload()
             page.wait_for_timeout(600)
             assert page.evaluate("document.documentElement.dataset.theme") == 'dark', 'choice not remembered'
@@ -175,7 +174,7 @@ def main():
     finally:
         server.shutdown()
     assert not errors, errors
-    print('PASS: measure, overflow, reduced motion, theme chrome')
+    print('PASS: engraved headline, overflow, reduced motion, theme chrome')
 
 
 if __name__ == '__main__':

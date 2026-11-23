@@ -1,288 +1,174 @@
-# Nova site: the drawing sheet
+# Nova site: phosphor
 
 The audience is developers installing Nova and looking up documentation and release notes.
 GitHub Pages serves the `gh-pages` branch at `/NovaCode/`; release Markdown belongs to
 `main/changelog/`.
 
-This file is the binding art direction for the landing page (`index.html`). Everything below
-is derived from one idea; if a change cannot be traced to it, it does not belong.
+This file is the binding art direction for the landing page (`index.html`) and the shared
+chrome of `docs/index.html` and `404.html`. Everything below is derived from one idea; if a
+change cannot be traced to it, it does not belong.
 
 ## Concept Card
 
 ```
-Idea:        The landing page is a technical drawing of the product. Every claim is
-             dimensioned on the sheet, and its limit is printed as a tolerance.
-Metaphor:    An engineering drawing sheet: title block, edge zone references, dimension
-             lines with end ticks, tolerance callouts, detail views, a parts list.
-Signature:   The measure. Under each claim a hairline dimension line is drawn to the
-             claim's true measured width, and an orange tolerance label sits at the far
-             end of it. It re-measures on resize, so the number is real, not decorative.
-Emotion:     Calm authority. Someone showing you the tolerances instead of the brochure.
-Motion verb: rule. Lines extend from a fixed datum, type lands on the sheet, nothing floats.
-Screenshot:  A sheet where an 84px expanded claim is dimensioned by a hairline that ends at
-             a small orange "not verified" tolerance.
+Idea:        The site is a phosphor plate. Every claim Nova makes is struck into a cold
+             screen: cyan on charcoal, hairline rules, an assay mark naming the evidence.
+Metaphor:    A proof mint: dies, hallmarks, edge lettering, assay office. Nova's own word
+             is "proof" — and a proof coin is the finest strike a mint produces.
+Signature:   The strike. A chapter's plate lands as a die press — fast press, one tiny
+             rebound, then still — and its engraving fills in. Secondary signature: the
+             assay mark, a punched chip under each claim linking to its evidence.
+Emotion:     Weight and honesty. Metal, hallmarks, "this has been assayed."
+Motion verb: strike and settle. Big things press slower than small things; nothing floats.
+Screenshot:  A mirror-dark plate under a frosted engraved headline, the coin struck
+             center, a stamped assay chip naming the proof beneath each claim.
 ```
 
-**Why this and not a terminal theme.** Nova's useful distinction is how it keeps work understandable:
-other agents join in their own rooms rather than one flattened conversation, memory lives in files you
-can inspect, results are reported as observed evidence rather than completion claims, and tool
-approvals follow a policy you control. The drawing-sheet form makes those claims and their limits easy
-to scan without turning the landing page into a catalog of every capability.
+**Why this and not a warm terminal.** The rut for this category is a dark terminal window
+with a warm prompt and a friendly sans. Phosphor takes the boot screen the product actually
+opens with — charcoal-teal black, one cyan, bitmap-lettered chrome — and makes it a designed
+surface instead of a screenshot: quiet, cold, exact. Nova's claims
+stay the same — delegation that keeps work separate, memory in plain sight, verification as
+observed evidence, approvals that fail closed — but the page strikes them as proof goods:
+chapters are die pressings, every claim carries its assay mark, the record runs as edge
+lettering on a rail, and the word "proof" means what it means at an assay office.
 
-**Anchor fact:** the product delegates to specialist agents and other CLIs (`/rooms`), keeps memory in
-readable Markdown with visible recall, verifies against real tool output (`/prime`), and enforces
-approvals with hard-coded denials still active. `FEATURES.md` remains the detailed reference for
-secondary capabilities and setup requirements.
+## Direction round (recorded)
 
-## Three concepts, scored 1 to 5
-
-| | A. The drawing sheet | B. Session transcript | C. The memory library |
-|---|---|---|---|
-| Territory | material of the profession (drafting) | how the tool actually runs | the product's own object |
-| Idea | claims are dimensioned, limits are tolerances | the page is one long session log you scroll: prompts, tool calls, and the agent's own boundaries as stderr | the page is a card catalogue of the files Nova writes, drawer by drawer |
-| Motion verb | rule | stream | pull, settle |
-| Signature | the measure | the log advances, output arrives line by line | cards fan out of a drawer |
-| Originality | 4 | 3 | 4 |
-| Fit | 5 | 4 | 4 |
-| Feasibility | 4 | 4 | 3 |
-| Portability (lower is better) | 2 | 3 | 3 |
-
-Chosen: **A**. It is the only one that turns the site's own honesty into structure, it stays
-recognisable from a crop, and it is the cheapest to execute at 60 fps in plain CSS. Steal one
-detail from B for the boot screen: the plot sequence is a log of what the sheet is waiting for.
+Predecessor direction: "Teletext Service" (`broadcast-programming-teletext-service`), the
+user-locked challenger that shipped the previous design. The user commissioned a full redesign
+under **Phosphor**; its two surviving artifacts carry over untouched in style — the hero's
+layered picture and the 3D emblem coin — and the retired signatures (page dial, starfield and
+rockets, teletext status rows, REVEAL keys) are listed at the end of this file.
 
 ## Art direction
 
-**Palette**, six named roles per theme.
+**Palette (phosphor's eight)**, per theme — dark is the unlit screen, light is the same plate
+in daylight.
 
-| Role | Light | Dark | Use |
+| Role | Dark | Light | Use |
 |---|---|---|---|
-| `--ground` | `#EFEDE7` | `#121316` | the sheet |
-| `--panel` | `#F7F5F0` | `#191A1E` | inset detail views |
-| `--ink` | `#17181A` | `#E8E6E1` | type, rules, inverted sheets |
-| `--muted` | `#63625C` | `#9A9A94` | tolerances, metadata (AA on ground) |
-| `--line` | `#CFCCC3` | `#2C2D31` | hairlines, about 12% ink |
-| `--accent` | `#B23C0A` | `#FF6A2B` | tolerances, ticks, one action (5.1:1 on ground) |
-| `--neg-accent` | `#FF6A2B` | `#B23C0A` | the same pen, on an inverted sheet |
-| `--curtain` | `#17181A` | `#0C0D0F` | the plot overlay |
+| `--ground` | `#030E3E` (charcoal teal) | `#FAD9B6` (cold paper) | the screen / the stock |
+| `--panel` | `#131B5D` | `#FFFFFF` | plates, code, specimen cards |
+| `--ink` | `#FAD9B6` | `#0A1215` | body, rows |
+| `--muted` | ink @ .72 | ink @ .74 | metadata, captions |
+| `--line` | ink @ .26 | ink @ .22 | rules, plate edges |
+| `--accent` (cyan) | `#F7B98A` | `#9E4A52` | headlines, die numbers, assay chips |
+| `--proof` (red) | `#B96F6E` | `#9E4A52` | only: revealed answers, alerts |
+| `--live` (mint) | `#B3A7AC` | `#6B5B7A` | live dots only |
 
-Orange is the annotation pen. It marks a limit, a dimension, or an action on the sheet.
-Chapter dividers invert with the selected theme; the closing panel and coin use the original
-dark palette to frame their monochrome engravings. `--neg-accent` keeps the annotation legible
-on an inverted surface.
+One hue family: cyan through teal, from phosphor `#F7B98A` down to the deep `#9E4A52`. No
+warm colour anywhere — the previous brass, cream and iron are retired with the mint. Red and
+mint-green are reserved signals and never decorative. The light theme is the same plate in
+daylight: identical roles on cold paper — a designed pair, not a filter.
 
-**Type.** Archivo (variable, `wdth` 62 to 125, `wght` 400 to 700, self-hosted) plus Geist Mono
-(already in `assets/fonts/`). One family, two personalities: display is the same Archivo at
-`wdth 112`, weight 700, tracking `-0.03em`, leading 0.92; text is Archivo at `wdth 100`, 400 or
-600. Geist Mono is reserved for things that are genuinely measured or typed: dimensions, file
-paths, commands, zone references, version numbers. Mono is never used as a generic small
-label, and there is no tracked uppercase eyebrow above headings.
+**Type.** Instrument Serif 400 (+italic, self-hosted OFL, `assets/fonts/`) is the engraved
+display voice: headlines, chapter titles, the closer. Geist Mono (already self-hosted) is the
+body and every measured string: body `16px/1.6`, metadata at .8rem-.84rem, measure 60-70ch.
+Display tracking tightens per size. Silkscreen retires from index, docs and 404 (the file stays
+on disk); Archivo stays self-hosted for the docs reading surface only.
 
-Scale: `--t-mega` `clamp(2.7rem, 1rem + 7.2vw, 7rem)`, `--t-xl` `clamp(2rem, 1rem+4vw, 4.2rem)`,
-`--t-l` `clamp(1.6rem, 1.1rem+1.7vw, 2.5rem)`, `--t-m` `clamp(1.25rem, 1rem+.7vw, 1.6rem)`,
-body `1.0625rem`/1.55, small `0.875rem`, mono `0.75rem`.
+**Grid & rhythm.** Content column max 1120px with `--pad` gutters (kept). Section rhythm
+varies: full-bleed plates (hero art, coin), inset ledgers (spec, FAQ), a tray (contents), a rail
+(record). Chapters open as die headers: the die number in cyan Geist Mono, the title engraved
+in Instrument Serif. Phones wrap, never clip: below 760px workflows and splits collapse to one
+column, below 720px the spec table stacks to ruled rows (the accessibility tree keeps table
+roles).
 
-**Grid.** 12 columns, 20px gutter, sheet margin 28px desktop and 16px phone, max 1400px. Every
-band aligns to it; display type hangs 0.06em into the margin optically. The sheet border is a
-1px frame inset 14px with edge zone references (A–F, 1–8) in mono 10px, which is the one place
-uppercase tracking is correct because it is drawing furniture.
+**Shape.** Radius 0 everywhere — a phosphor plate has no soft corners. Depth is rule weight
+(1px hairlines, 2px plate edges), never blur; the coin's ground shadow stays the one shadow.
 
-**Shape.** One rule: radius `2px`, on buttons and panels only. Paper has square corners. There
-are no soft shadows anywhere; depth is expressed by hairline weight (1px frame, 1px dimension,
-2px title block), never by blur.
+**Motion language.** One verb, strike and settle: big things press slower than small things,
+nothing floats. Entrances press down at `power4.in` (0.5-0.9s), settle at `power3.out`,
+staggered 30-70ms; big plates press slower than small chips. The clock stays the self-hosted
+GSAP + ScrollTrigger + Lenis stack (`assets/motion.js`) — kept because the regression suite
+binds it and because its gates are right: nothing hides when script, GSAP or motion is
+unavailable. Idle motion is only the coin turning and a slow sheen along the active chapter
+headline's engraving hairlines; under `prefers-reduced-motion` the module returns before doing
+anything: no smooth scroll, no press, no sheen, no clip.
 
-**Phones wrap, never clip.** Below 620px the workflow becomes a vertical sequence, text and
-commands wrap, and the page does not hide content behind horizontal scrolling.
+## The kept artifacts (style-untouched)
 
-**Section rhythm.** Five chapters — delegation, memory, verification, control, the record — each open
-with an inverted divider and a large sheet number. A parts list ("Only in Nova"), installation and a
-short FAQ follow. Three chapters carry a figure (terminal capture, memory engraving, plan engraving);
-verification is text-only and the record is a horizontal strip, so the page does not read as a
-repeating template. Detailed feature inventories remain in the documentation.
-
-**Chapter plates.** The sheet number sits in a fixed-width column (`clamp(88px, 11vw, 168px)`, not
-`auto`), so every chapter title starts on the same datum and the outline numeral holds the sheet's
-left edge instead of drifting with its glyph widths. The numeral drifts 12% of its own height
-against the band as it crosses the viewport (scrub 1.2, transform only, `aria-hidden`): the one
-scroll-linked scene besides the hero's depth. Verification's six checkpoints print as a ruled mono
-strip, so the column carries the sequence rather than a sentence about it.
-
-**The strip.** The record is one horizontal filmstrip of releases, oldest first: a hairline-bordered
-column per release, a mono version in the accent pen, a sentence, and a release-notes link pinned to
-the column's foot. On a wide screen with motion the sheet pins for one viewport and the strip runs
-sideways on the scroll (`ScrollTrigger` pin, scrub 1, `anticipatePin`, travel = track − window), with
-the progress hairline reporting the pin's progress and edge fades on both sides while cards are cut.
-Beneath that it is still a real scroll container: phones, touch, reduced motion, the agent view and
-no-JS all get the native scroller with snap, and the pinned build keeps the strip out of reach of
-nothing — a card reached by Tab scrolls the pin to it, and the box clips with `overflow: clip` so the
-browser cannot scroll the track behind the pin. A vertical wheel over the unpinned strip pans it and
-hands the gesture back at either end.
-
-**The parts list.** The spec table is the one place the page enumerates capabilities: a mono caption
-with its real entry count, one row per capability, the command in mono beside the name, and the limit
-printed in the right column as a tolerance. Hovering or focusing a row draws a 1px accent tick in the
-left margin — the same gesture as the index rows — and lifts the row's text to full ink. Numbers 01–04
-belong to chapters only; capability columns inside a chapter carry no ordinal, because they are parallel
-capabilities, not steps.
-
-**Unequal columns.** A chapter never divides into three equal cells. Delegation puts the foundation
-(specialist agents) in a 1.5fr column spanning both rows with rooms and Council stacked beside it;
-verification runs two across, and the record-keeping statement takes the full measure underneath. Below
-760px every variant collapses to one column with top rules, so nothing is clipped or doubled up.
-
-**Motion language.** One easing family, `cubic-bezier(.16, 1, .3, 1)` for things arriving and
-`cubic-bezier(.4, 0, .2, 1)` for state changes. Micro 240ms, enter 520ms, drawn line 700ms.
-Stagger 40ms. The hero entrance runs once on load: the cover plate develops first (its own
-`art-ready`), then the headline, the claim rule, the copy, the actions and finally the title
-block's rows rise 22px over 1.05s at `power4.out`, 90ms apart. The head script marks the document
-`enter` before the first paint to hide that copy; `assets/motion.js` removes it, and so do its
-no-GSAP path and the script's `onerror`, so nothing can stay hidden. The hero depth, the measure
-and the coin still run on one requestAnimationFrame clock; the scroll-reveal layer above them is
-GSAP with ScrollTrigger (`assets/gsap.min.js`, `assets/ScrollTrigger.min.js`, self-hosted) driven
-by one shared Lenis ticker, so a reveal can never lag the scroll position. Reveals run once, at
-`top 84%`: section heads rise word by word out of their own mask, `[data-fade]` blocks settle 26px,
-`[data-draw]` rules draw left to right, and the three product plates open by `clip-path` with the
-picture inside easing back from 1.07. Two controls are magnetic (`data-magnetic`), and a 14px
-difference-blend ring follows a fine pointer, widening over anything actionable. Under
-`prefers-reduced-motion` the module returns before doing anything: no smooth scroll, no split
-type, no clip, no ring. Every hidden state is applied from `assets/motion.js` after its own
-gate, so with script blocked, GSAP missing or reduced motion, the sheet is complete and readable.
-
-**Hero depth.** The cover sheet prints on a paper panel down the right of the hero; the drawing
-takes the whole left of the sheet, undimmed, because it is the cover art. The real terminal
-capture later on the page provides product evidence. On scroll the three printed blocks lag by their own factor —
-edge zones .11, title block .06, claim .035 — so the sheet separates from the paper as it leaves,
-and travel stops once three quarters of the hero is gone. This is the one scroll-linked motion on
-the page: it is decorative depth, not feedback, and it is transform-only so it cannot reflow
-anything or widen the document. Under reduced motion the blocks keep their `transform: none` and
-sit still as part of the sheet.
-
-**Idle state.** The measure is the only thing that moves without the visitor acting: on the
-first paint the rule draws left to right over 700ms and its tick lands on the claim's real
-width. It never loops. A gauge was built for this slot and removed — it competed with the
-title block, vanished on the inverted bands, and asked the visitor to read a second index
-before reading the claim. The measure states one number and stops.
-
-**Micro-interactions**, one treatment per role from the motion verb:
-- Action (Install): a hairline sweeps across the block and an accent tick slides in; press
-  depresses the block 1px. No colour swap.
-- Nav: the underline draws left to right.
-- Index rows and links: the row's rule extends and an accent tick appears in the left margin.
-- Disclosure: the rule thickens and the marker rotates 90 degrees; a 1px accent tick arrives
-  in the left margin on hover and on focus.
-- Copy: the same ink wipe as the CTA, from the left edge, so command copy controls answer with
-  geometry rather than a colour swap.
-- Utility links (footer, legal): colour only, as the role allows.
-
-## Composition plan
-
-```
-HERO                                    01 DELEGATION / 02 MEMORY
-+-------------------------------+----+   +------------------------------+
-| A                             | TB |   | [chapter divider, inverted]  |
-|  coding agent, terminal       | v  |   | 01  Several agents           |
-|  _______________________|± lim|  e  |   | specialists | rooms |council|
-|  install     MIT / Python     | r  |   +------------------------------+
-|  contents: delegation, memory,| t  |   | 02 memory: wiki + recall     |
-|  verification, control        |   |   | 03 verification: checkpoints |
-+-------------------------------+----+   | 04 control: plans, approvals |
-                                         +------------------------------+
-                                         | parts list: 11 capabilities  |
-                                         | install / FAQ / closer       |
-```
-
-Each main section answers one question: who does the work, where its memory lives, what it observed,
-or how you control plans and tool use. Deeper feature and integration details remain in the
-documentation.
-
-## Genericness test
-
-*Would a generic model given "a site for a terminal coding agent" land here?* No: it lands on a
-black terminal window with a green prompt and three equal feature cards, or a centered hero
-over a gradient. Checked and changed: no dark-window mockups, no eyebrow labels above headings, no
-mono for every small label, no 01/02/03 where the content is not a sequence, and no card boxes — the
-capability columns are separated by hairlines inside one band, and a page-level parts list replaces the
-usual feature-card grid. The radii are 2px rather than the current 999px pills because paper does not
-have pill corners, and orange survives the redesign because an annotation pen is the concept's own
-colour.
+- **The picture (hero layers).** `assets/hero-layers/` holds the cover art as four planes (sky,
+  room, subject, plants) in light and dark, plus a flat composite. The active `*-ink` planes
+  share the coin's illustration style. Each plane has a `--depth`/`--scroll-speed`; `.art`
+  gets `layered` only once all four decode, and the flat composite shows until then and under
+  reduced motion. The planes start registered at the top, separate on scroll, and ignore touch
+  movement as a pointer effect. Wide screens are a split plate: words on the text cell
+  (`min(48%,720px)`), the picture takes the rest undimmed. At ≤900px the picture follows the
+  words as a band — 4:3 on phones, 16:9 above 560px. The four-plane mechanism, its classes and
+  its script are carried over exactly as they shipped with the teletext design.
+- **The emblem coin.** The 3D coin (`.coin-band`) is the page's own seal: same engraved faces
+  (`assets/coin.webp`), rim slices, orbiting sparks, drag and arrow-key spin, ring text. Its
+  stage keeps the geometry variables (`--disc/--half/--tilt/--spin/--live`) so the kept script
+  runs unchanged. The band keeps its own darker ground — the ident room inside the page.
+- **Nova the mascot** (`assets/mascots/`), the contents companion, stays with its sprite
+  behavior.
+- **Retired signatures.** The page dial (keyed P-numbers and the status row), the starfield and
+  its launch clock, REVEAL keys, teletext block framing and Silkscreen as a display face are
+  removed from index, docs and 404. Their assets may remain on disk; nothing on the pages
+  references them.
 
 ## What this file also governs (unchanged by the redesign)
 
 - **Two-branch contract.** Site files live on `gh-pages`; release Markdown lives on
-  `main/changelog/`. This checkout holds only the generated `changelog/index.html`.
+  `main/changelog/`. This checkout holds only the generated `changelog/index.html` — never
+  hand-edit between the `generated:changelog-*` markers.
 - **Theme.** `assets/theme.js` follows the system until the visitor picks, then stores
-  `nova-theme` and applies it before first paint on every page. Manual switches open the new
-  palette behind a travelling drafting rule over 620ms through native View Transitions.
-  Dark prints downward; light reverses upward. Shared rules live in `assets/theme.css`.
-  Reduced motion and Agent view switch at once; older browsers use a short color fade.
-  Both palettes are designed; neither is a filter over the other.
-- **The hero drawing.** `assets/hero-layers/` holds the cover art as four planes (sky, room,
-  subject, plants) in light and dark, plus a matching flat composite. The active `*-ink`
-  planes share the coin's illustration style while retaining the original colors; the original
-  planes remain in the source directory. The subject uses one regenerated `subject-ink`
-  drawing in both themes to keep the face identical; sky, room and plants carry a theme `<source>`. Each plane has a
-  `--depth`/`--scroll-speed`; `.art` gets `layered` only once all four decode, and the flat
-  composite shows until then and under reduced motion (no transforms at all). The planes start
-  registered at the top, separate on scroll, and ignore touch movement as a pointer effect. Wide screens are a
-  split sheet: the words print on a solid paper panel whose width is `min(48%, 720px)` (the cap
-  keeps the measure readable on large monitors) and the drawing takes all the width that is
-  left, undimmed, which is what keeps the artwork reading as the page's image.
-  At `≤900px` the sheet prints on paper and the drawing follows beneath it as a band — 4:3 on
-  phones, 16:9 above 560px — because a 16:9 drawing behind a tall narrow hero is only a slice of
-  itself.
-- **The plot overlay.** `#boot` is the only overlay. It is hidden without JavaScript, removed
-  from the DOM when it finishes, capped at 1.4s by a hard timeout, and states real milestones
-  (fonts, hero, sheet) rather than a fake counter.
-- **No-JS.** Documentation and release notes stay readable, the sheet renders complete, and
-  every measure degrades to a static rule with its label.
-- **Stars.** A single fixed `<canvas id="page-stars">` sits behind the page (`z-index:-1`, so
-  `html`, not `body`, carries the ground colour) and draws the sky the hero art implies:
-  faint stars that twinkle on their own clock, a 130px pointer repulsion that brightens the ones
-  near the cursor, a shooting star every 3.4–9s, and one launched by a tap. Tint is per theme
-  (`236,242,255` on ink, `150,92,32` on paper). The block is skipped entirely under reduced
-  motion, pauses when the tab hides, and resizes on a debounce.
-- **Launches and Nova.** The same starfield clock draws one small rocket at a time,
-  with a curved, accelerating ascent, warm exhaust and a fading particle trail.
-  It launches after the cover sheet leaves, then at 18–30 second intervals. Nova's
-  coin-inspired chibi sprite sits beside the page contents: she watches the pointer
-  and reacts to a tap, click or Enter/Space, which also requests a launch. An active
-  flight is never duplicated. Reduced motion keeps the click reaction and greeting,
-  without cursor tracking, a bounce or a rocket. The companion stays in document
-  flow and disappears without JavaScript. Sources live in `characters/nova/`;
-  served aligned atlases live in `assets/mascots/`.
-- **The mark.** `assets/emblem-128.webp` on the `--curtain` ink chip, the same in both themes.
-  It replaced the inline triangle so the header and footer carry the Nova emblem.
-- **The coin.** A monochrome Nova seal with real SVG rim lettering turns on the existing CSS 3D
-  disc. The dark field carries fine orbital guides; dragging and the arrow keys turn the coin.
-- **Scrolling.** `assets/lenis.min.js` (Lenis 1.3.27, self-hosted) smooths wheel and touch on the
-  real scroll position, so anchors, sticky chrome and the parallax offsets still work. On the
-  landing and docs pages `assets/motion.js` owns the instance and rafs it from the GSAP ticker
-  that also drives ScrollTrigger; `html.lenis` turns off the CSS smooth behaviour, and reduced
-  motion never instantiates it. The release strip keeps a native scroller: pinning it would
-  fight touch, keyboard and the agent view.
-- **Docs and changelog** keep their own layouts. Both take the same role values, Archivo display
-  face and emblem chip, so the three pages print on the same paper.
+  `nova-theme` and applies it before first paint on every page. Manual switches reveal the new
+  palette behind a travelling press wipe (`assets/theme.css`, View Transitions). Both palettes
+  are designed; neither is a filter over the other.
+- **The boot overlay.** `#boot` is the only overlay: a die press that states real milestones
+  (fonts, page, reveal), hidden without JavaScript, removed from the DOM when it finishes,
+  capped by a hard timeout, skipped on return visits (`plot-skip`).
+- **No-JS.** Documentation and release notes stay readable, the page renders complete, the
+  measure degrades to a static hairline rule with its label.
+- **Agent view.** `assets/view.js` keeps the readable mirror; the page chrome hides in agent
+  view exactly as the sheet furniture did.
+
+## Genericness test
+
+*Would a generic model given "a site for a terminal coding agent" land here?* No: it lands on
+a dark terminal window with a green prompt and three equal feature cards. Phosphor is neither:
+die-pressed chapter plates, engraved serif headlines, punched assay chips under claims, an
+edge-lettered record rail, and one cyan that marks the page's own voice.
+
+## Sections (the striking plan)
+
+Hero split plate (die press, headline, assay chips, actions, picture) · contents tray of struck
+chips · die 01 delegation · die 02 memory · die 03 verification · die 04 control (each a die
+header over engraved plate panels) · five **specimen screens built in CSS** · spec assay table ·
+the record as an edge-lettered die rail (native horizontal scroller) · install as stamped
+command rows · FAQ hallmark book (`<details>`) · closer and start · the emblem coin · coin mark
+footer.
+
+**The screens are drawn, not photographed.** Each walkthrough's terminal state (`.tui`: title
+bar, panes, prompt row) is HTML and CSS in the phosphor palette, staged under a cyan-cornered mount
+with a stamped caption. The three step marks are real elements (`[data-tut="0..2"]`), lit by the
+same `data-step` switch the sticky layout drives, so a highlight can never drift off the thing it
+names. Each caption still links the real capture ("View real screenshot") — the reconstruction is
+presentation, the linked file is evidence, and the prose remains the authority on behaviour.
+- **The mark.** `assets/emblem-128.webp` stamps the masthead and footer, the same in both
+  themes.
+- **Scrolling.** `assets/lenis.min.js` (Lenis 1.3.27, self-hosted) smooths wheel and touch on
+  the real scroll position, so anchors, sticky chrome and the parallax offsets still work. On
+  the landing and docs pages `assets/motion.js` owns the instance and rafs it from the GSAP
+  ticker that also drives ScrollTrigger; `html.lenis` turns off the CSS smooth behaviour, and
+  reduced motion never instantiates it. The record rail keeps a native scroller: pinning it
+  would fight touch, keyboard and the agent view.
+- **Docs and changelog** keep their own layouts. Both take the same role values, Geist Mono
+  body and the emblem chip, so the three pages print on the same stock.
 
 ## Validation
 
-Header icon controls have 44px hit areas while the theme switch keeps its compact
-visual track. Header and sheet-content links, plus primary buttons, give keyboard
-focus the same feedback as hover. Metadata and illustration captions use at least
-11px text; redundant labels above section headings are omitted. Illustration
-panels size from their available width, without a minimum height forcing overflow
-on 320px screens. The loading strip uses cream text on its fixed dark surface in
-both themes.
-
-Mechanical scan exceptions reviewed in the browser: drafting hairlines sit on
-their grid boundaries; section padding is inherited through wrappers and
-`padding-block`; Geist Mono is reserved for commands and measured metadata;
-repeating stripes form the coin's machined rim rather than a page background.
+Header icon controls have 44px hit areas while the theme switch keeps its compact visual
+track. Header and drawer links, plus primary buttons, give keyboard focus the same feedback
+as hover. Metadata and captions use at least 11px text; no minimum heights force overflow on
+320px screens; text is never hidden under `prefers-reduced-motion`.
 
 `python tools/verify_site.py` covers internal links, all documentation topics, disclosure
 controls, both permalink formats, live refresh and failure recovery, desktop and phone,
 reduced motion, the designed 404, and axe when `axe-core` is installed. It asserts no console
-errors, no horizontal overflow, that `#boot` leaves the DOM, and that the motion layer settles
-every reveal, word and clip while Lenis and the cursor are live. `tools/verify_hero.py`
-recomputes the claim's widest rendered line and asserts the rule and the printed number match
-it, in both themes, on a phone and under reduced motion; it also checks that a saved theme
-repaints the browser chrome.
+errors, no horizontal overflow, and that `#boot` leaves the DOM. The per-feature checkers are
+aimed at the phosphor markup: the hero headline and measure, the specimen-framed walkthroughs and
+the agent-view contract; they update with the markup they bind to, never silently.

@@ -38,7 +38,8 @@
         b.hidden = false;
         var on = mode === "agent";
         b.setAttribute("aria-pressed", on ? "true" : "false");
-        b.setAttribute("aria-label", on ? "Switch to human view" : "Switch to agent view");
+        /* The name repeats the visible word, then says what pressing does. */
+    b.setAttribute("aria-label", on ? "Agent view. Switch to the human view" : "Human view. Switch to the agent view");
         b.setAttribute("title", on ? "Agent view (click for human)" : "Human view (click for agent)");
         var label = b.querySelector("[data-view-label]");
         if (label) label.textContent = on ? "Agent" : "Human";

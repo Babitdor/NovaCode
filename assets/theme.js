@@ -37,7 +37,7 @@
     /* The browser chrome follows the page, not the OS, once a theme is chosen. */
     Array.prototype.forEach.call(document.querySelectorAll('meta[name="theme-color"]'), function (m) {
       var forDark = saved ? dark : /dark/.test(m.getAttribute("media") || "");
-      m.setAttribute("content", forDark ? "#121316" : "#EFEDE7");
+      m.setAttribute("content", forDark ? "#030E3E" : "#FAD9B6");
     });
     Array.prototype.forEach.call(document.querySelectorAll("[data-theme-toggle]"), function (b) {
       b.hidden = false;
@@ -160,6 +160,10 @@
   else wire();
 
   function warmWhenIdle() {
+    /* Warming fetches the other palette's art. On a data-saving or very slow link
+       that cost is not worth a flash-free first toggle, so skip it there. */
+    var conn = navigator.connection;
+    if (conn && (conn.saveData || /(^|-)2g$/.test(conn.effectiveType || ""))) return;
     var warm = function () { warmThemedImages(); };
     if (window.requestIdleCallback) window.requestIdleCallback(warm, { timeout: 2000 });
     else window.setTimeout(warm, 900);

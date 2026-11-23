@@ -25,7 +25,8 @@ There is no build step and no framework. Python 3.11+ stdlib only for tools.
 
 - **All paths relative** — the site is served under `/NovaCode/`; absolute `/assets/...` links break. Never add a leading slash to `href`/`src`.
 - Vanilla HTML/CSS/JS, no dependencies, no bundler. Landing page is a single 1800-line `index.html` with inline `<style>`/`<script>`; keep edits inline there.
-- Design system (see DESIGN.md): Geist + Geist Mono self-hosted in `assets/fonts/`, one accent color, radius 999px on pressables / 14px on panels, theme follows system (no section-level inversion), motion is entrance/feedback only and disabled under `prefers-reduced-motion`.
+- Design system (see DESIGN.md, now "The Mint"): Instrument Serif (display) + Geist Mono (body) self-hosted in `assets/fonts/`, one brass accent plus a reserved proof red and a live green, **radius 0 everywhere**, theme follows system (no section-level inversion), motion is "strike and settle" only and disabled under `prefers-reduced-motion`.
+- **The walkthrough screens are CSS, not bitmaps**: each `.tui` plate (title bar, panes, prompt) is markup staged under a brass-cornered mount; step highlights are real elements via `[data-tut="0..2"]` driven by `data-step`, and each caption links the real capture ("View real screenshot"). Never reintroduce a bitmap <img> there, and never let a highlight drift from the thing it names.
 - Python tools: `pathlib.Path` everywhere, `from __future__ import annotations`, stdlib only.
 - Changelog Markdown release files with prefixes `HEADLESS-`, `PIPE-`, `TABS-` are review files and skipped by the generator.
 
@@ -63,4 +64,6 @@ There is no build step and no framework. Python 3.11+ stdlib only for tools.
 | `tools/make_changelog_page.py` | Parses main's release Markdown → archive HTML (both header formats) |
 | `tools/verify_site.py` | Playwright regression suite; serves site under `/NovaCode/` |
 | `assets/changelog.js` | Live refresh from GitHub main; degrades to saved archive |
-| `DESIGN.md` | Binding design constraints (fonts, radii, motion) |
+| `DESIGN.md` | Binding art direction (The Mint): palette, type, radius 0, strike motion, kept artifacts |
+| `tools/verify_hero.py` | Browser proof for the engraved headline, hero depth, theme chrome (run as `python -m tools.verify_hero`) |
+| `tools/verify_walkthrough.py` / `verify_agent_view.py` / `verify_theme.py` | Per-feature checkers; all bind the current markup |

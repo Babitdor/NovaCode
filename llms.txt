@@ -6,7 +6,7 @@ This site is the NovaCode marketing and documentation site (GitHub Pages, served
 
 ## Key pages
 
-- [Home](https://babitdor.github.io/NovaCode/): Product overview built around what only Nova does (delegation and rooms, readable memory, observed verification, control), a capability spec list, install command, and links.
+- [Home](https://babitdor.github.io/NovaCode/): Product overview built around what only Nova does (delegation and rooms, readable memory, observed verification, control), a capability spec list, install command, and links. The screen illustrations are HTML/CSS reconstructions of interface states for presentation; each caption links the real capture, and the written copy is the authority.
 - [Documentation](https://babitdor.github.io/NovaCode/docs/): Unique-feature guide and operating reference (CLI, config, TUI, tools, rooms, memory, onboarding, Prime, skills, MCP, agents, verification, remote, voice, security/sandbox). Uses a client-side page switcher; section anchors like docs/#page-features work in-browser.
 - [Changelog](https://babitdor.github.io/NovaCode/changelog/): Release notes archive (embedded) with progressive enhancement from main-branch changelog sources.
 

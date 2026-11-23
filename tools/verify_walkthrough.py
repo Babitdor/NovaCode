@@ -37,7 +37,11 @@ def main():
                     }""", {'tutorial_id': tutorial_id, 'index': index})
                     page.wait_for_function("({tutorial_id, index}) => document.getElementById(tutorial_id).dataset.step === String(index)", arg={'tutorial_id': tutorial_id, 'index': index})
                     assert tutorial.locator('[aria-current="step"]').count() == 1
-                    assert tutorial.locator('.tutorial-focus').nth(index).evaluate("e => getComputedStyle(e).opacity") == '1'
+                    assert tutorial.locator(f'[data-tut="{index}"]').count() >= 1
+                    page.wait_for_function(
+                        "({id, i}) => [...document.getElementById(id).querySelectorAll('[data-tut=\"' + i + '\"]')]"
+                        ".every(e => Number(getComputedStyle(e).opacity) > 0.99)",
+                        arg={'id': tutorial_id, 'i': index})
                     rect = tutorial.locator('.tutorial-screen').bounding_box()
                     assert rect['y'] >= 80 and rect['y'] + rect['height'] <= 1000, (tutorial_id, index, rect)
                     page.screenshot(path=str(shots / f'{tutorial_id}-desktop-{index}.png'))
@@ -65,8 +69,9 @@ def main():
                     tutorial = fallback.locator('#' + tutorial_id)
                     tutorial.scroll_into_view_if_needed()
                     assert tutorial.locator('.tutorial-steps li').count() == 3
-                    tutorial.locator('img').evaluate('e => e.decode()')
-                    assert tutorial.locator('img').evaluate('e => e.complete && e.naturalWidth === Number(e.getAttribute("width"))')
+                    # The screen is built in CSS; it must still render its own text at every size.
+                    assert tutorial.locator('.tui').count() == 1
+                    assert tutorial.locator('.tui .tui-main').evaluate("e => e.scrollWidth <= e.clientWidth + 1")
                     assert fallback.evaluate('document.documentElement.scrollWidth <= innerWidth')
                     assert tutorial.locator('.tutorial-figure').evaluate("e => getComputedStyle(e).position") == 'static'
                     fallback.screenshot(path=str(shots / f'{tutorial_id}-{label}.png'))

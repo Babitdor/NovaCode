@@ -38,7 +38,7 @@ def main():
                     assert page.locator('.hero > .wrap').evaluate('e => e.clientWidth >= Math.min(innerWidth, 1400) * .9')
                     assert page.locator('h1:visible').count() == 1
                     assert not page.locator('.pin-spacer').count()
-                    assert not page.locator('.tutorial img:visible').count()
+                    assert not page.locator('.tutorial .tui:visible').count()
                     assert not page.locator('#faq details:not([open])').count()
                     assert page.evaluate("[...document.querySelectorAll('.mo-word')].every(e => getComputedStyle(e).opacity === '1' && getComputedStyle(e).visibility === 'visible')")
                     assert page.evaluate("[...document.querySelectorAll('[data-image-reveal]')].every(e => getComputedStyle(e).clipPath === 'none')")
@@ -49,9 +49,11 @@ def main():
                     page.wait_for_function("document.documentElement.dataset.view === 'human'")
                     if not direct:
                         assert page.locator('#faq details[open]').count() == 1
-                    assert page.locator('.tutorial img:visible').count() == 5
+                    assert page.locator('.tutorial .tui:visible').count() == 5
                     if width == 1440:
-                        assert page.locator('.rail-pinned').count() == 1
+                        # The record rail is a plain scroller; the agent view keeps it, unpinned.
+                        assert page.locator('[data-horizontal-track]').count() == 1
+                        assert page.locator('.rail-pinned').count() == 0
                     page.reload()
                     assert page.evaluate('NovaView.get()') == 'human'
                 # A stored choice follows navigation to documentation and releases.
