@@ -726,7 +726,7 @@ CATALOG: dict[str, CommandSpec] = {
     "export": CommandSpec(
         name="export",
         handler="_run_export",
-        help="export the session tree to HTML (/export [file])",
+        help="export the session (Markdown or JSON; /export [file])",
         route=ROUTE_PASSTHROUGH,
         served=True,
         evidence=EVIDENCE_PORT_COMMAND,

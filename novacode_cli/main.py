@@ -163,7 +163,6 @@ from novacode_cli.path_approval import PathApprovalManager, check_path_approval
 from novacode_cli.states.Session import SessionState
 from novacode_cli.tools import (
     code_search,
-    docs_search,
     duckduckgo_search,
     fetch_url,
     find_related_code,
@@ -171,7 +170,6 @@ from novacode_cli.tools import (
     list_memories,
     read_memory,
     recall,
-    oracle,
     remember,
     skill_manage,
     sleep_desktop,
@@ -406,7 +404,6 @@ def _session_tools(session_state: SessionState) -> list:
         # Utility tools
         think,
         speak,
-        oracle,
         skill_manage,
         # Desktop power: suspend the machine when the user is done for the night.
         # Refuses outside the overnight window unless forced, so it is safe to
@@ -415,7 +412,6 @@ def _session_tools(session_state: SessionState) -> list:
         
         # Web search (always available, no API key needed)
         duckduckgo_search,
-        docs_search,
         # Memory management (persist across sessions)
         write_memory,
         read_memory,

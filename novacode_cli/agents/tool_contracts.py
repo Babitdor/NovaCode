@@ -18,6 +18,9 @@ _FILESYSTEM = {
 }
 
 
+_FILE_OUTLINE = "Returns '@@ outline: N headings · M lines @@' plus one 'line: heading' row per heading, or, with `section`, '@@ lines X-Y of M @@' plus the section text. No match returns the outline with guidance; path and read failures start with 'Error:'."
+
+
 def native_returns(target: BaseTool) -> dict:
     """Only describe implementations whose result boundary has been verified."""
     modules = {
@@ -28,6 +31,8 @@ def native_returns(target: BaseTool) -> dict:
     description = None
     if modules == {"deepagents.middleware.filesystem"}:
         description = _FILESYSTEM.get(target.name)
+    elif modules == {"novacode_cli.tools.outline_tools"} and target.name == "file_outline":
+        description = _FILE_OUTLINE
     elif modules == {"novacode_cli.shell.middleware"} and target.name in {"shell", "bash"}:
         description = "Returns command output/status text, including background or interactive notices. Valid JSON text is decoded; other text remains a string. No stdout property. Tool error status raises an error."
     return (

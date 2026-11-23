@@ -188,16 +188,6 @@ def format_tool_display(tool_name: str, tool_args: dict) -> str:
             query = truncate_value(query, 100)
             return f'{tool_name}("{query}")'
 
-    elif tool_name == "docs_search":
-        # Docs search: show query and optional topic
-        if "query" in tool_args:
-            query = str(tool_args["query"])
-            query = truncate_value(query, 80)
-            topic = tool_args.get("topic", "")
-            if topic:
-                return f'{tool_name}("{query}", topic={topic})'
-            return f'{tool_name}("{query}")'
-
     elif tool_name in ("git_status", "git_branch", "git_stash"):
         # Git ops with optional repo path
         repo = tool_args.get("repo_path", ".")
@@ -439,7 +429,7 @@ def format_tool_result_preview(
         lines = [l for l in content_str.splitlines() if l.strip()]
         return f"{len(lines)} item{'s' if len(lines) != 1 else ''}{duration}"
 
-    if tool_name in ("web_search", "duckduckgo_search", "docs_search"):
+    if tool_name in ("web_search", "duckduckgo_search"):
         try:
             data = json.loads(content_str)
             if isinstance(data, list):

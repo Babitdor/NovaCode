@@ -112,7 +112,6 @@ TOOL_CATEGORIES: dict[str, str] = {
     # Search
     "web_search": "search",
     "duckduckgo_search": "search",
-    "docs_search": "search",
     # Web
     "fetch_url": "web",
     # Recovery

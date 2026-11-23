@@ -117,7 +117,6 @@ class CoworkBrokerMiddleware(AgentMiddleware):
                 "think",
                 "write_todos",
                 "web_search",
-                "docs_search",
                 "duckduckgo_search",
                 "fetch_url",
                 "tool_search",

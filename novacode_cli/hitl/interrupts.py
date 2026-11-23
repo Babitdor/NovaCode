@@ -7,9 +7,9 @@ before execution. Each configuration includes:
 
 Tool Categories:
 - Destructive operations: shell, execute, write_file, edit_file
-- External operations: web_search, fetch_url, http_request, browser_automate
+- External operations: web_search, fetch_url, browser_automate
 - Code execution: run_tests, start_dev_server
-- Memory operations: write_memory, create_memory_structure
+- Memory operations: write_memory, read_memory
 - User interaction: ask_question
 
 The 11 formatter functions and 11 config blocks are consolidated into a
@@ -203,14 +203,6 @@ INTERRUPT_SPECS: dict[str, InterruptSpec] = {
         warnings=["Will write to memory file"],
     ),
     "duckduckgo_search": InterruptSpec(
-        fields=[
-            ("query", FieldSpec("Query")),
-            ("max_results", FieldSpec("Max results")),
-            ("topic", FieldSpec("Topic")),
-        ],
-        warnings=["Will make web search requests"],
-    ),
-    "docs_search": InterruptSpec(
         fields=[
             ("query", FieldSpec("Query")),
             ("max_results", FieldSpec("Max results")),
@@ -453,7 +445,7 @@ def get_interrupt_configs(*, extra_tools: Iterable[Any] = ()) -> dict[str, Inter
         - External operations: web_search, fetch_url, browser_automate
         - Code execution: run_tests, start_dev_server
         - Memory operations: write_memory
-        - Search operations: duckduckgo_search, docs_search
+        - Search operations: duckduckgo_search, web_search
         - User interaction: ask_question
 
     Each config includes ``"edit"`` in ``allowed_decisions`` so the user

@@ -39,6 +39,75 @@ Fetcher = Callable[[str], FetchResult]
 MAX_REDIRECTS = 5
 
 
+#: Official documentation hosts per dependency, used to verify that a
+#: fetched page comes from the project's own docs (Prime research gate).
+_DOCS_SITES: dict[str, list[str]] = {
+    # Python ecosystem
+    "python": ["docs.python.org", "docs.python-guide.org"],
+    "django": ["docs.djangoproject.com"],
+    "flask": ["flask.palletsprojects.com"],
+    "fastapi": ["fastapi.tiangolo.com"],
+    "numpy": ["numpy.org/doc"],
+    "pandas": ["pandas.pydata.org/docs"],
+    "pytorch": ["pytorch.org/docs"],
+    "tensorflow": ["tensorflow.org/api_docs"],
+    "requests": ["requests.readthedocs.io"],
+    "sqlalchemy": ["docs.sqlalchemy.org"],
+    "pydantic": ["docs.pydantic.dev"],
+    # JavaScript/TypeScript ecosystem
+    "javascript": ["developer.mozilla.org/en-US/docs/Web/JavaScript"],
+    "typescript": ["typescriptlang.org/docs"],
+    "nodejs": ["nodejs.org/docs", "nodejs.org/api"],
+    "node": ["nodejs.org/docs", "nodejs.org/api"],
+    "react": ["react.dev", "reactjs.org/docs"],
+    "vue": ["vuejs.org/guide", "vuejs.org/api"],
+    "angular": ["angular.io/docs"],
+    "nextjs": ["nextjs.org/docs"],
+    "express": ["expressjs.com"],
+    "deno": ["deno.land/manual", "docs.deno.com"],
+    # Web/CSS
+    "css": ["developer.mozilla.org/en-US/docs/Web/CSS"],
+    "html": ["developer.mozilla.org/en-US/docs/Web/HTML"],
+    "mdn": ["developer.mozilla.org"],
+    "web": ["developer.mozilla.org/en-US/docs/Web"],
+    # Other languages
+    "rust": ["doc.rust-lang.org", "docs.rs"],
+    "go": ["go.dev/doc", "pkg.go.dev"],
+    "golang": ["go.dev/doc", "pkg.go.dev"],
+    "java": ["docs.oracle.com/en/java"],
+    "kotlin": ["kotlinlang.org/docs"],
+    "swift": ["developer.apple.com/documentation/swift"],
+    "ruby": ["ruby-doc.org", "docs.ruby-lang.org"],
+    "php": ["php.net/docs.php", "php.net/manual"],
+    "csharp": ["docs.microsoft.com/en-us/dotnet/csharp"],
+    "dotnet": ["docs.microsoft.com/en-us/dotnet"],
+    # Databases
+    "postgresql": ["postgresql.org/docs"],
+    "postgres": ["postgresql.org/docs"],
+    "mysql": ["dev.mysql.com/doc"],
+    "mongodb": ["docs.mongodb.com"],
+    "redis": ["redis.io/docs"],
+    "sqlite": ["sqlite.org/docs.html"],
+    # DevOps/Cloud
+    "docker": ["docs.docker.com"],
+    "kubernetes": ["kubernetes.io/docs"],
+    "k8s": ["kubernetes.io/docs"],
+    "aws": ["docs.aws.amazon.com"],
+    "azure": ["docs.microsoft.com/en-us/azure"],
+    "gcp": ["cloud.google.com/docs"],
+    # Tools
+    "git": ["git-scm.com/doc"],
+    "github": ["docs.github.com"],
+    "vscode": ["code.visualstudio.com/docs"],
+    "linux": ["man7.org/linux/man-pages", "linux.die.net/man"],
+    # AI/ML
+    "langchain": ["python.langchain.com/docs", "js.langchain.com/docs"],
+    "openai": ["platform.openai.com/docs"],
+    "anthropic": ["docs.anthropic.com"],
+    "huggingface": ["huggingface.co/docs"],
+}
+
+
 def make_fetcher(
     version: str, *, authorize: Callable[[str], bool], dependency: str = ""
 ) -> Fetcher:
@@ -52,7 +121,6 @@ def make_fetcher(
 
     from novacode_cli.security.policy import get_policy
     from novacode_cli.security.unicode_security import check_url_safety
-    from novacode_cli.tools.web_tools import _DOCS_SITES
 
     def fetch_document(url: str) -> FetchResult:
         target = url

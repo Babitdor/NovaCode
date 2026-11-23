@@ -75,6 +75,142 @@ def export_html(tree: HistoryTree, *, title: str, subtitle: str = "") -> str:
     )
 
 
+def _node_reasoning(msg: dict[str, Any]) -> str:
+    """Provider-exposed reasoning text carried by a serialized message."""
+    from types import SimpleNamespace
+
+    from novacode_cli.core.reasoning import reasoning_text
+
+    content = msg.get("content")
+    blocks = [b for b in content if isinstance(b, dict)] if isinstance(content, list) else []
+    extra = msg.get("additional_kwargs")
+    shim = SimpleNamespace(additional_kwargs=extra if isinstance(extra, dict) else None)
+    return reasoning_text(shim, blocks).strip()
+
+
+def _current_path(tree: HistoryTree) -> list[Node]:
+    """The conversation as it stands: root → current leaf."""
+    return tree.path_to(tree.leaf)
+
+
+def export_markdown(
+    tree: HistoryTree,
+    *,
+    title: str,
+    subtitle: str = "",
+    include_thinking: bool = True,
+    include_tools: bool = True,
+) -> str:
+    """The conversation along the current path as Markdown.
+
+    Thinking and tool activity are optional sections; secrets are redacted
+    exactly as in the HTML export. The whole tree remains the HTML export's
+    job — this renders the path the session is on now.
+    """
+    out = [f"# {title}", "", f"_{subtitle}_", ""]
+    call_names: dict[str, str] = {}
+    for node in _current_path(tree):
+        msg = node.msg
+        kind = node.kind
+        if not include_tools and kind == "tool":
+            continue  # tool calls and results drop out with the whole node
+        heading = {
+            "user": "## 🧑 User",
+            "assistant": "## ✨ Nova",
+            "tool": "### 🔧 Tool result",
+            "system": "## ⚙ System",
+        }[kind]
+        out += [heading, ""]
+        if include_thinking and kind == "assistant":
+            reasoning = _node_reasoning(msg)
+            if reasoning:
+                out += ["<details><summary>Thinking</summary>", ""]
+                out += [f"> {line}" for line in reasoning.splitlines()]
+                out += ["", "</details>", ""]
+        text = redact(node.text).strip()
+        if text:
+            out += [text, ""]
+        if include_tools:
+            for call in msg.get("tool_calls") or []:
+                call_id = str(call.get("id") or "")
+                call_names[call_id] = str(call.get("name") or "tool")
+                args = redact(json.dumps(call.get("args", {}), indent=2, default=str))
+                out += [f"**🔧 Calls `{call.get('name', 'tool')}`**", "", "```json", args, "```", ""]
+            if msg.get("type") == "ToolMessage":
+                name = msg.get("name") or call_names.get(str(msg.get("tool_call_id") or ""), "tool")
+                body = redact(node.text)
+                if len(body) > TOOL_TEXT_LIMIT:
+                    body = body[:TOOL_TEXT_LIMIT] + (
+                        f"\n… ({len(body) - TOOL_TEXT_LIMIT} more characters)"
+                    )
+                out += [f"**Result — `{name}`**", "", "```", body, "```", ""]
+    return "\n".join(out).rstrip() + "\n"
+
+
+def export_json(
+    tree: HistoryTree,
+    *,
+    title: str,
+    subtitle: str = "",
+    include_thinking: bool = True,
+    include_tools: bool = True,
+) -> str:
+    """The conversation along the current path as structured JSON.
+
+    Same selection rules as :func:`export_markdown`: one record per message on
+    the path, thinking and tool activity included only when asked for.
+    """
+    messages: list[dict[str, Any]] = []
+    call_names: dict[str, str] = {}
+    for node in _current_path(tree):
+        msg = node.msg
+        if not include_tools and node.kind == "tool":
+            continue  # tool calls and results drop out with the whole node
+        record: dict[str, Any] = {
+            "id": node.id,
+            "role": node.kind,
+            "name": msg.get("name") or "",
+            "ts": node.ts,
+            "text": redact(node.text),
+        }
+        if include_thinking and node.kind == "assistant":
+            reasoning = _node_reasoning(msg)
+            if reasoning:
+                record["thinking"] = reasoning
+        if include_tools:
+            calls = [
+                {
+                    "name": c.get("name", ""),
+                    "args": json.loads(redact(json.dumps(c.get("args", {}), default=str))),
+                }
+                for c in msg.get("tool_calls") or []
+            ]
+            for call in msg.get("tool_calls") or []:
+                call_names[str(call.get("id") or "")] = str(call.get("name") or "tool")
+            if calls:
+                record["tool_calls"] = calls
+            if msg.get("type") == "ToolMessage":
+                body = redact(node.text)
+                if len(body) > TOOL_TEXT_LIMIT:
+                    body = body[:TOOL_TEXT_LIMIT] + (
+                        f"\n… ({len(body) - TOOL_TEXT_LIMIT} more characters)"
+                    )
+                name = msg.get("name") or call_names.get(str(msg.get("tool_call_id") or ""), "tool")
+                record["tool_result"] = {"name": name, "text": body}
+        messages.append(record)
+    payload = {
+        "format": "nova-session-export/1",
+        "title": title,
+        "subtitle": subtitle,
+        "options": {
+            "include_thinking": include_thinking,
+            "include_tools": include_tools,
+        },
+        "messages": messages,
+    }
+    return json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+
+
 _TEMPLATE = """<!doctype html>
 <html lang="en">
 <head>

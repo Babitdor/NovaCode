@@ -2275,12 +2275,13 @@ class ServerPort:
         return CommandResult(ok=True, message=message, blocks=(Block("text", first),), screen=spec)
 
     async def _export_command(self, args: str | None) -> CommandResult:
-        """Write the session tree to a self-contained HTML file.
+        """Write the session to a file in the chosen format.
 
-        The Textual path builds the tree through the session manager and writes
-        off the UI loop. The port does the same against its own worker, then
-        reports the path as a transcript block. A session without persistence is
-        an explicit failure rather than a silent no-op.
+        With a connected client the command first asks what to export —
+        Markdown or JSON, with optional thinking and tool activity. Without a
+        client to answer (headless), the documented default path runs: the
+        self-contained HTML page. A session without persistence is an explicit
+        failure rather than a silent no-op.
 
         Args:
             args: An optional destination path; the default lives under
@@ -2292,6 +2293,7 @@ class ServerPort:
         import asyncio
 
         from novacode_cli.config import config as nova_config
+        from novacode_cli.session.history_export import export_json, export_markdown
 
         worker = self._worker
         manager = getattr(worker, "session_manager", None)
@@ -2301,20 +2303,82 @@ class ServerPort:
             return CommandResult(ok=False, message="Session history is off for this run.")
         await asyncio.to_thread(manager.history_tree, session_id)
 
-        def build() -> str:
-            return _export_page(
-                manager.history_tree(session_id),
-                session_id,
-                str(getattr(worker, "model_name", None) or ""),
+        parts = (args or "").strip().split(maxsplit=1)
+        options = {"format": "html", "thinking": True, "tools": True}
+        if self._ask_screen is not None:
+            answer = await self.ask(
+                ScreenSpec(
+                    "form",
+                    {
+                        "fields": [
+                            {
+                                "key": "format",
+                                "label": "Format",
+                                "value": "markdown",
+                                "options": ["markdown", "json"],
+                            },
+                            {
+                                "key": "thinking",
+                                "label": "Include thinking",
+                                "value": "on",
+                                "toggle": True,
+                            },
+                            {
+                                "key": "tools",
+                                "label": "Include tools",
+                                "value": "on",
+                                "toggle": True,
+                            },
+                        ]
+                    },
+                    title="Export session",
+                )
             )
+            if not answer:
+                return CommandResult(ok=True, message="Export cancelled.")
+            options = {
+                "format": str(answer.get("format") or "markdown"),
+                "thinking": answer.get("thinking") is True,
+                "tools": answer.get("tools") is True,
+            }
+
+        def build() -> str:
+            tree = manager.history_tree(session_id)
+            branches = sum(max(0, len(node.children) - 1) for node in tree.nodes.values())
+            branches += max(0, len(tree.roots) - 1)
+            first = next((node.text for node in tree.nodes.values() if node.kind == "user"), "")
+            title = " ".join(first.split())[:80] or "Nova session"
+            subtitle = (
+                f"Nova session {session_id[:8]} · {getattr(worker, 'model_name', None) or 'model'}"
+                f" · {len(tree.nodes)} messages · {branches + 1} branch(es)"
+            )
+            if options["format"] == "markdown":
+                return export_markdown(
+                    tree,
+                    title=title,
+                    subtitle=subtitle,
+                    include_thinking=options["thinking"],
+                    include_tools=options["tools"],
+                )
+            if options["format"] == "json":
+                return export_json(
+                    tree,
+                    title=title,
+                    subtitle=subtitle,
+                    include_thinking=options["thinking"],
+                    include_tools=options["tools"],
+                )
+            return _export_page(tree, session_id, str(getattr(worker, "model_name", None) or ""))
 
         page = await asyncio.to_thread(build)
-        parts = (args or "").strip().split(maxsplit=1)
-        default = f"nova-session-{session_id[:8]}.html"
+        suffix = {"markdown": ".md", "json": ".json"}.get(options["format"], ".html")
+        default = f"nova-session-{session_id[:8]}{suffix}"
 
         def write() -> Path:
             if parts:
                 target = Path(parts[0].strip().strip('"')).expanduser()
+                if not target.suffix:
+                    target = target.with_suffix(suffix)
             else:
                 target = Path(nova_config.HOME_DIR) / "exports" / default
             target.parent.mkdir(parents=True, exist_ok=True)

@@ -106,7 +106,7 @@ def test_a_nova_tool_name_is_not_an_mcp_tool(monkeypatch):
     the same name.
     """
     _install(monkeypatch, _FakeMiddleware([_FakeTool("serena_find_symbol")]))
-    assert _mcp_tools.mcp_tools_for(["code_search", "docs_search"]) == []
+    assert _mcp_tools.mcp_tools_for(["code_search", "web_search"]) == []
 
 
 def test_an_empty_request_does_not_discover(monkeypatch):

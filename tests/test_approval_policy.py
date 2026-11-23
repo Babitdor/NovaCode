@@ -137,7 +137,7 @@ def test_url_deny_metadata_host():
 def test_readonly_tools_allow_by_default():
     p = _default_policy()
     assert p.evaluate("web_search", {"query": "x"}).tier == "allow"
-    assert p.evaluate("docs_search", {"query": "x"}).tier == "allow"
+    assert p.evaluate("duckduckgo_search", {"query": "x"}).tier == "allow"
     assert p.tool_default("web_search") == "allow"
     assert p.has_arg_rules("web_search") is False
     assert p.has_arg_rules("shell") is True

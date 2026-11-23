@@ -1,15 +1,15 @@
 """Tools package for novacode_cli.
 
 This package provides various tools for the CLI agent, organized into submodules:
-- web_tools: Web search tools (Tavily, DuckDuckGo, docs search)
-- fetch_tools: URL fetching and content conversion (merged from http_tools)
+- web_tools: Web search tools (Tavily, DuckDuckGo)
+- fetch_tools: URL fetching and content conversion
 - memory_tools: Memory management tools
 - reflection_tools: Reflection tools for strategic thinking
-- graph_tools: Project knowledge-graph query tool
 - code_search_tools: Semantic code search (Semble-powered, optional)
+- outline_tools: Markdown heading outline and section reads
 """
 
-# URL fetching tools (covers all HTTP methods — http_request merged into fetch_url)
+# URL fetching tools (covers all HTTP methods)
 from novacode_cli.tools.fetch_tools import fetch_url
 
 # Memory tools (markdown files injected into the prompt)
@@ -38,9 +38,6 @@ except ImportError:
     find_related_code = None  # type: ignore[assignment]
     _semble_avail = lambda: False  # type: ignore[assignment]
 
-# Oracle (multi-model fusion)
-from novacode_cli.tools.oracle_tool import oracle
-
 # Reflection tools
 from novacode_cli.tools.reflection_tools import think
 
@@ -56,7 +53,6 @@ from novacode_cli.tools.skill_tools import skill_manage
 
 # Web search tools
 from novacode_cli.tools.web_tools import (
-    docs_search,
     duckduckgo_search,
     web_search,
 )
@@ -70,7 +66,6 @@ from novacode_cli.tools.wiki_tools import (
 )
 
 __all__ = [
-    "docs_search",
     "duckduckgo_search",
     # URL fetching tools
     "fetch_url",
@@ -81,7 +76,6 @@ __all__ = [
     "list_memories",
     "forget",
     # Reflection tools
-    "oracle",
     "think",
     # Speak tool
     "speak",

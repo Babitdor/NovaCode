@@ -47,7 +47,6 @@ LITERATURE_REVIEWER = {
     "tools": [
         "web_search",
         "duckduckgo_search",
-        "docs_search",
         "fetch_url",
         "write_file",
     ],
@@ -81,7 +80,6 @@ TECHNICAL_RESEARCHER = {
     "tools": [
         "web_search",
         "duckduckgo_search",
-        "docs_search",
         "fetch_url",
         "write_file",
     ],

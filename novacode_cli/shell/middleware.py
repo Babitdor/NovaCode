@@ -191,8 +191,11 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
             _shell_name = "zsh"
             _platform_note = "The host is **macOS** — use zsh/bash syntax."
         else:
-            _shell_name = "bash"
-            _platform_note = "The host is **Linux** — use bash syntax."
+            _shell_name = "sh"
+            _platform_note = (
+                "The host is **Linux** — `shell` runs `/bin/sh` (dash on "
+                "Debian/Ubuntu); use the `bash` tool for bash-specific syntax."
+            )
 
         # Determine execution context for description
         if _is_sandbox:
@@ -214,8 +217,19 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
             )
 
         # Build description with working directory and platform information
+        # POSIX only: `shell` runs /bin/sh (dash on Ubuntu), not bash — say so,
+        # or models treat `shell` and `bash` as pure aliases and lose bashisms
+        # (arrays, [[ ]], ${var,,}) to sh-syntax errors on Debian-family hosts.
+        posix_note = ""
+        if not _is_sandbox and sys.platform != "win32":
+            posix_note = (
+                "Note: `shell` runs `/bin/sh` on this platform (dash on Ubuntu/Debian) — "
+                "when you need bash-specific syntax (arrays, `[[ ]]`, `${var,,}`, "
+                "process substitution), use the `bash` tool instead."
+            )
         description = (
             f"Execute a {_shell_name} command. {_platform_note} {execution_context}"
+            f"{posix_note}"
             f"Each command runs in a fresh shell environment. Commands may "
             f"be truncated if they exceed the configured timeout or output limits. "
             f"Use interactive=True for commands that may prompt for user input "

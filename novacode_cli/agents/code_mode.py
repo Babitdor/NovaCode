@@ -230,7 +230,7 @@ def code_mode_surface(tools: list) -> list:
         for t in tools
         if (t.get("name") if isinstance(t, dict) else t.name)
         in (DIRECT_ONLY_TOOLS - {"MCPTool", "task"})
-        | {"read_file", "search_tools"}
+        | {"read_file", "search_tools", "file_outline"}
         | SEARCH_VARIANTS
     ]
     # Keep the host tool intact; only its model-facing media exception is advertised.

@@ -50,7 +50,6 @@ _TRIVIAL_BUILTINS: frozenset[str] = frozenset(
         "think",
         "web_search",
         "duckduckgo_search",
-        "docs_search",
         "fetch_url",
     }
 )

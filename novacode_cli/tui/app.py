@@ -290,10 +290,6 @@ _TOOL_CATEGORIES: tuple[tuple[str, str, frozenset[str]], ...] = (
                 "web_search",
                 "fetch_url",
                 "duckduckgo_search",
-                "docs_search",
-                "twitter_search",
-                "twitter_trending",
-                "oracle",
             }
         ),
     ),
@@ -384,7 +380,6 @@ _TOOL_CATEGORIES: tuple[tuple[str, str, frozenset[str]], ...] = (
                 "write_memory",
                 "read_memory",
                 "list_memories",
-                "create_memory_structure",
                 "wiki_write",
                 "wiki_read",
                 "wiki_search",
@@ -641,7 +636,7 @@ TUI_COMMANDS: dict[str, SlashCommand] = {
         "browse every branch of this session and continue from any point",
         wants_text=False,
     ),
-    "export": SlashCommand("_run_export", "export the session tree to HTML (/export [file])"),
+    "export": SlashCommand("_run_export", "export the session (Markdown or JSON; /export [file])"),
     "share": SlashCommand(
         "_run_share",
         "temporary artifact link: /share [all|artifacts]; empty shares a gist",
@@ -1870,6 +1865,15 @@ class NovaApp(App):
         padding: 0 1;
         background: $background;
     }
+    /* Compact composer footer (conversation layouts): session facts, then
+       modes. Hidden by default; _refresh_info_bar shows it only where the
+       labelled columns are not already on duty (Python drives display so the
+       home-style geometry tests keep their exact info-bar sizes). */
+    #composer-info, #composer-modes {
+        height: 1;
+        padding: 0 2;
+        background: $background;
+    }
     /* Docked todo checklist: sits above the prompt so it stays on screen.
        Auto-height so a short list costs a few rows; max-height clamps a
        long one (real lists run 2-14 items) and scrolls inside itself. */
@@ -2315,6 +2319,7 @@ class NovaApp(App):
         # (the normal state).
         ("alt+t", "toggle_todos", "Todos"),
         ("ctrl+o", "toggle_expand", "Expand output"),
+        Binding("shift+tab", "cycle_edit_mode", "Edit mode", show=False, priority=True),
         ("alt+s", "toggle_subagents", "Subagents"),
         ("ctrl+end", "jump_latest", "Jump to latest"),
         ("ctrl+n", "new_session", "New session"),
@@ -2814,6 +2819,14 @@ class NovaApp(App):
                 with Vertical(id="col-artifacts", classes="info-col"):
                     yield Static("◆ ARTIFACTS", classes="info-label")
                     yield Static("", id="info-artifacts", classes="info-value")
+            # Compact composer footer (conversation layouts): session facts on
+            # one line, modes on the next — the Claude Code / Gemini CLI shape.
+            # The labelled info-bar columns above stay for the home layouts;
+            # this strip replaces them in the live chat (visibility is driven
+            # from _refresh_info_bar, not CSS, so home-style tests keep their
+            # exact info-bar geometry).
+            yield Static("", id="composer-info")
+            yield Static("", id="composer-modes")
 
     @property
     def _palette(self) -> FooterPalette:
@@ -8274,6 +8287,123 @@ class NovaApp(App):
         # every cell beside it recoloured.
         self._refresh_artifacts_component()
         self._refresh_branch_worker()
+        self._refresh_composer_info()
+        self._refresh_composer_modes()
+
+    def _composer_strip_visible(self) -> bool:
+        """The compact strip replaces the info-bar columns in live chat only."""
+        if self._home_style not in CONVERSATION_STYLES:
+            return False
+        try:
+            if self.screen.has_class("tiny") or self.screen.has_class("short"):
+                return False
+        except Exception:  # noqa: BLE001 — no active screen yet during mount
+            return False
+        return True
+
+    def _refresh_composer_info(self) -> None:
+        """Line 1 of the composer footer: model · context · cwd · branch · version."""
+        from novacode_cli._version import __version__
+        from novacode_cli.config.config import settings
+
+        pal = self._palette
+        visible = self._composer_strip_visible()
+        with contextlib.suppress(NoMatches):
+            self._w("#info-bar", Horizontal).display = not visible
+        with contextlib.suppress(NoMatches):
+            self._w("#composer-info", Static).display = visible
+        if not visible:
+            return
+        router_enabled = bool(getattr(self, "_router_mode_enabled", False))
+        _label, model = _router_model_display(
+            router_enabled, self.model_name, getattr(self, "_routed_model_name", None)
+        )
+        effort = getattr(self, "_reasoning_effort", None)
+        head = f"{model} with {effort}" if effort and effort != "default" else model
+        window = used = 0
+        with contextlib.suppress(Exception):
+            breakdown = self.token_tracker.get_breakdown()
+            window = int(getattr(breakdown, "context_window_size", 0) or 0)
+            used = int(getattr(breakdown, "total_tokens", 0) or 0)
+        if window:
+            pct = min(100, max(0, round(used / window * 100)))
+            ctx = (
+                f"ctx {self._fmt_tokens(used)}/{self._fmt_tokens(window)}"
+                f" · {pct}% · {max(0, 100 - pct)}% left"
+            )
+        else:
+            ctx = "ctx —"
+        pane = getattr(self, "_active_pane", None)
+        session_label = getattr(pane, "title", None) or self.assistant_id or "Nova"
+        workspace = Path(str(settings.get_workspace_root()))
+        try:
+            display_cwd = str(workspace.relative_to(Path.cwd()))
+        except ValueError:
+            display_cwd = str(workspace)
+        if len(display_cwd) > 60:
+            display_cwd = "…" + display_cwd[-59:]
+        line = " · ".join(
+            [
+                head,
+                ctx,
+                display_cwd,
+                f"branch: {self._status_branch or '—'}",
+                str(session_label),
+                f"v{__version__}",
+            ]
+        )
+        with contextlib.suppress(NoMatches):
+            _paint(self._w("#composer-info", Static), Text(line, style=pal.muted))
+
+    def _refresh_composer_modes(self) -> None:
+        """Line 2 of the composer footer: permission mode + shortcut hints."""
+        pal = self._palette
+        visible = self._composer_strip_visible()
+        with contextlib.suppress(NoMatches):
+            self._w("#composer-modes", Static).display = visible
+        if not visible:
+            return
+        if getattr(self.session_state, "plan_mode_enabled", False):
+            mode = Text("⏸ plan mode", style=f"bold {pal.warning}")
+        elif getattr(self.session_state, "auto_approve", False):
+            mode = Text("✗ accept edits on", style=f"bold {pal.success}")
+        else:
+            mode = Text("⏵ accept edits off", style=pal.muted)
+        line = Text.assemble(mode, Text(" (shift+tab) · ? for shortcuts", style=pal.muted))
+        if getattr(self, "_caveman_enabled", False):
+            line.append(" · lite: on", style=pal.muted)
+        with contextlib.suppress(NoMatches):
+            _paint(self._w("#composer-modes", Static), line)
+
+    async def action_cycle_edit_mode(self) -> None:
+        """shift+tab: normal → accept edits → plan mode → normal.
+
+        The same three states the composer's mode line shows, cycled without
+        touching the draft. Plan mode goes through the shared /plan handler so
+        the plan agent and badge follow exactly the button's path.
+        """
+        state = self.session_state
+        prompt = self._w("#prompt", PromptInput)
+
+        def repaint() -> None:
+            self._status_tail = None
+            self._refresh_status()
+            self._update_mode_badge(prompt.text)
+            self._refresh_composer_modes()
+
+        if getattr(state, "plan_mode_enabled", False):
+            await self._run_plan("/plan off")
+        elif getattr(state, "auto_approve", False):
+            state.auto_approve = False
+            state.plan_mode_enabled = True
+            await self._run_plan("/plan")
+        else:
+            state.auto_approve = True
+            repaint()
+            self.notify("Accept edits on", timeout=2)
+            return
+        prompt.focus()
+        repaint()
 
     def _set_info(self, selector: str, renderable: Text) -> None:
         """Update an info-bar Static, ignoring it if not mounted yet."""
@@ -8317,6 +8447,7 @@ class NovaApp(App):
         self.call_from_thread(
             self._set_info, "#home-branch", Text(branch, style=f"bold {pal.accent}")
         )
+        self.call_from_thread(self._refresh_composer_info)
 
     @staticmethod
     def _fmt_tokens(n: int) -> str:
@@ -8468,6 +8599,7 @@ class NovaApp(App):
         mode has a distinct look *and* a distinct animation.
         """
         self._refresh_oracle()
+        self._refresh_composer_modes()
         plan = getattr(self.session_state, "plan_mode_enabled", False)
         browser = getattr(self.session_state, "browser_mode_enabled", False)
         bash = input_value.startswith("!") and not browser
@@ -11654,14 +11786,9 @@ class NovaApp(App):
                     if m:
                         lines.append(m)
 
-                from novacode_cli.commands.evolution_command import handle_evolution_command
+                from novacode_cli.commands.evolution_handler import handle_evolution_command
 
-                try:
-                    await handle_evolution_command(emit=_emit)
-                except ImportError:
-                    from novacode_cli.commands.evolution_handler import handle_evolution_command
-
-                    await handle_evolution_command(emit=_emit)
+                await handle_evolution_command(emit=_emit)
                 text_out = "\n".join(lines)
                 plain = Text.from_markup(text_out).plain.strip()
                 if msg_obj is not None:
@@ -12892,6 +13019,7 @@ class NovaApp(App):
         self._compression_mode = mode
         self._caveman_enabled = mode == "caveman"
         self._refresh_caveman_toggle()
+        self._refresh_composer_modes()
         self.query_one("#prompt", PromptInput).focus()
 
     async def _run_ponytail_helper(self, text: str) -> None:
@@ -16742,6 +16870,9 @@ class NovaApp(App):
         rain. Only acts while the banner is still on screen (home screen).
         """
         self._apply_responsive_layout(event)
+        # The strip's visibility depends on the tiny/short breakpoints; a resize
+        # can flip them, and two stale footer rows overflow a short terminal.
+        self._refresh_info_bar()
         self.call_after_refresh(self._refresh_tabs)
         self.call_after_refresh(self._position_palette)
         self.call_after_refresh(self._paint_avatar)
@@ -18268,22 +18399,51 @@ class NovaApp(App):
         return export_html(tree, title=title, subtitle=subtitle)
 
     async def _run_export(self, text: str) -> None:
-        """Write the session tree to a self-contained HTML file."""
+        """Ask what to export, then write the session to a file.
+
+        The dialog chooses Markdown or JSON and which extras (thinking, tool
+        activity) ride along; a destination argument still wins over the
+        default location. Cancelling writes nothing.
+        """
         from novacode_cli.config import config as nova_config
+        from novacode_cli.session.history_export import export_json, export_markdown
+        from novacode_cli.tui.screens import ExportOptionsModal
 
         tree = await self._history_tree()
         if tree is None:
             return
+        options = await self.push_screen_wait(ExportOptionsModal())
+        if not options:
+            self._log(Text("Export cancelled.", style="yellow"))
+            return
         parts = text.split(maxsplit=1)
-        name = f"nova-session-{self.session_state.session_id[:8]}.html"
-        page = self._export_page(tree)
+        suffix = ".md" if options["format"] == "markdown" else ".json"
+        name = f"nova-session-{self.session_state.session_id[:8]}{suffix}"
+        branches = sum(max(0, len(n.children) - 1) for n in tree.nodes.values())
+        branches += max(0, len(tree.roots) - 1)
+        first = next((n.text for n in tree.nodes.values() if n.kind == "user"), "")
+        title = " ".join(first.split())[:80] or "Nova session"
+        subtitle = (
+            f"Nova session {self.session_state.session_id[:8]} · {self.model_name or 'model'}"
+            f" · {len(tree.nodes)} messages · {branches + 1} branch(es)"
+        )
+        kwargs = {
+            "include_thinking": options["thinking"],
+            "include_tools": options["tools"],
+        }
 
         def write() -> Path:
             if len(parts) > 1:
                 target = Path(parts[1].strip().strip('"')).expanduser()
+                if not target.suffix:
+                    target = target.with_suffix(suffix)
             else:
                 target = Path(nova_config.HOME_DIR) / "exports" / name
             target.parent.mkdir(parents=True, exist_ok=True)
+            if options["format"] == "markdown":
+                page = export_markdown(tree, title=title, subtitle=subtitle, **kwargs)
+            else:
+                page = export_json(tree, title=title, subtitle=subtitle, **kwargs)
             target.write_text(page, encoding="utf-8")
             return target.resolve()
 

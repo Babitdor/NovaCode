@@ -31,7 +31,6 @@ PLAN_AGENT_TOOLS = [
     "git_diff",
     "web_search",
     "fetch_url",
-    "docs_search",
     "ask_question",
     "exit_plan_mode",
 ]
@@ -41,7 +40,6 @@ EXECUTION_AGENT_TOOLS = [
     "git_diff",
     "web_search",
     "fetch_url",
-    "docs_search",
 ]
 
 
@@ -158,7 +156,6 @@ async def _start_plan_mode(
         )
         from novacode_cli.tools.web_tools import (
             web_search,
-            docs_search,
             duckduckgo_search,
         )
 
@@ -174,7 +171,6 @@ async def _start_plan_mode(
                 exit_plan_mode,
                 recent_plans,
                 web_search,
-                docs_search,
                 duckduckgo_search,
             ],
             steering_instructions=session_state.steering_instructions,
@@ -276,7 +272,7 @@ async def _disable_plan_mode(
         # The Nova Agent will now execute with full tools
         console.print("[cyan]Nova Agent ready for execution[/cyan]")
         console.print(
-            "[dim]Available tools: git_diff, web_search, fetch_url, docs_search[/dim]"
+            "[dim]Available tools: git_diff, web_search, fetch_url[/dim]"
         )
         console.print()
     else:

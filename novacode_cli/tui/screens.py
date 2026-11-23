@@ -25,6 +25,8 @@ from textual.widgets import (
     Button,
     Input,
     OptionList,
+    RadioButton,
+    RadioSet,
     Select,
     SelectionList,
     Static,
@@ -105,6 +107,59 @@ def _fuzzy_match(spec: str, needle: str) -> bool:
         return True
     remaining = iter(spec.casefold())
     return all(character in remaining for character in needle.casefold())
+
+
+class ExportOptionsModal(ModalScreen[dict | None]):
+    """Format and content choices for ``/export``.
+
+    Returns ``{"format": "markdown" | "json", "thinking": bool, "tools": bool}``,
+    or ``None`` when the user cancels.
+    """
+
+    BINDINGS = [("escape", "cancel", "Cancel")]
+
+    _FORMAT_VALUES = ("markdown", "json")
+    _INCLUDE_VALUES = ("all", "thinking", "tools", "none")
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="modal-box"):
+            yield Static(Text("Export session", style="bold"), id="modal-title")
+            yield Static("Format", classes="modal-label")
+            with RadioSet(id="export-format"):
+                yield RadioButton("Markdown", value=True, id="fmt-md")
+                yield RadioButton("JSON", id="fmt-json")
+            yield Static("Include", classes="modal-label")
+            with RadioSet(id="export-include"):
+                yield RadioButton("Thinking and tools", value=True, id="inc-all")
+                yield RadioButton("Thinking only", id="inc-thinking")
+                yield RadioButton("Tools only", id="inc-tools")
+                yield RadioButton("Conversation only", id="inc-none")
+            with Horizontal(id="modal-buttons"):
+                yield Button("Export (enter)", id="export", variant="primary")
+                yield Button("Cancel (esc)", id="cancel")
+
+    def on_mount(self) -> None:
+        animate_modal_screen(self)
+
+    def _pressed_value(self, set_id: str, values: tuple[str, ...]) -> str:
+        buttons = self.query_one(f"#{set_id}", RadioSet)
+        options = list(buttons.query(RadioButton))
+        pressed = buttons.pressed_button
+        return values[options.index(pressed)] if pressed in options else values[0]
+
+    def result(self) -> dict:
+        include = self._pressed_value("export-include", self._INCLUDE_VALUES)
+        return {
+            "format": self._pressed_value("export-format", self._FORMAT_VALUES),
+            "thinking": include in {"all", "thinking"},
+            "tools": include in {"all", "tools"},
+        }
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        self.dismiss(self.result() if event.button.id == "export" else None)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
 
 
 class ConfirmModal(ModalScreen[bool]):

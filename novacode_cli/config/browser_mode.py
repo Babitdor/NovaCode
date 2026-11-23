@@ -17,7 +17,6 @@ RESEARCH_TOOLS = (
         {
             "web_search",
             "duckduckgo_search",
-            "docs_search",
             "fetch_url",
             "search_tools",
             "tool_search",

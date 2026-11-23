@@ -2266,9 +2266,8 @@ def create_agent_with_config(
     if agent_dir:
         allowed_prefixes.append(str(agent_dir))
         # Auto-create simple memory structure on first use so the agent has
-        # a memory file to read/write without needing the
-        # create_memory_structure tool (which is no longer registered in the
-        # default toolset).
+        # a memory file to read/write without needing a separate scaffolding
+        # tool.
         _agent_md = agent_dir / "agent.md"
         if not _agent_md.exists():
             agent_dir.mkdir(parents=True, exist_ok=True)
@@ -2561,6 +2560,7 @@ This file stores your preferences and context that persist across sessions.
     if sandbox is None and not extra_middleware and team_binding is None:
         from novacode_cli.tools.image_gen import build_image_gen_tool
         from novacode_cli.tools.knowledge_tools import build_knowledge_tool
+        from novacode_cli.tools.outline_tools import build_file_outline_tool
 
         if not any(_tool_name(tool) == "image_gen" for tool in tools):
             tools.append(build_image_gen_tool(lambda: worktree_middleware.session.root))
@@ -2569,6 +2569,7 @@ This file stores your preferences and context that persist across sessions.
             build_knowledge_tool(
                 lambda: worktree_middleware.session.root, assistant_id, composite_backend, model
             ),
+            build_file_outline_tool(lambda: worktree_middleware.session.root),
         ]
         knowledge_instructions = (
             "\n\nPrefer knowledge_lookup for workspace code/documentation orientation and "

@@ -136,8 +136,8 @@ _DEFAULT_TOOL_TIERS: dict[str, Tier] = {
     "start_dev_server": "ask",
     "write_memory": "ask",
     "web_search": "allow",
-    "docs_search": "allow",
     "duckduckgo_search": "allow",
+    "file_outline": "allow",  # Read-only heading index/section reads, workspace-confined.
 }
 
 # Built-in shell allowlist — safe, read-only-ish commands that should run silently.

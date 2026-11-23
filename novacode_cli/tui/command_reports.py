@@ -111,7 +111,9 @@ class CacheScreen(ReferenceScreen):
                 ("Generation calls", f"{data.get('generation_calls', 0):,}"),
                 ("Tokens avoided (est.)", f"{data.get('avoided_tokens_estimate', 0):,}"),
                 ("Invalidations", f"{data.get('invalidations', 0):,}"),
-                ("Cache generation", f"{data.get('epoch', 0):,}"),
+                # `epoch` counts clear/off fences, not generations — label it
+                # as what it is, or a cleared-twice cache reads as "active".
+                ("Clears (epoch)", f"{data.get('epoch', 0):,}"),
             )
             for label, value in fields:
                 table.add_row(label, value)

@@ -64,7 +64,6 @@ _BUILTIN_TOOLS: frozenset[str] = frozenset(
         "think",
         "web_search",
         "duckduckgo_search",
-        "docs_search",
         "code_search",
         "find_related_code",
         "fetch_url",

@@ -308,6 +308,73 @@ def test_command_result_serializes_blocks() -> None:
     assert result.as_blocks() == [{"kind": "text", "text": "hi"}]
 
 
+async def test_export_asks_the_client_then_writes_the_chosen_format(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import json
+
+    from novacode_cli.config import config as nova_config
+    from novacode_cli.session.session_persistence import SessionManager
+
+    monkeypatch.setattr(nova_config, "HOME_DIR", tmp_path / ".nova")
+    sm = SessionManager(tmp_path)
+    sm.history_tree("s1").sync(
+        [
+            {"type": "HumanMessage", "content": "hi", "id": "h1"},
+            {"type": "AIMessage", "content": "hello", "id": "a1"},
+        ]
+    )
+    captured: dict[str, ScreenSpec] = {}
+
+    async def asker(spec: ScreenSpec) -> Any:  # noqa: ANN401 — a modal owns its shape
+        captured["spec"] = spec
+        return {"format": "json", "thinking": True, "tools": True}
+
+    port = ServerPort([].append, _worker(session_manager=sm), ask_screen=asker)
+    target = tmp_path / "out.json"
+    result = await port.run("export", str(target))
+
+    assert result.ok is True
+    assert captured["spec"].kind == "form"
+    fields = {field["key"]: field for field in captured["spec"].payload["fields"]}
+    assert fields["format"]["options"] == ["markdown", "json"]
+    assert fields["thinking"]["toggle"] is True and fields["tools"]["toggle"] is True
+    data = json.loads(target.read_text(encoding="utf-8"))
+    assert data["format"] == "nova-session-export/1"
+    assert [m["role"] for m in data["messages"]] == ["user", "assistant"]
+
+
+async def test_export_without_a_client_writes_the_html_default(tmp_path: Path) -> None:
+    from novacode_cli.session.session_persistence import SessionManager
+
+    sm = SessionManager(tmp_path)
+    sm.history_tree("s1").sync([{"type": "HumanMessage", "content": "hi", "id": "h1"}])
+    port, _ = _port(_worker(session_manager=sm))
+
+    result = await port.run("export", str(tmp_path / "out"))
+
+    assert result.ok is True
+    text = (tmp_path / "out.html").read_text(encoding="utf-8")
+    assert text.startswith("<!doctype html>")
+
+
+async def test_export_cancelled_when_the_client_declines(tmp_path: Path) -> None:
+    from novacode_cli.session.session_persistence import SessionManager
+
+    sm = SessionManager(tmp_path)
+    sm.history_tree("s1").sync([{"type": "HumanMessage", "content": "hi", "id": "h1"}])
+
+    async def asker(spec: ScreenSpec) -> Any:  # noqa: ANN401 — a modal owns its shape
+        return None
+
+    port = ServerPort([].append, _worker(session_manager=sm), ask_screen=asker)
+    result = await port.run("export", str(tmp_path / "out.json"))
+
+    assert result.ok is True
+    assert result.message == "Export cancelled."
+    assert not list(tmp_path.glob("out*"))
+
+
 def test_ledger_lists_every_command_handler_module() -> None:
     """Every module under ``commands/`` must be auditable in the parity ledger."""
     ledger = (ROOT / "rust" / "LEDGER.md").read_text(encoding="utf-8")

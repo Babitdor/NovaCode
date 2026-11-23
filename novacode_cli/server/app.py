@@ -88,12 +88,10 @@ def _create_server_agent(
 
     # ── Tools (mirrors the CLI tool list from main.py) ──────────────
     from novacode_cli.tools import (
-        docs_search,
         duckduckgo_search,
         fetch_url,
         forget,
         list_memories,
-        oracle,
         read_memory,
         recall,
         remember,
@@ -125,10 +123,8 @@ def _create_server_agent(
         wiki_write,
         think,
         speak,
-        oracle,
         skill_manage,
         duckduckgo_search,
-        docs_search,
         write_memory,
         read_memory,
         remember,
