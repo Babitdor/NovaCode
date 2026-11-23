@@ -111,6 +111,7 @@ class CommandResult:
     create: str | None = None
     resume: str | None = None
     close: str | None = None
+    avatar: dict[str, object] | None = None
 
     def as_blocks(self) -> list[dict[str, str]]:
         """Serialize the blocks as the protocol's kind/text dicts.

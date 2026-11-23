@@ -56,11 +56,16 @@ async def test_notices_preserve_transcript_draft_scroll_and_tool_group(
         prompt.text = "Keep my draft"
         app._follow_tail = False
         original_scroll = transcript.scroll_y
+        # Toast coalescing debounces notices by 0.5s; flush synchronously and
+        # both notices combine into ONE notify call.
         app._log(Text("Saved [profile]", style="green"))
-        await pilot.pause()
-        toast.assert_called_once_with("Saved [profile]", timeout=4, markup=False)
         app._log("Saved [literal text]")
-        toast.assert_called_with("Saved [literal text]", timeout=4, markup=False)
+        app._flush_toasts()
+        toast.assert_called_once()
+        combined = toast.call_args.args[0]
+        assert "Saved [profile]" in combined
+        assert "Saved [literal text]" in combined
+        assert toast.call_args.kwargs == {"timeout": 4, "markup": False}
         close_group.assert_not_called()
         assert list(transcript.children) == before
         assert prompt.text == "Keep my draft"
@@ -100,10 +105,12 @@ async def test_progress_uses_toasts_but_reports_and_conversation_remain(
                 event_type="nova_prime_receipt",
             )
         )
-        await pilot.pause()
+        # Toast coalescing debounces notices by 0.5s; flush synchronously —
+        # the progress and receipt notices combine into ONE notify call.
+        app._flush_toasts()
         assert list(transcript.children) == before
-        assert toast.call_args.args[0] == (
-            "Prime Deep Work · delivered. Use /prime report for details."
+        assert "Prime Deep Work · delivered. Use /prime report for details." in (
+            toast.call_args.args[0]
         )
         await app._run_prime("/prime status")
         await app._run_plan("/plan status")

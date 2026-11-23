@@ -19,8 +19,8 @@ and Evidence is how that was decided:
 ## Summary
 
 * 105 commands in the TUI table.
-* **99 served** by the socket port today.
-* **6 waiting**, by evidence - app-side: 6.
+* **105 served** by the socket port today.
+* **0 waiting**, by evidence - .
 
 ## Worklist
 
@@ -57,13 +57,13 @@ and Evidence is how that was decided:
 | /skills | passthrough | yes | shared-command | _run_skills | - |
 | /agents | passthrough | yes | shared-command | _run_agents | - |
 | /plan | passthrough | yes | shared-command | _run_plan | - |
-| /claude-plan | passthrough | **no** | app-side | _run_claude_plan | - |
-| /codex-plan | passthrough | **no** | app-side | _run_codex_plan | - |
-| /claude-review | passthrough | **no** | app-side | _run_claude_review | - |
-| /codex-review | passthrough | **no** | app-side | _run_codex_review | - |
+| /claude-plan | passthrough | yes | port-command | _run_claude_plan | - |
+| /codex-plan | passthrough | yes | port-command | _run_codex_plan | - |
+| /claude-review | passthrough | yes | port-command | _run_claude_review | - |
+| /codex-review | passthrough | yes | port-command | _run_codex_review | - |
 | /goal | passthrough | yes | port-command | _run_goal | - |
 | /btw | passthrough | yes | port-command | _run_btw | - |
-| /remote | passthrough | **no** | app-side | _run_remote | - |
+| /remote | passthrough | yes | port-command | _run_remote | - |
 | /compact | passthrough | yes | shared-command | _run_compact | - |
 | /update | screen | yes | port-screen | _run_update_check | - |
 | /save | passthrough | yes | shared-command | _run_save | - |
@@ -74,7 +74,7 @@ and Evidence is how that was decided:
 | /steer | passthrough | yes | port-command | _run_steer | - |
 | /notifications | passthrough | yes | port-command | _run_notifications | - |
 | /cron | passthrough | yes | port-command | _passthrough_command | - |
-| /loop | passthrough | **no** | app-side | _run_loop | - |
+| /loop | passthrough | yes | port-command | _run_loop | - |
 | /webhook | passthrough | yes | port-command | _passthrough_command | - |
 | /prompt | passthrough | yes | port-command | _passthrough_command | - |
 | /refine | passthrough | yes | shared-command | _passthrough_command | - |

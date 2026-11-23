@@ -10,11 +10,34 @@ use serde_json::json;
 
 use nova_tui::frames::{self, Inbound};
 use nova_tui::state::{apply, AppState, Effect, ScreenKind};
+use nova_tui::ui;
 use nova_tui::ui::{palette, screen};
 
 /// A key press with no modifiers.
 fn key(code: KeyCode) -> KeyEvent {
     KeyEvent::new(code, KeyModifiers::NONE)
+}
+
+/// Render the whole client into a buffer and return the visible text.
+fn screen_text(state: &mut AppState) -> String {
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal as Ratatui;
+
+    let backend = TestBackend::new(120, 40);
+    let mut terminal = Ratatui::new(backend).expect("terminal");
+    let theme = nova_tui::theme::Theme::default();
+    terminal
+        .draw(|frame| nova_tui::ui::draw(frame, state, &theme))
+        .expect("draw");
+    let buffer = terminal.backend().buffer();
+    let mut text = String::new();
+    for row in 0..buffer.area.height {
+        for col in 0..buffer.area.width {
+            text.push_str(buffer[(col, row)].symbol());
+        }
+        text.push('\n');
+    }
+    text
 }
 
 /// Apply every line of *lines*, for terser tests.
@@ -158,7 +181,7 @@ fn the_tab_bar_takes_a_row_only_when_it_exists() {
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
 
-    fn render(state: &AppState) -> String {
+    fn render(state: &mut AppState) -> String {
         let backend = TestBackend::new(40, 10);
         let mut terminal = Terminal::new(backend).expect("terminal");
         let theme = nova_tui::theme::Theme::default();
@@ -176,18 +199,18 @@ fn the_tab_bar_takes_a_row_only_when_it_exists() {
         text
     }
 
-    let two = applied(
+    let mut two = applied(
         r##"{"t":"sessions","sessions":[{"id":"alpha","name":"alpha","cwd":"C:/a","status":"idle","model":"m1"},{"id":"beta","name":"beta","cwd":"C:/b","status":"idle","model":"m2"}],"active":"alpha"}"##,
     );
-    let rendered = render(&two);
+    let rendered = render(&mut two);
     let row5: String = rendered.lines().nth(5).unwrap_or_default().to_string();
     assert!(row5.contains("alpha"), "tab row: {row5:?}");
     assert!(row5.contains("beta"), "tab row: {row5:?}");
 
-    let one = applied(
+    let mut one = applied(
         r##"{"t":"sessions","sessions":[{"id":"alpha","name":"alpha","cwd":"C:/a","status":"idle","model":"m1"}],"active":"alpha"}"##,
     );
-    let rendered_one = render(&one);
+    let rendered_one = render(&mut one);
     let row5_one: String = rendered_one.lines().nth(5).unwrap_or_default().to_string();
     assert!(!row5_one.contains("alpha"), "no tab bar: {row5_one:?}");
 }
@@ -453,7 +476,7 @@ fn a_command_result_can_carry_a_screen_without_an_id() {
 const SCREEN_FIXTURE: &str = include_str!("fixtures/screens.jsonl");
 
 /// Render the whole client at a fixed size, for layout assertions.
-fn render(state: &AppState) -> String {
+fn render(state: &mut AppState) -> String {
     let theme = nova_tui::theme::Theme::default();
     let backend = ratatui::backend::TestBackend::new(100, 35);
     let mut terminal = ratatui::Terminal::new(backend).expect("terminal");
@@ -502,7 +525,7 @@ fn every_recorded_screen_renders_and_answers_from_the_fixture() {
         let view = state.screen.clone().expect("the frame opens a modal");
         seen.push(view.kind);
         titles.push(view.title.clone());
-        let painted = render(&state);
+        let painted = render(&mut state);
         assert!(
             painted.contains(&view.title) || painted.contains(view.kind.label()),
             "the {} screen must paint: {painted}",
@@ -809,4 +832,213 @@ fn copy_actions_gather_transcript_text() {
         }
         other => panic!("expected a copy-all, got {other:?}"),
     }
+}
+
+/// A `ready` frame that names the saved home layout.
+fn ready_with_home(style: &str, animation: bool) -> String {
+    json!({
+        "t": "ready",
+        "protocol": frames::PROTOCOL_VERSION,
+        "session_id": "s1",
+        "model": "test-model",
+        "ui": "ratatui",
+        "home": {"style": style, "animation": animation, "version": "9.9.9"},
+    })
+    .to_string()
+}
+
+#[test]
+fn the_banner_draws_on_an_empty_conversation_for_the_banner_layouts() {
+    let mut state = AppState::new();
+    apply(
+        &mut state,
+        &frames::decode(&ready_with_home("signal", false)).expect("decode"),
+    );
+    let banner = state.home.as_ref().expect("home");
+    assert_eq!(banner.style, "signal");
+    assert!(banner.shows_banner());
+    // At 100 columns the lockup tiers in: the portrait's top row, plus the
+    // version caption under the wordmark.
+    let rendered = screen_text(&mut state);
+    assert!(
+        rendered.contains(nova_tui::ui::brand_art::PORTRAIT[0]),
+        "{rendered}"
+    );
+    assert!(rendered.contains("v9.9.9"), "{rendered}");
+}
+
+#[test]
+fn a_plain_layout_gets_no_banner_and_an_empty_conversation_stays_empty() {
+    let mut state = AppState::new();
+    apply(
+        &mut state,
+        &frames::decode(&ready_with_home("studio", true)).expect("decode"),
+    );
+    let rendered = screen_text(&mut state);
+    assert!(!rendered.contains("v9.9.9"), "{rendered}");
+    assert!(
+        !rendered.contains(nova_tui::ui::brand_art::PORTRAIT[0]),
+        "{rendered}"
+    );
+}
+
+#[test]
+fn a_conversation_hides_the_banner() {
+    let mut state = AppState::new();
+    for line in [
+        ready_with_home("dashboard", false),
+        r#"{"t":"ev","c":"TextDelta","d":{"text":"hello"},"prompt_id":"p1"}"#.to_string(),
+    ] {
+        if let Some(frame) = frames::decode(&line) {
+            for _ in apply(&mut state, &frame) {}
+        }
+    }
+    assert!(!state.streaming.is_empty(), "the conversation has text");
+    let rendered = screen_text(&mut state);
+    assert!(!rendered.contains("v9.9.9"), "{rendered}");
+}
+
+/// A two-cell sprite: enough to prove the payload path and the overlay rule.
+fn sprite_sheet() -> serde_json::Value {
+    json!({
+        "width": 2,
+        "height": 1,
+        "fps": {"idle": 1.0},
+        "foreground": ["#00ff00", "#00ff00"],
+        "background": ["", ""],
+        "frames": [{
+            "state": "idle",
+            "rows": ["##", "  "],
+            "cells": [[1, 0]],
+        }],
+    })
+}
+
+#[test]
+fn the_nova_command_puts_the_sprite_on_screen_only_when_there_is_room() {
+    let mut state = AppState::new();
+    for line in [
+        ready_with_home("studio", false),
+        json!({
+            "t": "command_result",
+            "id": "c1",
+            "ok": true,
+            "message": "Avatar shown at 2x1.",
+            "blocks": [{"kind": "text", "text": "Avatar shown at 2x1."}],
+            "action": "avatar",
+            "avatar": sprite_sheet(),
+        })
+        .to_string(),
+    ] {
+        apply(&mut state, &frames::decode(&line).expect("decode"));
+    }
+    assert_eq!(state.avatar.as_ref().map(|sprite| sprite.width), Some(2));
+    let large = render(&mut state);
+    assert!(large.contains("##"), "{large}");
+    assert!(
+        large.contains("Avatar shown at 2x1."),
+        "the transcript keeps its text"
+    );
+
+    // Below the terminal UI's minimum the sprite is absent, not squeezed.
+    let theme = nova_tui::theme::Theme::default();
+    let backend = ratatui::backend::TestBackend::new(80, 24);
+    let mut terminal = ratatui::Terminal::new(backend).expect("terminal");
+    terminal
+        .draw(|frame| nova_tui::ui::draw(frame, &mut state, &theme))
+        .expect("draw");
+    let buffer = terminal.backend().buffer().clone();
+    let mut small = String::new();
+    for y in 0..24 {
+        for x in 0..80 {
+            small.push_str(buffer[(x, y)].symbol());
+        }
+        small.push('\n');
+    }
+    assert!(!small.contains("##"), "{small}");
+}
+
+#[test]
+fn a_shell_command_fills_the_terminal_pane_and_keeps_its_exit() {
+    let mut state = applied(concat!(
+        r#"{"t":"pty","id":"p1","command":"pwd","text":"C:/work"}"#,
+        "\n",
+        r#"{"t":"pty","id":"p1","command":"pwd","text":"\r\ndone\r\n"}"#,
+        "\n",
+        r#"{"t":"pty_exit","id":"p1","code":0}"#,
+    ));
+
+    let lines = state.terminal.as_ref().expect("a pane").view();
+    assert_eq!(lines, vec!["C:/work".to_string(), "done".to_string()]);
+    let rendered = screen_text(&mut state);
+    assert!(rendered.contains("!!pwd"), "{rendered}");
+    assert!(rendered.contains("done"), "{rendered}");
+    assert!(rendered.contains("exit 0"), "{rendered}");
+}
+
+#[test]
+fn a_running_terminal_takes_the_keystrokes() {
+    let mut state = applied(r#"{"t":"pty","id":"p1","command":"python","text":"$ "}"#);
+
+    let enter = ui::terminal::handle_key(&mut state, &key(KeyCode::Enter));
+    let Some(Effect::Send(frame)) = enter else {
+        panic!("Enter should reach the child");
+    };
+    assert!(frame.contains("pty_input"), "{frame}");
+    assert!(frame.contains(r#""text":"\r""#), "{frame}");
+
+    let escape = ui::terminal::handle_key(&mut state, &key(KeyCode::Esc));
+    let Some(Effect::Send(frame)) = escape else {
+        panic!("Escape should close the pane");
+    };
+    assert!(frame.contains("pty_close"), "{frame}");
+    assert!(state.terminal.is_none());
+}
+
+#[test]
+fn a_finished_terminal_ignores_the_keyboard() {
+    let mut state = applied(concat!(
+        r#"{"t":"pty","id":"p1","command":"true","text":""}"#,
+        "\n",
+        r#"{"t":"pty_exit","id":"p1","code":0}"#,
+    ));
+
+    assert!(ui::terminal::handle_key(&mut state, &key(KeyCode::Char('a'))).is_none());
+}
+
+#[test]
+fn a_collapsed_tool_card_hints_at_ctrl_o_and_expand_all_shows_everything() {
+    use nova_tui::state::{BlockKind, Entry, ToolCard};
+
+    let mut state = AppState::new();
+    state.entries.push(Entry {
+        kind: BlockKind::Tool(ToolCard {
+            name: "shell".into(),
+            display: "shell: pytest -q".into(),
+            full_output: "one\ntwo\nthree\nfour".into(),
+            finished: true,
+            ..ToolCard::default()
+        }),
+        text: String::new(),
+        agent: String::new(),
+    });
+
+    // Collapsed: head lines and the final line stay visible, the middle does
+    // not, and the card advertises the chord.
+    let text = screen_text(&mut state);
+    assert!(text.contains("[ctrl+o to expand]"));
+    assert!(text.contains("four"));
+    assert!(!text.contains("three"));
+
+    // Expansion is global: every line shows and the hint disappears.
+    state.expand_all = true;
+    let text = screen_text(&mut state);
+    assert!(text.contains("three"));
+    assert!(!text.contains("[ctrl+o to expand]"));
+
+    // Pressing the chord again restores the collapsed rendering.
+    state.expand_all = false;
+    let text = screen_text(&mut state);
+    assert!(text.contains("[ctrl+o to expand]"));
+    assert!(!text.contains("three"));
 }

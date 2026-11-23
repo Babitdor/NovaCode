@@ -89,8 +89,8 @@ def test_every_route_and_evidence_is_declared() -> None:
 
 
 def test_unserved_rows_say_why_they_wait() -> None:
+    # Every row is served now; a row that ever waits again must say why it does.
     waiting = [spec for spec in CATALOG.values() if not spec.served]
-    assert waiting, "a catalogue with everything served would hide the work left"
     for spec in waiting:
         assert spec.evidence in {"modal", "app-side", "background"}, spec
 
@@ -134,9 +134,9 @@ def test_unknown_commands_have_no_route() -> None:
     assert served_by("definitely-not-a-command") is False
 
 
-@pytest.mark.parametrize("name", ["claude-plan", "remote", "loop"])
-def test_unlanded_waves_are_explicitly_not_served(name: str) -> None:
-    assert served_by(name) is False
+def test_no_catalogued_command_is_left_unserved() -> None:
+    # Wave 8 finished the table: every row routes somewhere.
+    assert [name for name, spec in CATALOG.items() if not spec.served] == []
 
 
 def test_settings_is_served_by_a_port_screen() -> None:

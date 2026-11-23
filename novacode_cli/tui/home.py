@@ -13,6 +13,7 @@ from textual.message import Message
 from textual.widgets import Button, Static
 
 from novacode_cli.tui.home_scene import PORTRAIT_HOME_MIN_WIDTH
+from novacode_cli.ui.home import HOME_STYLES, home_style
 
 if TYPE_CHECKING:
     from textual import events
@@ -25,22 +26,9 @@ _KIB = 1024
 _WORDMARK_MIN_WIDTH = 50
 _BANNER_DOUBLE_WIDTH = 100
 
-HOME_STYLES = (
-    ("Dashboard · navigation and system panels", "dashboard"),
-    ("Classic · Matrix banner and chat", "classic"),
-    ("Centered · wordmark and focused composer", "centered"),
-    ("Banner · bold wordmark and open conversation", "banner"),
-    ("Terminal · shell prompt and unboxed output", "terminal"),
-    ("Workbench · character portrait and tool desk", "workbench"),
-    ("Notebook · ruled entries and generous reading space", "notebook"),
-    ("Outline · ASCII frames and plain controls", "outline"),
-    ("Focus · narrow reading column and quiet chrome", "focus"),
-    ("Studio · constellation portrait and soft controls", "studio"),
-    ("Ledger · dense entries and compact command desk", "ledger"),
-    ("Blueprint · scanning schematic and double rules", "blueprint"),
-    ("Signal · Classic banner with Matrix3 rain", "signal"),
-    ("Minimal · compact conversation and controls", "minimal"),
-)
+# `home_style`/`HOME_STYLES` live in `novacode_cli.ui.home` so the socket client
+# reads the same layout keys without importing Textual.
+__all__ = ["HOME_STYLES", "home_style"]
 
 # These layouts use the shared, lightweight home widgets and continue into chat.
 CONVERSATION_STYLES = frozenset(key for _, key in HOME_STYLES) - {
@@ -50,13 +38,6 @@ CONVERSATION_STYLES = frozenset(key for _, key in HOME_STYLES) - {
 }
 STYLED_HOME_STYLES = (CONVERSATION_STYLES - {"signal"}) | {"centered"}
 LAUNCHPAD_STYLES = CONVERSATION_STYLES - {"banner", "minimal", "signal"}
-
-
-def home_style(value: object, *, legacy_dashboard: object = True) -> str:
-    """Resolve a saved style, retaining the previous Dashboard/Classic choice."""
-    if isinstance(value, str) and value in {key for _, key in HOME_STYLES}:
-        return value
-    return "classic" if legacy_dashboard is False else "dashboard"
 
 
 @dataclass(frozen=True)

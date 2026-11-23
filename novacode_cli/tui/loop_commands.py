@@ -8,7 +8,9 @@ from typing import Any
 
 from rich.text import Text
 
-from novacode_cli.loops import LoopJob, LoopSpec, current_loop, load_instructions, loop_command
+from novacode_cli.loops import LoopJob, current_loop, loop_command
+from novacode_cli.ui.loops import instruction as loop_instruction
+from novacode_cli.ui.loops import iteration_prompt as loop_iteration_prompt
 
 # TUI and focused test hosts expose the same runtime attributes.
 # ruff: noqa: ANN401
@@ -92,30 +94,6 @@ def poll_loops(app: Any) -> None:
             workers[(scheduler.thread_id, job.id)] = app._run_loop_job(state, job)
 
 
-async def _iteration_prompt(state: Any, spec: LoopSpec, assistant_id: str) -> str:
-    project = getattr(state, "workspace_root", None)
-    if not project:
-        from novacode_cli.config.config import settings
-
-        project = settings.get_workspace_root()
-    prompt = spec.prompt or await asyncio.to_thread(load_instructions, str(project or ""))
-    if not prompt.startswith("/"):
-        return prompt
-    from novacode_cli.commands.skill_invoke import _try_skill_invocation
-
-    name, _, arguments = prompt[1:].partition(" ")
-    if arguments.strip().startswith("--run"):
-        msg = "Loop skills use the agent's tool approvals; direct --run is unsupported."
-        raise ValueError(msg)
-    skill = await _try_skill_invocation(
-        name.removeprefix("skill:"), arguments or None, state, assistant_id
-    )
-    if skill is None:
-        msg = f"Unknown loop skill: /{name}"
-        raise ValueError(msg)
-    return skill.prompt
-
-
 async def run_loop_iteration(app: Any, state: Any, job: LoopJob) -> None:
     """Resolve instructions off-thread, recheck ownership, then use the normal turn."""
     scheduler = state._loop_scheduler
@@ -123,7 +101,7 @@ async def run_loop_iteration(app: Any, state: Any, job: LoopJob) -> None:
     token = current_loop.set((scheduler.thread_id, job.id))
     retry = False
     try:
-        prompt = await _iteration_prompt(state, job.spec, app.assistant_id)
+        prompt = await loop_iteration_prompt(state, job.spec, app.assistant_id)
         if (
             scheduler.closed
             or scheduler.thread_id != state.thread_id
@@ -134,13 +112,7 @@ async def run_loop_iteration(app: Any, state: Any, job: LoopJob) -> None:
         if not loop_idle(app, state):
             retry = True
             return
-        instruction = (
-            f"[Session loop {job.id}]\n{prompt}\n\n"
-            "This iteration inherits the session's existing tool permissions and approvals. "
-            "Use schedule_wakeup(stop=true) when the task is complete or cancelled. "
-            "For a self-paced loop, call schedule_wakeup(delay_seconds=...) to continue; "
-            "without that call it stops after this iteration."
-        )
+        instruction = loop_instruction(job.id, prompt)
         app._log(Text(f"↻ Running loop {job.id}", style="dim"))
         await app._stream_prompt(instruction)
         if getattr(app, "_stream_turn_failed", False):

@@ -38,6 +38,15 @@ if TYPE_CHECKING:
     from novacode_cli.tui.scrollback import Scrollback
 
 from novacode_cli.image_utils import ImageData
+
+#: Streamed live previews stop growing once their bounded tail reaches this many
+#: characters — the widgets.py pairing of ``_LIVE_PREVIEW_CHARS`` in app.py
+#: (widgets.py must not import from app.py). Beyond the cap, the plain length
+#: no longer changes between chunks while wrapped line counts still can, so the
+#: size-dims proxy in ``ChatMessage._paint_body`` stops being sound and every
+#: paint there must take the layout path.
+_STREAM_SATURATED_CHARS = 20_000
+
 from novacode_cli.input_utils import (
     PASTE_MIN_CHARS,
     PASTE_MIN_NEWLINES,
@@ -1018,6 +1027,30 @@ class OutputLog(VerticalScroll):
         if follow:
             self.call_after_refresh(self.scroll_end, animate=False)
 
+    def tail_matches(self, content: Any) -> bool:
+        """True when the stored output already ends with ``content``.
+
+        Lets a finalize step skip its clear()+write() rebuild when the live
+        stream already painted the final output (up to the same bounding this
+        class applies in ``write``). Compares plain text only — callers that
+        need to change the *style* must not rely on this alone.
+        """
+        if isinstance(content, Text):
+            text = content
+        else:
+            text = Text(str(content))
+        text.expand_tabs()
+        plain = text.plain[-(self.max_chars - 1):]
+        final_lines = plain.split("\n")
+        stored = self._output_lines
+        if len(final_lines) > len(stored):
+            return False
+        from itertools import islice
+
+        start = len(stored) - len(final_lines)
+        tail = islice(stored, start, len(stored))
+        return "\n".join(line.plain for line in tail) == plain
+
     def clear(self) -> OutputLog:
         self._output_lines.clear()
         self._output_chars = 0
@@ -1337,6 +1370,9 @@ class ChatMessage(Vertical):
     def update_body(self, renderable: Any) -> None:
         if self._closing or self._pruning:
             return
+        # Keep raw_text in sync with exactly what was painted. Streaming callers
+        # pass a bounded tail, so this copy is bounded too — never re-derive it
+        # from the full buffer here.
         self.raw_text = self._renderable_text(renderable)
         try:
             body = self.query_one(".body")
@@ -1354,11 +1390,53 @@ class ChatMessage(Vertical):
                 self.mount(renderable)
         else:
             if isinstance(body, SelectableStatic):
-                body.update(renderable)
+                self._paint_body(body, renderable)
             else:
                 body.remove()
                 new_body = SelectableStatic(renderable, classes="body")
                 self.mount(new_body)
+
+    @staticmethod
+    def _paint_body(body: SelectableStatic, renderable: Any) -> None:
+        """``Static.update`` that re-lays-out only when the content's size changed.
+
+        Mirrors ``NovaApp._paint`` (app.py) — widgets.py must not import from
+        app.py. ``update()`` defaults to ``layout=True`` and a layout re-arranges
+        the whole screen; a streaming body whose line count is unchanged only
+        needs a repaint. Identical content is skipped entirely.
+
+        Dims are wrap-aware: a long single line re-wraps at the widget width,
+        so the longest segment is tracked alongside width and newline count.
+        Once a streamed tail saturates at ``_STREAM_SATURATED_CHARS`` even the
+        wrap dims stop moving, so layout is forced unconditionally — a stale
+        height there would clip the newest streamed row.
+        """
+        if not isinstance(renderable, (str, Text)):
+            # A Group/Markdown/Table: its size is not knowable from text, so
+            # take the safe path.
+            body.update(renderable)
+            body._nova_painted = None
+            return
+        plain = renderable.plain if hasattr(renderable, "plain") else str(renderable)
+        width = renderable.cell_len if hasattr(renderable, "cell_len") else len(plain)
+        dims = (width, plain.count("\n"), max(len(seg) for seg in plain.split("\n")))
+        # Text.__eq__ compares plain text and spans but NOT the base style, so
+        # a recoloured body would look "identical" — include the style.
+        look = (
+            plain,
+            str(getattr(renderable, "style", "")),
+            tuple(getattr(renderable, "spans", ())),
+        )
+        prev = getattr(body, "_nova_painted", None)
+        if prev is not None and prev[0] == look:
+            return
+        body.update(
+            renderable,
+            layout=prev is None
+            or prev[1] != dims
+            or len(plain) >= _STREAM_SATURATED_CHARS,
+        )
+        body._nova_painted = (look, dims)
 
     @staticmethod
     def _renderable_text(renderable: Any) -> str:

@@ -42,6 +42,12 @@ DEFAULT_MEMORY_BLOCK_CHARS = 6_000
 DEFAULT_MEMORY_INDEX_CHARS = 2_000
 
 
+#: Chars of auto-matched topic excerpts injected after the cache breakpoint each
+#: turn (associative pre-turn recall). Excerpts are discovery, not proof; full
+#: pages remain reachable via ``memory_search`` and explicit reads.
+DEFAULT_RELEVANT_MEMORY_CHARS = 1_200
+
+
 def memory_budget(context_window: int, cap: int = DEFAULT_MEMORY_BLOCK_CHARS) -> int:
     """Chars one injected memory block may use, given the model's window.
 

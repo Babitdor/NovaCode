@@ -121,12 +121,11 @@ It also counts task failures where a file-edit tool result was observed without
 a later recognized check command. This is an observable trace signal, not a
 failure diagnosis or proof that any check passed. Shell-based file writes and
 custom check scripts are outside this detector.
-The agent-side reminder is experimental and disabled by default. Set
-`NOVA_VERIFY_AFTER_EDIT=1` for a local run to make NovaCode send one internal
-verification reminder after an observed file edit with no completed recognized
-later check, or when the latest recognized check reports failure. It can add a
-model turn when custom validation was already sufficient. A successful command
-does not prove the check covered the requested behavior.
+The agent-side reminder is mandatory. NovaCode sends one internal verification
+reminder after an observed file edit with no completed recognized later check,
+or when the latest recognized check reports failure. It can add a model turn
+when custom validation was already sufficient. A successful command does not
+prove the check covered the requested behavior.
 Missing result files remain pending. Omit `--summary-only` only when detailed model
 analysis is wanted.
 

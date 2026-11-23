@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
 
 @pytest.mark.parametrize("asynchronous", [False, True])
-async def test_outgoing_model_request_does_not_auto_include_lessons(
+async def test_auto_recall_injects_excerpts_without_announcing_reads(
     tmp_path: Path,
     *,
     asynchronous: bool,
@@ -39,7 +39,10 @@ async def test_outgoing_model_request_does_not_auto_include_lessons(
     def capture(outgoing: ModelRequest) -> str:
         assert "USER_SENTINEL" in outgoing.system_message.content
         assert "INDEX_SENTINEL" in outgoing.system_message.content
-        assert "DLL_SENTINEL" not in outgoing.system_message.content
+        # Associative recall injects a bounded excerpt, explicitly marked as
+        # discovery rather than proof.
+        assert "DLL_SENTINEL" in outgoing.system_message.content
+        assert "<relevant_memories>" in outgoing.system_message.content
         return "captured"
 
     if asynchronous:
@@ -48,7 +51,7 @@ async def test_outgoing_model_request_does_not_auto_include_lessons(
         )
     else:
         assert middleware.wrap_model_call(request, capture) == "captured"
-    assert notices == []
+    assert notices == [], "auto recall is not a page read and must not announce one"
     assert "DLL_SENTINEL" not in repr(notices)
     assert len(request.messages) == 1
 

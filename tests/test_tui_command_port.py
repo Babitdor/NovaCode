@@ -191,13 +191,12 @@ async def test_a_failing_handler_becomes_an_explicit_failure(
     assert "failed" in result.message
 
 
-@pytest.mark.parametrize("name", ["claude-plan", "remote", "loop"])
-async def test_commands_waiting_on_a_screen_name_themselves(name: str) -> None:
-    # Unlanded waves must fail loudly, never pass the text to the agent.
+async def test_every_catalogued_command_is_served() -> None:
+    # The waiting list is empty: nothing may fall through to `not_ported`.
     port, _ = _port()
-    result = await port.run(name, None)
-    assert result.ok is False
-    assert result.message == NOT_PORTED_MESSAGE.format(name=f"/{name}")
+    for name in ("loop", "remote", "claude-plan", "codex-review"):
+        result = await port.run(f"{name} --status" if name == "ralph" else name, None)
+        assert result.message != NOT_PORTED_MESSAGE.format(name=f"/{name}"), name
 
 
 @pytest.mark.parametrize("name", ["learning", "skills"])

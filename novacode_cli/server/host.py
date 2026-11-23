@@ -20,12 +20,15 @@ import asyncio
 import contextlib
 import logging
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from novacode_cli._version import __version__
 from novacode_cli.server import frames
 from novacode_cli.server.sessions import SessionCapacityError, SessionRegistry
 from novacode_cli.sessions.supervisor import MAX_SESSIONS
 from novacode_cli.sessions.worker import SessionWorker
+from novacode_cli.ui.home import home_payload
 from novacode_cli.ui.port_server import ServerPort
 
 if TYPE_CHECKING:
@@ -127,6 +130,10 @@ class SessionHost:
         self._port: ServerPort | None = None
         self.spec: SessionSpec | None = None
         self._turn: asyncio.Task[None] | None = None
+        self._terminal_task: asyncio.Task[None] | None = None
+        self._terminal_id: str | None = None
+        self._terminal_input: Callable[[str], None] | None = None
+        self._terminal_stop: Callable[[], Any] | None = None
         self._stop = False
         # Outstanding `screen` frames, keyed by the id the client must quote.
         # Every entry is resolved (or failed closed) in :meth:`close`.
@@ -256,6 +263,7 @@ class SessionHost:
                 assistant_id=spec.assistant_id,
                 ui="ratatui",
                 capacity=SESSION_CAPACITY,
+                home=home_payload(__version__),
                 **spec.extra,
             )
         )
@@ -270,6 +278,8 @@ class SessionHost:
             # must not appear in another client's list while it shuts down.
             self._registry.remove(self)
         self._fail_screens()
+        with contextlib.suppress(Exception):
+            await self.terminal_close(self._terminal_id)
         worker = self._worker
         if worker is None:
             return
@@ -283,7 +293,7 @@ class SessionHost:
                 await self._port.close()
 
     # ── prompts ──────────────────────────────────────────────────────────
-    async def prompt(
+    async def prompt(  # noqa: PLR0911 — each refusal is its own reason
         self,
         prompt_id: str,
         text: str,
@@ -326,6 +336,9 @@ class SessionHost:
         if text.lstrip().startswith("/") and not image_objs:
             await self.run_slash(prompt_id, text)
             return
+        if text.lstrip().startswith("!!") and not image_objs:
+            await self.open_terminal(prompt_id, text.strip()[2:].strip())
+            return
 
         if self._turn_running():
             if len(worker._queued) >= MAX_QUEUED_PROMPTS:
@@ -340,6 +353,107 @@ class SessionHost:
             return
 
         self._start(prompt_id, text, image_objs, approve=approve)
+
+    async def open_terminal(self, prompt_id: str, command: str) -> None:
+        """Run ``!!command`` in a real TTY and stream its output to the client.
+
+        The commands are refused rather than queued: a terminal is a live pane
+        with keystrokes going to a child, so two of them would compete for the
+        keyboard and the transcript would show whichever finished last.
+
+        Args:
+            prompt_id: Client prompt id, used for the refusal's turn boundary.
+            command: The command line after the ``!!`` prefix.
+        """
+        from novacode_cli.ui.terminal import Terminal, TerminalUnavailableError
+
+        if not command:
+            self._emit_frame(frames.notice("Type a command after !!, e.g. !!git status."))
+            self._emit_frame(frames.turn_done(prompt_id, ok=True))
+            return
+        if self._terminal_id is not None:
+            self._emit_frame(
+                frames.notice("A terminal is already open; close it first (Esc)."),
+            )
+            self._emit_frame(frames.turn_done(prompt_id, ok=True))
+            return
+        cwd = Path(self.spec.cwd) if self.spec and self.spec.cwd else Path.cwd()
+        try:
+            terminal = await Terminal.spawn(command, cwd)
+        except TerminalUnavailableError as exc:
+            self._emit_frame(frames.notice(str(exc), level="error"))
+            self._emit_frame(frames.turn_done(prompt_id, ok=False))
+            return
+        terminal_id = f"pty-{len(self._sinks)}-{id(terminal):x}"
+        self._terminal_id = terminal_id
+        self._terminal_input = terminal.write
+        self._terminal_stop = terminal.stop
+        self._terminal_task = asyncio.create_task(self._pump_terminal(terminal_id, terminal))
+        self._emit_frame(frames.turn_done(prompt_id, ok=True))
+
+    async def _pump_terminal(self, terminal_id: str, terminal: Any) -> None:  # noqa: ANN401
+        """Feed a terminal's output to the client until the child exits.
+
+        Args:
+            terminal_id: Id echoed in every frame for this terminal.
+            terminal: The running :class:`~novacode_cli.ui.terminal.Terminal`.
+        """
+        from novacode_cli.ui.terminal import POLL_SECONDS
+
+        try:
+            while not terminal.finished:
+                chunk = await terminal.drain()
+                if chunk:
+                    self._emit_frame(frames.pty(terminal_id, terminal.command, chunk))
+                if not terminal.finished:
+                    await asyncio.sleep(POLL_SECONDS)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("terminal pump failed")
+        finally:
+            code = terminal.exit_code or 0
+            self._emit_frame(frames.pty_exit(terminal_id, code, terminal.command))
+            self._terminal_id = None
+            self._terminal_input = None
+            self._terminal_stop = None
+            with contextlib.suppress(Exception):
+                await terminal.stop()
+
+    def terminal_keys(self, terminal_id: str, keys: str) -> None:
+        """Send keystrokes to the open terminal.
+
+        Args:
+            terminal_id: The terminal the client thinks it is typing into.
+            keys: Raw bytes as text; the client sends a carriage return for Enter.
+        """
+        if terminal_id != self._terminal_id or self._terminal_input is None:
+            return
+        self._terminal_input(keys)
+
+    async def terminal_close(self, terminal_id: str | None) -> None:
+        """Stop the open terminal and forget it.
+
+        Args:
+            terminal_id: The terminal to close, or ``None`` to close whatever is open.
+        """
+        if self._terminal_id is None:
+            return
+        if terminal_id is not None and terminal_id != self._terminal_id:
+            return
+        task = self._terminal_task
+        stop = self._terminal_stop
+        self._terminal_id = None
+        self._terminal_input = None
+        self._terminal_stop = None
+        self._terminal_task = None
+        if stop is not None:
+            with contextlib.suppress(Exception):
+                await stop()  # type: ignore[misc]
+        if task is not None and not task.done():
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
 
     def _steer(self, prompt_id: str, text: str, *, approve: bool) -> None:
         """Fold a live follow-up into the running turn.
@@ -517,6 +631,7 @@ class SessionHost:
                 create=result.create,
                 resume=result.resume,
                 close=result.close,
+                avatar=result.avatar,
             )
         )
         if result.prompt:

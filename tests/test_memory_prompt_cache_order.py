@@ -1,8 +1,8 @@
-"""Learned topic bodies are searched explicitly, not injected into each prompt.
+"""Learned topic bodies stay out of the cached stable prompt.
 
 Anthropic caches a *prefix* (``tools -> system -> messages``). The stable
-prompt remains cacheable, and learned topic bodies are available through the
-explicit memory tools when a task needs them.
+prompt remains byte-identical across turns so the prefix cache holds, and
+auto-matched topic excerpts ride in the volatile block AFTER the breakpoint.
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ import time
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from novacode_cli.memory.agent_memory import AgentMemoryMiddleware
 from novacode_cli.memory.search import MemorySearchService
@@ -70,6 +70,7 @@ def _bare_middleware(tmp_path, *, topics: dict[str, str] | None = None) -> Any:
     mw._cached_habits_memory = None
     mw._cached_learning_overview = None
     mw._memory_search_service = MemorySearchService(agent_dir)
+    mw._recall_cache = None
     return mw
 
 
@@ -166,7 +167,7 @@ def test_memory_updates_keep_the_core_prompt_prefix_cacheable(tmp_path) -> None:
     assert "cache_control" not in second.content[-1]
 
 
-def test_matching_lessons_are_not_automatically_injected(tmp_path: Path) -> None:
+def test_matching_lessons_ride_in_the_volatile_block_only(tmp_path: Path) -> None:
     mw = _bare_middleware(
         tmp_path, topics={"context-budgeting": "context window budgeting lessons"}
     )
@@ -175,8 +176,118 @@ def test_matching_lessons_are_not_automatically_injected(tmp_path: Path) -> None
         _req(mw, "please audit context window budgeting")
     )
 
+    assert "context window budgeting lessons" in volatile
+    assert volatile.startswith("<relevant_memories>")
+    assert volatile.endswith("</relevant_memories>")
+    assert "context window budgeting lessons" not in stable, (
+        "matching content must stay outside the cacheable stable prefix"
+    )
+
+
+def test_trivial_queries_get_no_recall_block(tmp_path: Path) -> None:
+    mw = _bare_middleware(
+        tmp_path, topics={"context-budgeting": "context window budgeting lessons"}
+    )
+
+    stable, volatile = mw._build_system_prompt_parts(_req(mw, "hi"))
+
     assert volatile == ""
-    assert "context window budgeting lessons" not in stable
+    assert "BASE" in stable
+
+
+def test_gate_nudge_falls_back_to_the_real_user_query(tmp_path: Path) -> None:
+    """After an `Internal context` nudge, recall uses the user's task, not the nudge."""
+    mw = _bare_middleware(
+        tmp_path, topics={"context-budgeting": "context window budgeting lessons"}
+    )
+    req = SimpleNamespace(
+        state={},
+        system_prompt="BASE",
+        messages=[
+            HumanMessage(content="please audit context window budgeting"),
+            AIMessage(content="working"),
+            HumanMessage(content="Internal context: verification after edit. Run a check."),
+        ],
+    )
+
+    _stable, volatile = mw._build_system_prompt_parts(req)
+
+    assert "context window budgeting lessons" in volatile
+    assert "verification after edit" not in volatile
+
+
+def test_memory_write_invalidates_the_recall_cache(tmp_path: Path) -> None:
+    mw = _bare_middleware(
+        tmp_path, topics={"context-budgeting": "context window budgeting lessons"}
+    )
+    req = _req(mw, "please audit context window budgeting")
+    assert mw._recall_volatile(req)
+    calls = {"n": 0}
+    original = mw._memory_search_service.local_candidates
+
+    def counting(query, *, limit=3):
+        calls["n"] += 1
+        return original(query, limit=limit)
+
+    mw._memory_search_service.local_candidates = counting  # type: ignore[method-assign]
+
+    assert mw._recall_volatile(req)  # cached
+    assert calls["n"] == 0
+
+    tool_req = SimpleNamespace(
+        tool_call={"name": "write_memory", "args": {"content": "new lesson"}},
+        runtime=SimpleNamespace(stream_writer=lambda *_: None),
+    )
+    mw.wrap_tool_call(tool_req, lambda _r: ToolMessage(content="ok", tool_call_id="w"))
+
+    mw._recall_volatile(req)
+    assert calls["n"] == 1, "a successful memory write must refresh the recall block"
+
+
+def test_nonmemory_edit_keeps_the_recall_cache(tmp_path: Path) -> None:
+    mw = _bare_middleware(
+        tmp_path, topics={"context-budgeting": "context window budgeting lessons"}
+    )
+    req = _req(mw, "please audit context window budgeting")
+    assert mw._recall_volatile(req)
+    calls = {"n": 0}
+    original = mw._memory_search_service.local_candidates
+
+    def counting(query, *, limit=3):
+        calls["n"] += 1
+        return original(query, limit=limit)
+
+    mw._memory_search_service.local_candidates = counting  # type: ignore[method-assign]
+
+    tool_req = SimpleNamespace(
+        tool_call={"name": "edit_file", "args": {"file_path": "src/app.py"}},
+        runtime=SimpleNamespace(stream_writer=lambda *_: None),
+    )
+    mw.wrap_tool_call(tool_req, lambda _r: ToolMessage(content="ok", tool_call_id="e"))
+
+    mw._recall_volatile(req)
+    assert calls["n"] == 0, "an edit outside /memories must not invalidate recall"
+
+
+def test_recall_is_cached_per_human_message(tmp_path: Path) -> None:
+    mw = _bare_middleware(
+        tmp_path, topics={"context-budgeting": "context window budgeting lessons"}
+    )
+    calls = {"n": 0}
+
+    original = mw._memory_search_service.local_candidates
+
+    def _counting_candidates(query, *, limit=3):
+        calls["n"] += 1
+        return original(query, limit=limit)
+
+    mw._memory_search_service.local_candidates = _counting_candidates  # type: ignore[method-assign]
+    req = _req(mw, "please audit context window budgeting")
+
+    first = mw._recall_volatile(req)
+    second = mw._recall_volatile(req)
+    assert first == second and first
+    assert calls["n"] == 1, "repeated model calls in one turn must search once"
 
 
 def test_parts_builder_returns_two_strings(tmp_path) -> None:

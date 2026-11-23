@@ -60,9 +60,7 @@ def test_nothing_to_recite_without_open_items() -> None:
 
 
 def _gate(messages: list, todos: list | None = TODOS):  # noqa: ANN202
-    return TaskDisciplineMiddleware(verify_after_edit=True).after_model(
-        {"messages": messages, "todos": todos}, None
-    )
+    return TaskDisciplineMiddleware().after_model({"messages": messages, "todos": todos}, None)
 
 
 def test_stopping_with_open_todos_sends_the_agent_back() -> None:
@@ -129,14 +127,13 @@ def test_edit_without_later_check_gets_one_verification_reminder() -> None:
     )
 
 
-def test_edit_reminder_is_off_by_default() -> None:
+def test_edit_reminder_is_mandatory_by_default() -> None:
     history = [HumanMessage(content="fix"), *_tool_step("write_file", "e", {})]
-    assert (
-        TaskDisciplineMiddleware().after_model(
-            {"messages": [*history, AIMessage(content="Done")], "todos": None}, None
-        )
-        is None
+    out = TaskDisciplineMiddleware().after_model(
+        {"messages": [*history, AIMessage(content="Done")], "todos": None}, None
     )
+    assert out is not None
+    assert out["messages"][0].content.startswith(td.VERIFY_GATE_MARKER)
 
 
 def test_check_must_follow_last_successful_edit() -> None:
@@ -161,6 +158,119 @@ def test_check_via_venv_interpreter_path_clears_reminder() -> None:
         AIMessage(content="Done"),
     ]
     assert _gate([*history, AIMessage(content="Done")], todos=None) is None
+
+
+def test_custom_check_script_counts_as_check() -> None:
+    """`uv run python scratch_test.py` is a check, not an unknown command."""
+    history = [
+        HumanMessage(content="fix it"),
+        *_tool_step("edit_file", "e", {"file_path": "x.py"}),
+        *_tool_step("bash", "t", {"command": "uv run python scratch_test.py"}, "all green"),
+        AIMessage(content="Done"),
+    ]
+    assert _gate([*history, AIMessage(content="Done")], todos=None) is None
+
+
+def test_failing_custom_check_script_triggers_reminder() -> None:
+    history = [
+        HumanMessage(content="fix it"),
+        *_tool_step("edit_file", "e", {"file_path": "x.py"}),
+        *_tool_step(
+            "bash", "t", {"command": "python scripts/check_install.py"}, "Traceback (most recent)"
+        ),
+        AIMessage(content="Done"),
+    ]
+    out = _gate([*history, AIMessage(content="Done")], todos=None)
+    assert out is not None
+    assert out["messages"][0].content.startswith(td.VERIFY_GATE_MARKER)
+    assert "failed" in out["messages"][0].content
+
+
+def test_shell_script_and_dotted_check_run_count() -> None:
+    history = [
+        HumanMessage(content="fix it"),
+        *_tool_step("edit_file", "e", {"file_path": "x.py"}),
+        *_tool_step("bash", "a", {"command": "bash tests/check_env.sh"}, "ok"),
+        *_tool_step("bash", "b", {"command": "./scripts/verify_all.sh"}, "ok"),
+        AIMessage(content="Done"),
+    ]
+    assert _gate([*history, AIMessage(content="Done")], todos=None) is None
+
+
+def test_package_install_is_never_a_check() -> None:
+    """`pip install pytest-cov` contains 'test' but is not a check run."""
+    history = [
+        HumanMessage(content="fix it"),
+        *_tool_step("edit_file", "e", {"file_path": "x.py"}),
+        *_tool_step("bash", "t", {"command": "pip install pytest-cov"}, "ok"),
+        AIMessage(content="Done"),
+    ]
+    out = _gate([*history, AIMessage(content="Done")], todos=None)
+    assert out is not None
+    assert out["messages"][0].content.startswith(td.VERIFY_GATE_MARKER)
+
+
+def test_shell_redirection_write_is_observed_as_an_edit() -> None:
+    history = [
+        HumanMessage(content="fix it"),
+        *_tool_step("bash", "w", {"command": "cat > x.py <<'EOF'\nprint(1)\nEOF"}, ""),
+        AIMessage(content="Done"),
+    ]
+    out = _gate([*history, AIMessage(content="Done")], todos=None)
+    assert out is not None
+    assert out["messages"][0].content.startswith(td.VERIFY_GATE_MARKER)
+
+
+def test_in_place_and_tee_writes_are_observed_as_edits() -> None:
+    for command in (
+        "sed -i 's/a/b/' x.py",
+        "sed -i.bak 's/a/b/' x.py",
+        "python gen.py | tee x.py",
+        "cp template.py x.py",
+    ):
+        history = [
+            HumanMessage(content="fix it"),
+            *_tool_step("bash", "w", {"command": command}, ""),
+            AIMessage(content="Done"),
+        ]
+        out = _gate([*history, AIMessage(content="Done")], todos=None)
+        assert out is not None, command
+        assert out["messages"][0].content.startswith(td.VERIFY_GATE_MARKER), command
+
+
+def test_dev_null_and_stream_dup_are_not_edits() -> None:
+    for command in (
+        "python probe.py > /dev/null 2>&1",
+        'python -c "print(1 if x>2 else 0)"',
+        "awk '{if (a>b) print a}' data.txt",
+    ):
+        history = [
+            HumanMessage(content="fix it"),
+            *_tool_step("bash", "w", {"command": command}, ""),
+            AIMessage(content="Done"),
+        ]
+        assert _gate([*history, AIMessage(content="Done")], todos=None) is None, command
+
+
+def test_check_after_shell_write_clears_reminder() -> None:
+    history = [
+        HumanMessage(content="fix it"),
+        *_tool_step("bash", "w", {"command": "cat > x.py <<'EOF'\nprint(1)\nEOF"}, ""),
+        *_tool_step("bash", "t", {"command": "python -m pytest -q"}, "1 passed"),
+        AIMessage(content="Done"),
+    ]
+    assert _gate([*history, AIMessage(content="Done")], todos=None) is None
+
+
+def test_powershell_write_cmdlet_is_observed_as_an_edit() -> None:
+    history = [
+        HumanMessage(content="fix it"),
+        *_tool_step("powershell", "w", {"command": "Set-Content -Path x.py -Value 'print(1)'"}, ""),
+        AIMessage(content="Done"),
+    ]
+    out = _gate([*history, AIMessage(content="Done")], todos=None)
+    assert out is not None
+    assert out["messages"][0].content.startswith(td.VERIFY_GATE_MARKER)
 
 
 def test_check_via_venv_interpreter_path_that_fails_still_triggers_reminder() -> None:
@@ -337,7 +447,7 @@ def test_verification_reminder_runs_in_an_agent_graph() -> None:
     result = create_agent(
         model,
         tools=[edit_file, bash],
-        middleware=[TaskDisciplineMiddleware(verify_after_edit=True)],
+        middleware=[TaskDisciplineMiddleware()],
     ).invoke({"messages": [HumanMessage(content="Fix x.py")]})
     contents = [str(message.content) for message in result["messages"]]
     assert any(content.startswith(td.VERIFY_GATE_MARKER) for content in contents)
@@ -386,7 +496,7 @@ def test_failed_check_recovery_runs_in_an_agent_graph() -> None:
     result = create_agent(
         model,
         tools=[edit_file, bash],
-        middleware=[TaskDisciplineMiddleware(verify_after_edit=True)],
+        middleware=[TaskDisciplineMiddleware()],
     ).invoke({"messages": [HumanMessage(content="Fix x.py")]})
     contents = [str(message.content) for message in result["messages"]]
     assert sum(content.startswith(td.VERIFY_GATE_MARKER) for content in contents) == 1

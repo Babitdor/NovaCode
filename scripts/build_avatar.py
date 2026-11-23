@@ -7,7 +7,7 @@ The sheet must have a transparent background. Each state is a band of the sheet
 (pixel box below); frames inside a band are found by their transparent gaps and
 then downscaled so a standing frame is ``--height`` pixels tall. The frames go
 to ``novacode_cli/assets/nova-avatar.png`` (full colour, one row per state) and
-their layout to ``avatar_frames.py``. The TUI draws 2x4 pixels per terminal
+their layout to ``ui/avatar_frames.py``. The TUI draws 2x4 pixels per terminal
 cell (octants), or 2x2 samples where octants are missing (quadrant glyphs).
 The simple sheet has four columns and six rows, with two frames per state.
 """
@@ -49,7 +49,7 @@ STANDING_PX = 160  # source height of a standing frame, scaled to --height
 # These bands were drawn at a smaller scale on the reference sheet.
 SOURCE_STATURE = {"walking": 112, "walking-back": 112, "running": 140}
 PACKAGE = Path(__file__).resolve().parents[1] / "novacode_cli"
-OUT = PACKAGE / "tui" / "avatar_frames.py"
+OUT = PACKAGE / "ui" / "avatar_frames.py"
 ATLAS = PACKAGE / "assets" / "nova-avatar.png"
 NATIVE_SHEET = PACKAGE / "assets" / "nova-avatar-hq.png"
 SOLID = 100  # alpha above which a sheet pixel belongs to a sprite

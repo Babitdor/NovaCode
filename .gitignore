@@ -157,6 +157,11 @@ dmypy.json
 # Root-anchored so a future novacode_cli/code/ package is not caught by these.
 /code/
 /fast-jev-compaction/
+# Extracted third-party agent system prompts (Claude Code / Codex) kept as
+# design inspiration only — third-party production content, not ours to ship.
+/systemprompt-enhancement/
+# Command Code's session-local workspace (taste, plans, scratch).
+/.commandcode/
 # Check/ is a copy of the deepagents-code CLI's launcher (LangChain, MIT,
 # github.com/langchain-ai/deepagents). Nothing imports it: it is the design
 # blueprint that novacode_cli/agents/server_launcher.py was adapted from.
@@ -176,6 +181,8 @@ langsmith.json
 
 # Evaluation job outputs
 evaluation/jobs/
+# JUnit artifacts CI uploads as workflow artifacts, never source.
+/test-results/
 
 # .nova/.claude
 .nova/

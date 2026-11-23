@@ -845,6 +845,24 @@ def _approval_details(action_requests: list[dict]) -> Text:
 #: Characters of in-progress prose kept in the live (pre-commit) preview.
 _LIVE_PREVIEW_CHARS = 20_000
 
+#: Toast coalescing: non-transcript _log notices queue for this long and are
+#: flushed as ONE combined toast (see _combine_toasts).
+_TOAST_COALESCE_SECONDS = 0.5
+_TOAST_MAX_LINES = 3
+
+
+def _combine_toasts(messages: list[str]) -> str:
+    """Join queued toast messages into one, newest-wins.
+
+    Keeps the LAST ``_TOAST_MAX_LINES`` messages in chronological order and
+    summarizes the dropped OLDEST as a leading "+N more" line — the newest
+    message must always be visible, and a burst must never push it out.
+    """
+    kept = messages[-_TOAST_MAX_LINES:]
+    dropped = len(messages) - len(kept)
+    lines = ([f"+{dropped} more"] if dropped else []) + kept
+    return "\n".join(lines)
+
 #: Percentage thresholds at which a usage meter turns amber, then red.
 _PCT_WARN = 75
 _PCT_CRITICAL = 90
@@ -1032,6 +1050,8 @@ def _paint(widget: Any, content: Any) -> None:
     screen. For a clock or a counter the text changes every second but its
     width and line count almost never do — those frames only need a repaint.
     Identical content is skipped entirely.
+
+    ChatMessage._paint_body mirrors this contract with wrap-aware dims and a saturation force (widgets.py) — keep them in sync.
     """
     if not isinstance(content, (str, Text)):
         # A Group/Markdown/Table: its size is not knowable from text, so take
@@ -1057,6 +1077,25 @@ def _paint(widget: Any, content: Any) -> None:
 #: tail of each batch is drawn — the full output still reaches the model.
 _LIVE_OUTPUT_MAX_LINES = 200
 _LIVE_OUTPUT_MAX_CHARS = 20_000
+#: Limits while ctrl+o expansion is active: the user asked to see the stream.
+_EXPANDED_OUTPUT_MAX_LINES = 2_000
+_EXPANDED_OUTPUT_MAX_CHARS = 200_000
+
+#: Per-pane event buffer cap for hidden sessions (see _queue_pane_event).
+_PANE_BUFFER_MAX = 400
+
+
+def _cap_pane_buffer(pane) -> None:
+    """Hard cap so a runaway stream cannot grow a pane buffer without bound.
+
+    Drop the OLDEST entries; the just-appended tail (and anything newer) is
+    never dropped. Used by both the queued-live-preview and the hidden-pane
+    history append paths.
+    """
+    if len(pane.buffer) > _PANE_BUFFER_MAX:
+        del pane.buffer[: len(pane.buffer) - _PANE_BUFFER_MAX]
+
+
 _LOG_MAX_LINES = 2_000
 _PENDING_JOB_NOTE_MAX = 100
 #: A job note goes into the agent's next prompt, so its total size is a token
@@ -1152,11 +1191,17 @@ def replay_window(messages: list, budget: int) -> list:
     return messages[turn_start:] if turn_start < len(messages) else messages[-1:]
 
 
-def _display_tail(text: str) -> str:
-    """The part of a live-output batch worth rendering."""
-    if len(text) <= _LIVE_OUTPUT_MAX_CHARS and text.count("\n") <= _LIVE_OUTPUT_MAX_LINES:
+def _display_tail(text: str, *, expanded: bool = False) -> str:
+    """The part of a live-output batch worth rendering.
+
+    With ``expanded`` (ctrl+o), much larger limits apply so an expanded
+    session streams near-full output; the tail trim remains as a bound.
+    """
+    max_lines = _EXPANDED_OUTPUT_MAX_LINES if expanded else _LIVE_OUTPUT_MAX_LINES
+    max_chars = _EXPANDED_OUTPUT_MAX_CHARS if expanded else _LIVE_OUTPUT_MAX_CHARS
+    if len(text) <= max_chars and text.count("\n") <= max_lines:
         return text
-    lines = text[-_LIVE_OUTPUT_MAX_CHARS:].splitlines(keepends=True)[-_LIVE_OUTPUT_MAX_LINES:]
+    lines = text[-max_chars:].splitlines(keepends=True)[-max_lines:]
     return "… output trimmed (truncated), showing the tail …\n" + "".join(lines)
 
 
@@ -1194,6 +1239,10 @@ class DesktopNotificationClicked(Message):
 
 class NovaApp(App):
     """Phase-1 Nova chat TUI."""
+
+    # Class-level default: plugin-command discovery can run on an instance
+    # built via __new__ (tests, early startup) before __init__ assigns it.
+    _plugin_command_generation: int = 0
 
     # Colors come from the active Textual theme (default: tokyo-night, registered
     # in on_mount). Do NOT redefine $primary/$surface/etc. here — CSS variable
@@ -2265,6 +2314,7 @@ class NovaApp(App):
         # shadowed by Textual's Input editing bindings while #prompt has focus
         # (the normal state).
         ("alt+t", "toggle_todos", "Todos"),
+        ("ctrl+o", "toggle_expand", "Expand output"),
         ("alt+s", "toggle_subagents", "Subagents"),
         ("ctrl+end", "jump_latest", "Jump to latest"),
         ("ctrl+n", "new_session", "New session"),
@@ -2411,6 +2461,8 @@ class NovaApp(App):
         # _schedule_tool_group_refresh): a burst of tool events paints once.
         self._tool_group_refresh_scheduled: bool = False
         self._tool_group_running: str | None = None
+        # ctrl+o: expand/collapse every tool surface for this session.
+        self._tools_expanded: bool = False
         # Active inline status lines, keyed by dispatch ID.
         self._subagent_widgets: dict[str, tuple[Static, Static, str, float]] = {}
         self._inline_subagents: dict[str, Static] = {}
@@ -2428,6 +2480,10 @@ class NovaApp(App):
         self._tool_out_lock = threading.Lock()
         self._tool_out_pending: dict[str, OutputTail] = {}
         self._tool_out_scheduled = False
+        # Toast coalescing (see _log): a burst of background tasks completing
+        # otherwise mounts one toast per task in the same second.
+        self._toast_queue: list[str] = []
+        self._toast_flush_timer: Any = None
         # Voice I/O (lazy: only built when first used; None when deps absent).
         self._voice_pipeline: Any = None
         self._voice_listening: bool = False
@@ -3121,7 +3177,7 @@ class NovaApp(App):
             pending, self._tool_out_pending = self._tool_out_pending, {}
             self._tool_out_scheduled = False
         for call_id, buffer in pending.items():
-            self._write_tool_output(call_id, _display_tail(buffer.drain()))
+            self._write_tool_output(call_id, _display_tail(buffer.drain(), expanded=self._tools_expanded))
 
     def _write_tool_output(self, call_id: str, text: str) -> None:
         """Append live output to the widget showing ``call_id`` (UI thread)."""
@@ -3139,7 +3195,7 @@ class NovaApp(App):
                         log_widget.add_class("active")
                     log_widget.write(Text(text))
                     comp._log_lines = getattr(comp, "_log_lines", 0) + text.count("\n")
-                    log_widget.styles.height = min(max(comp._log_lines + 2, 5), 8)
+                    self._set_log_height(log_widget, min(max(comp._log_lines + 2, 5), 8))
                 except Exception:
                     pass
         elif self._tool_group_body is not None:
@@ -3148,9 +3204,24 @@ class NovaApp(App):
                 if log_widget.has_class("active"):
                     log_widget.write(Text(text))
                     self._tool_group_log_lines += text.count("\n")
-                    log_widget.styles.height = min(max(self._tool_group_log_lines + 2, 5), 8)
+                    self._set_log_height(
+                        log_widget, min(max(self._tool_group_log_lines + 2, 5), 8)
+                    )
             except Exception:
                 pass
+
+    @staticmethod
+    def _set_log_height(log_widget: Any, new_h: int) -> None:
+        """Set a log pane's height only when it actually changes.
+
+        This runs on every 50ms flush; an unconditional assignment dirties the
+        style each time and schedules a layout for a value that is usually the
+        same. ``styles.height`` reads back as a ``Scalar`` after an assignment,
+        so compare its numeric ``value`` (``Scalar(6) != 6``).
+        """
+        current = getattr(log_widget.styles, "height", None)
+        if getattr(current, "value", current) != new_h:
+            log_widget.styles.height = new_h
 
     # -- OS focus handlers ----------------------------------------------------
     # Keep focus bookkeeping separate from visible animation and progress.
@@ -3346,6 +3417,7 @@ class NovaApp(App):
                     await self._render(event)
             elif not isinstance(event, (ev.TextDelta, ev.ReasoningDelta, ev.StatusUpdate)):
                 pane.buffer.append(event)
+                _cap_pane_buffer(pane)
                 pane.unread += 1
 
     @staticmethod
@@ -3363,6 +3435,7 @@ class NovaApp(App):
                     )
                 return
         pane.buffer.append(event)
+        _cap_pane_buffer(pane)
 
     async def _switch_to(self, pane) -> None:
         """Make *pane* the visible session, swapping conversation state with it."""
@@ -3525,6 +3598,10 @@ class NovaApp(App):
             await asyncio.to_thread(presence.publish, rows)
 
     async def on_unmount(self):
+        # A queued coalesced toast must not be silently dropped at exit. Safe to
+        # call unconditionally: _flush_toasts no-ops on an empty queue.
+        with contextlib.suppress(Exception):
+            self._flush_toasts()
         presence = getattr(self, "_terminal_presence", None)
         if presence is not None:
             await asyncio.to_thread(presence.close)
@@ -6114,13 +6191,38 @@ class NovaApp(App):
             else:
                 message = plain(renderable)
             if message.strip():
-                self.notify(message, timeout=4, markup=False)
+                self._queue_toast(message)
             return
         self._close_tool_group()
         self._transcript().mount(Static(renderable, classes=classes))
         self._schedule_prune()
         # Automatic scroll: don't yank a user who is reading history.
         self._scroll_end(force=False)
+
+    def _queue_toast(self, message: str) -> None:
+        """Queue a non-transcript notice; flush the queue as ONE combined toast.
+
+        A burst of background tasks completing otherwise mounts one toast per
+        task in the same second, stacking overlapping toasts over the composer.
+        A 0.5s debounce collapses them (see _combine_toasts). Only transcript-
+        path messages and direct ``self.notify`` callers bypass this queue;
+        every non-transcript ``_log`` notice coalesces here, on the debounce.
+        """
+        self._toast_queue.append(message)
+        if self._toast_flush_timer is None:
+            try:
+                self._toast_flush_timer = self.set_timer(
+                    _TOAST_COALESCE_SECONDS, self._flush_toasts
+                )
+            except Exception:  # noqa: BLE001 — no UI loop; show it right away
+                self._flush_toasts()
+
+    def _flush_toasts(self) -> None:
+        self._toast_flush_timer = None
+        queue, self._toast_queue = self._toast_queue, []
+        if not queue:
+            return
+        self.notify(_combine_toasts(queue), timeout=4, markup=False)
 
     # _init step-tracker widget removed — /init progress is now shown via _log only.
 
@@ -6713,6 +6815,34 @@ class NovaApp(App):
         """Collapse/expand the todo checklist (click the dock, or alt+t)."""
         self._todos_collapsed = not getattr(self, "_todos_collapsed", False)
         self._paint_todos(getattr(self, "_todos", None), getattr(self, "_todos_agent", None))
+
+    def action_toggle_expand(self) -> None:
+        """Expand/collapse every tool surface (ctrl+o), like other coding CLIs.
+
+        The toggle is session-sticky: it stays on across turns until pressed
+        again. Live streaming keeps the group open while a tool is running.
+        """
+        self._tools_expanded = not self._tools_expanded
+        transcript = self._transcript()
+        cards = [
+            widget
+            for widget in transcript.query(Collapsible)
+            if widget is not self._tool_group
+        ]
+        if self._tools_expanded:
+            for card in cards:
+                card.collapsed = False
+            if self._tool_group is not None:
+                self._tool_group.collapsed = False
+            self.notify("Tool output expanded", timeout=2)
+        else:
+            for card in cards:
+                card.collapsed = True
+            if self._tool_group is not None and self._tool_group_running is None:
+                self._tool_group.collapsed = True
+            self.notify("Tool output collapsed", timeout=2)
+        if self._tool_group is not None:
+            self._refresh_tool_group(running=self._tool_group_running)
 
     # ── subagent tracking (local inline text, remote task panel) ────────────────────────────────
 
@@ -7395,9 +7525,10 @@ class NovaApp(App):
         except Exception:
             pass
         n = len(self._tool_group_entries)
-        self._tool_group.title = motion.tool_group_title(
-            n, running, self._spinner_frame, self._palette
-        )
+        title = motion.tool_group_title(n, running, self._spinner_frame, self._palette)
+        if self._tool_group.collapsed and not self._tools_expanded:
+            title.append("   ctrl+o to expand", style=self._palette.dim)
+        self._tool_group.title = title
 
     @staticmethod
     def _category_noun(cat: str, count: int) -> str:
@@ -7574,9 +7705,15 @@ class NovaApp(App):
         if isinstance(comp, CodeModePanel):
             comp.finish(full_output or "", is_error=is_error, preview=preview)
             if isinstance(body, OutputLog):
+                final = full_output or preview or "(no output)"
+                if not is_error and body.tail_matches(final):
+                    # Live output already painted exactly this; skip the
+                    # clear()+write() rebuild of up to 200k chars.
+                    body.scroll_end(animate=False)
+                    return
                 body.clear()
                 body.write(Text(
-                    full_output or preview or "(no output)",
+                    final,
                     style=pal.tool_fail if is_error else "",
                 ))
                 body.scroll_end(animate=False)
@@ -7588,6 +7725,14 @@ class NovaApp(App):
             out = out[:_TOOL_ERROR_MAX_CHARS] + "\n… (truncated)"
         body_style = pal.tool_fail if is_error else ""
         if isinstance(body, OutputLog):
+            if not is_error and body.tail_matches(out):
+                # Live output already painted exactly this; skip the rebuild.
+                # Unlike the CodeModePanel branch above, `out` was head-truncated
+                # to _TOOL_ERROR_MAX_CHARS, so the avoided clear()+write() is
+                # bounded by that cap — the untruncated-200k-char rebuild-skip
+                # win is only real in the CodeModePanel branch.
+                body.scroll_end(animate=False)
+                return
             body.clear()
             body.write(Text(out, style=body_style))
             body.scroll_end(animate=False)
@@ -7806,7 +7951,9 @@ class NovaApp(App):
             frame = frames[self._compaction_indicator_frame % len(frames)]
             self._compaction_indicator_frame += 1
             with contextlib.suppress(Exception):  # the row may be pruned mid-animation
-                row.update(Text(f"{frame} Compacting context…", style="dim cyan"))
+                # _paint skips identical content and only re-lays-out when the
+                # spinner's (unchanged) size changes — never every 0.16s tick.
+                _paint(row, Text(f"{frame} Compacting context…", style="dim cyan"))
 
         animate()
         timer = getattr(self, "_compaction_indicator_timer", None)
@@ -11695,7 +11842,7 @@ class NovaApp(App):
         from novacode_cli.process_manager import ProcessInfo, ProcessManager, ProcessStatus
         from novacode_cli.shell import jobs as shell_jobs
         from novacode_cli.shell.middleware import ShellMiddleware
-        from novacode_cli.tui.pty_shell import PtyShell
+        from novacode_cli.ui.pty_shell import PtyShell
 
         try:
             from novacode_cli.tui.terminal_view import InlineTerminal, TerminalCommandScreen
@@ -16442,14 +16589,18 @@ class NovaApp(App):
         intro = Text()
         intro.append("What are we building?\n", style=f"bold {pal.text}")
         intro.append("Choose a starting point, or describe your task below.\n", style=pal.muted)
-        intro_widget.update(intro)
-        workspace_widget.update(
+        # Route through _paint: identity skip + repaint-only frames. Six whole
+        # screen arranges every 2s otherwise, though nothing about these cards'
+        # size changes between refreshes.
+        _paint(intro_widget, intro)
+        _paint(
+            workspace_widget,
             Text(
                 str(settings.get_workspace_root()),
                 style=f"bold {pal.success}",
                 no_wrap=True,
                 overflow="ellipsis",
-            )
+            ),
         )
         workspace_widget.tooltip = str(settings.get_workspace_root())
         model = Text(no_wrap=True, overflow="ellipsis")
@@ -16457,7 +16608,7 @@ class NovaApp(App):
         model.append(self._routed_model_name or self.model_name or "unknown", style=pal.text)
         if self._model_provider:
             model.append(f"\n{self._model_provider}", style=pal.muted)
-        model_widget.update(model)
+        _paint(model_widget, model)
         registry = getattr(self, "_task_registry", None)
         active = registry.active_count() if registry is not None else 0
         tasks = Text()
@@ -16466,7 +16617,7 @@ class NovaApp(App):
             f"{active} background job{'s' if active != 1 else ''} running\n", style=pal.text
         )
         tasks.append("Ctrl+B to inspect", style=pal.muted)
-        tasks_widget.update(tasks)
+        _paint(tasks_widget, tasks)
         context = Text()
         context.append("CONTEXT WINDOW\n", style=f"bold {pal.accent}")
         try:
@@ -16479,7 +16630,7 @@ class NovaApp(App):
                 context.append("No usage yet", style=pal.muted)
         except Exception:  # noqa: BLE001
             context.append("Usage unavailable", style=pal.muted)
-        context_widget.update(context)
+        _paint(context_widget, context)
         self._sample_home_system()
 
     def _refresh_home_style(self) -> None:

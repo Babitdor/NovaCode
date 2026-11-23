@@ -53,11 +53,49 @@ _COMMAND_TOOLS = frozenset({"bash", "execute", "powershell"})
 _INTERPRETER = r"(?:py|python(?:3(?:\.\d+)?)?(?:\.exe)?|[^\s]*python(?:3(?:\.\d+)?)?(?:\.exe)?)"
 
 _CHECK_COMMAND = re.compile(
-    rf"(?:^|[;&|\n])\s*(?:(?:uv|poetry|pipenv)\s+run\s+)?(?:{_INTERPRETER}\s+-m\s+)?"
-    r"(?:pytest|unittest|tox|nox|ruff|mypy|pyright|compileall|"
-    r"cargo\s+test|go\s+test|dotnet\s+test|mvn\s+test|"
-    r"gradle\s+test|make\s+(?:test|check)|"
-    r"(?:npm|pnpm|yarn)\s+(?:run\s+)?test)\b",
+    rf"(?:^|[;&|\n])\s*(?:(?:uv|poetry|pipenv|pipx)\s+(?:run|exec)\s+|uvx\s+)?"
+    rf"(?:{_INTERPRETER}\s+-m\s+)?"
+    r"(?:pytest|unittest|tox|nox|vitest|jest|ruff|mypy|pyright|tsc\b|eslint|"
+    r"typecheck|type-check|compileall|"
+    r"cargo\s+(?:test|build|check|clippy|nextest)|go\s+(?:test|vet|build)|"
+    r"dotnet\s+(?:test|build)|mvn\s+test|gradle\s+test|"
+    r"make\b|"
+    r"(?:npm|pnpm|yarn)\s+(?:run\s+)?(?:test|build|typecheck|type-check|lint))\b",
+    re.IGNORECASE,
+)
+# A custom check script: an interpreter or shell running a file whose NAME
+# signals a check — `python scratch_test.py`, `uv run python run_checks.py`,
+# `node verify_install.js`, `bash tests/check_env.sh`, `./scripts/check.sh`.
+_CHECK_SCRIPT = re.compile(
+    rf"(?:^|[;&|\n])\s*"
+    rf"(?:(?:(?:uv|poetry|pipenv|pipx)\s+(?:run|exec)\s+|uvx\s+|npx\s+)?"
+    rf"(?:{_INTERPRETER}|node|deno|bun|bash|sh|zsh|pwsh|powershell)\s+|\./)"
+    rf"[^\s;&|]*(?:test|spec|check|verif)[^\s;&|]*",
+    re.IGNORECASE,
+)
+# A package installation is never a check, even when the package name contains
+# a keyword (`pip install pytest-cov`).
+_PACKAGE_INSTALL = re.compile(
+    r"\b(?:pip3?|uv|poetry|pdm|hatch|npm|pnpm|yarn|bun|cargo|gem|dotnet|composer)\s+"
+    r"(?:install|add|i)\b",
+    re.IGNORECASE,
+)
+# File-writing shell forms the edit-tool detector cannot see. Command form:
+# in-place edits, copies/moves, tee, heredoc/feed writes. Redirection form:
+# `>` / `>>` into a file, but not `2>&1` (stream dup) or `/dev/null`.
+_SHELL_WRITE_CMD = re.compile(
+    r"(?:^|[;&|\n])\s*(?:sudo\s+)?"
+    r"(?:sed\s+\S*-i\b|tee\b|cp\s|mv\s|install\s|touch\s|"
+    r"truncate\s|dd\s+if=|patch\b|git\s+apply\b|"
+    r"Set-Content|Add-Content|Out-File|New-Item|Copy-Item|Move-Item|Remove-Item|"
+    r"Clear-Content)",
+    re.IGNORECASE,
+)
+# `>` must sit at a command boundary (start, after whitespace/digit/&) so
+# comparison operators inside one-liners (`python -c "if x>2:"`) are not
+# mistaken for redirections; `2>&1` is a stream dup, not a write.
+_SHELL_WRITE_REDIRECT = re.compile(
+    r"(?:^|(?<=\s)|(?<=\d)|(?<=&))\d*>{1,2}(?!&)\s*(?!/dev/null\b)\S+",
     re.IGNORECASE,
 )
 # Failure markers inside check output. Structured exit codes cover most cases; these
@@ -161,11 +199,31 @@ def _check_failed(result: ToolMessage) -> bool:
     return bool(_SHELL_FAILURE.search(content) or _CHECK_FAILED.search(content))
 
 
+def _command_is_check(command: str) -> bool:
+    """A recognized runner, or a script whose NAME signals a check."""
+    if _CHECK_COMMAND.search(command):
+        return True
+    if _PACKAGE_INSTALL.search(command):
+        return False
+    return bool(_CHECK_SCRIPT.search(command))
+
+
+def _command_writes_files(command: str) -> bool:
+    """Shell file writes the edit-tool list cannot see."""
+    return bool(_SHELL_WRITE_CMD.search(command) or _SHELL_WRITE_REDIRECT.search(command))
+
+
 def _verification_gap(messages: list[Any]) -> str | None:
     """Return a missing or failed check after the last observed file edit.
 
-    Shell writes and arbitrary custom test scripts cannot be identified reliably
-    from the transcript. A successful command is not proof of check relevance.
+    File edits are observed from the edit tools and from shell commands that
+    write files — redirection into a file (not ``/dev/null``, not ``2>&1``),
+    in-place edits, copies/moves, ``tee``, ``patch``/``git apply`` and the
+    PowerShell write cmdlets. A check is a recognized runner or an
+    interpreter/shell script whose NAME signals a check (``scratch_test.py``,
+    ``run_checks.sh``, ``verify_install.py``); package installs are never
+    checks, even when the package name contains a keyword. A successful
+    command is still not proof of check relevance.
     """
     results = {msg.tool_call_id: msg for msg in messages if isinstance(msg, ToolMessage)}
     last_edit = -1
@@ -182,13 +240,13 @@ def _verification_gap(messages: list[Any]) -> str | None:
                 last_edit = index
             elif name in _COMMAND_TOOLS:
                 command = (call.get("args") or {}).get("command", "")
-                if (
-                    isinstance(command, str)
-                    and _CHECK_COMMAND.search(command)
-                    and result is not None
-                ):
+                if not isinstance(command, str) or result is None:
+                    continue
+                if _command_is_check(command):
                     last_check = index
                     check_failed = _check_failed(result)
+                elif result.status != "error" and _command_writes_files(command):
+                    last_edit = index
     if last_edit < 0:
         return None
     if last_check <= last_edit:
@@ -199,9 +257,14 @@ def _verification_gap(messages: list[Any]) -> str | None:
 class TaskDisciplineMiddleware(AgentMiddleware):
     """Recite the open todo list when it is out of view; gate an unfinished stop."""
 
-    def __init__(self, *, verify_after_edit: bool = False) -> None:
-        """Enable the experimental post-edit reminder only when requested."""
-        self.verify_after_edit = verify_after_edit
+    def __init__(self) -> None:
+        """The verify gate is mandatory.
+
+        A turn that ends after an edit with no observed check is sent back
+        once. An implementation claim without an executed check is the most
+        common silent-failure mode.
+        """
+        self.verify_after_edit = True
 
     def _with_recitation(self, request: ModelRequest) -> ModelRequest:
         todos = request.state.get("todos") if isinstance(request.state, dict) else None
@@ -261,7 +324,7 @@ class TaskDisciplineMiddleware(AgentMiddleware):
                 "jump_to": "model",
             }
 
-        gap = _verification_gap(this_turn) if self.verify_after_edit else None
+        gap = _verification_gap(this_turn)
         if gap and not _count_marker(this_turn, VERIFY_GATE_MARKER):
             reason = (
                 "Your last recognized check after the edit failed. Inspect its result, "

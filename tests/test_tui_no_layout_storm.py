@@ -326,3 +326,71 @@ def test_focus_returns_to_the_prompt_after_the_window_regains_focus():
             return before, blurred, app.screen.focused is prompt
 
     assert asyncio.run(drive()) == (True, True, True)
+
+
+def test_message_body_paint_lays_out_only_when_size_changes(monkeypatch):
+    """ChatMessage._paint_body records SelectableStatic.update kwargs.
+
+    A streaming body whose (width, newline count, longest segment) is unchanged
+    only needs a repaint; anything that changes its wrapped height — a taller
+    body, or a longer longest segment that re-wraps at the widget width — must
+    take the layout path or the newest streamed row gets clipped.
+    """
+    from novacode_cli.tui.widgets import ChatMessage, SelectableStatic
+
+    layouts: list[bool] = []
+
+    def recording(self, content, *, layout=True):  # noqa: ANN001, ANN202
+        layouts.append(layout)
+
+    monkeypatch.setattr(SelectableStatic, "update", recording)
+
+    body = SelectableStatic("")
+    body._nova_painted = None
+
+    ChatMessage._paint_body(body, Text("line one"))
+    assert layouts == [True], "first paint establishes sizes"
+
+    ChatMessage._paint_body(body, Text("line two"))
+    assert layouts == [True, False], "same newline count, same longest segment: repaint only"
+
+    ChatMessage._paint_body(body, Text("line one\nline two"))
+    assert layouts == [True, False, True], "taller body: layout"
+
+    # Same newline count, but a much longer longest segment re-wraps at the
+    # widget width — the wrap-aware dims must catch it and lay out.
+    ChatMessage._paint_body(body, Text("line one\nline two " + "x" * 200))
+    assert layouts == [True, False, True, True], "longer longest segment re-wraps: layout"
+
+
+def test_message_body_paint_always_lays_out_once_saturated(monkeypatch):
+    """Past the streamed-tail cap the plain length stops changing while wrapped
+    line counts still can, so the dims proxy is unsound and layout is forced."""
+    from novacode_cli.tui.widgets import ChatMessage, SelectableStatic, _STREAM_SATURATED_CHARS
+
+    layouts: list[bool] = []
+
+    def recording(self, content, *, layout=True):  # noqa: ANN001, ANN202
+        layouts.append(layout)
+
+    monkeypatch.setattr(SelectableStatic, "update", recording)
+
+    body = SelectableStatic("")
+    body._nova_painted = None
+
+    first = Text("a" * _STREAM_SATURATED_CHARS)
+    second = Text("b" * (_STREAM_SATURATED_CHARS - 1) + "a")
+    assert len(first.plain) == len(second.plain), "same saturated length"
+    ChatMessage._paint_body(body, first)
+    ChatMessage._paint_body(body, second)
+    assert layouts == [True, True], "identical dims at saturation must still lay out"
+
+
+def test_stream_saturation_chars_match_live_preview_chars():
+    # The saturation force in ChatMessage._paint_body only makes sense at the
+    # same tail size the app caps live previews at — this pairing is
+    # load-bearing, so pin it.
+    from novacode_cli.tui import app as tui_app
+    from novacode_cli.tui import widgets as tui_widgets
+
+    assert tui_widgets._STREAM_SATURATED_CHARS == tui_app._LIVE_PREVIEW_CHARS

@@ -20,10 +20,13 @@ import contextlib
 import io
 import logging
 import re
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from novacode_cli.loops import loop_command
 from novacode_cli.server.catalog import ALIASES, ROUTE_CLIENT, ROUTE_SCREEN, get
+from novacode_cli.ui import loops
 from novacode_cli.ui.port import (
     Block,
     CommandResult,
@@ -94,6 +97,12 @@ PORT_COMMANDS: dict[str, str] = {
     "ralph": "_ralph_command",
     "trello": "_trello_command",
     "create": "_create_command",
+    "claude-plan": "_claude_plan_command",
+    "codex-plan": "_codex_plan_command",
+    "claude-review": "_claude_review_command",
+    "codex-review": "_codex_review_command",
+    "loop": "_loop_command",
+    "remote": "_remote_command",
 }
 
 # Commands the port serves by building a screen from
@@ -787,6 +796,16 @@ def _notify_async_agents_changed() -> None:
         notify_user_async_agents_changed()
 
 
+def _handoff(lead: str, body: str) -> str:
+    """Join a sentence and a pasted report with one blank line.
+
+    The separator is built rather than written as an escape sequence: the
+    prompt crosses two frontends and one wire, and a literal is easier to
+    grep than two backslash-n inside an f-string.
+    """
+    return chr(10).join((lead, "", body))
+
+
 class ServerPort:
     """A :class:`novacode_cli.ui.port.UIPort` that emits protocol frames.
 
@@ -840,6 +859,10 @@ class ServerPort:
         self._proactive_runtime: Any = None
         self._rooms_store_instance: Any = None
         self._council_task: Any = None
+        self._loop_states: list[Any] = []
+        self._loop_poll: Any = None
+        self._loop_jobs: dict[tuple[str, str], Any] = {}
+        self._active_loop: Any = None
         self._ralph_task: Any = None
         self._trello_task: Any = None
         self._btw_task: Any = None
@@ -2484,12 +2507,46 @@ class ServerPort:
         )
 
     async def _nova_command(self, _args: str | None = None) -> CommandResult:
-        """Toggle the avatar; the client hides or shows its own artwork."""
+        """Toggle the avatar and hand the client its frames.
+
+        The choice is persisted where the Textual UI keeps it, so both frontends
+        agree after a restart. Turning the avatar on ships every animation frame
+        once; the client then plays them from its own activity, so an animation
+        costs no frames per tick.
+
+        Args:
+            _args: Ignored: `/nova` takes no argument.
+
+        Returns:
+            A successful toggle, or why the sprite could not be built.
+        """
+        from novacode_cli.config.nova_config import NovaConfig
+        from novacode_cli.ui import avatar
+
+        config = NovaConfig()
+        showing = not bool(config.get("nova_avatar"))
+        config.set("nova_avatar", showing)
+        if not showing:
+            return CommandResult(
+                ok=True,
+                message="Avatar hidden.",
+                action="avatar",
+                blocks=(Block("text", "Avatar hidden."),),
+            )
+        try:
+            frames = avatar.payload()
+        except (ImportError, OSError) as error:
+            text = f"Avatar unavailable: {error}"
+            return CommandResult(
+                ok=False, message=text, action="avatar", blocks=(Block("text", text),)
+            )
+        message = f"Avatar shown at {avatar.WIDTH}x{avatar.HEIGHT}."
         return CommandResult(
             ok=True,
-            message="Avatar toggled.",
+            message=message,
             action="avatar",
-            blocks=(Block("text", "Avatar toggled."),),
+            avatar=frames,
+            blocks=(Block("text", message),),
         )
 
     async def _prime_screen(self, args: str | None) -> CommandResult:
@@ -4037,6 +4094,257 @@ class ServerPort:
             await call()
         text = strip_ansi(captured.get() + printed.getvalue()).strip()
         return text, blocks_from_text(text)
+
+    async def _claude_plan_command(self, args: str | None) -> CommandResult:
+        """/claude-plan: Claude Code plans headless; Nova implements.
+
+        Args:
+            args: The task, or empty to ask for the repository's next step.
+
+        Returns:
+            The plan as blocks, plus the prompt that hands it to Nova.
+        """
+        from novacode_cli.commands import claude_plan
+
+        return await self._external_planner(claude_plan, args, review=False)
+
+    async def _codex_plan_command(self, args: str | None) -> CommandResult:
+        """/codex-plan: Codex plans headless; Nova implements.
+
+        Args:
+            args: The task, or empty to ask for the repository's next step.
+
+        Returns:
+            The plan as blocks, plus the prompt that hands it to Nova.
+        """
+        from novacode_cli.commands import codex_plan
+
+        return await self._external_planner(codex_plan, args, review=False)
+
+    async def _claude_review_command(self, args: str | None) -> CommandResult:
+        """/claude-review [focus]: Claude Code reviews the changes; Nova reports.
+
+        Args:
+            args: Optional focus for the review.
+
+        Returns:
+            The report as blocks, plus the prompt that has Nova check it.
+        """
+        from novacode_cli.commands import claude_plan
+
+        return await self._external_planner(claude_plan, args, review=True)
+
+    async def _codex_review_command(self, args: str | None) -> CommandResult:
+        """/codex-review [focus]: Codex reviews the changes; Nova reports.
+
+        Args:
+            args: Optional focus for the review.
+
+        Returns:
+            The report as blocks, plus the prompt that has Nova check it.
+        """
+        from novacode_cli.commands import codex_plan
+
+        return await self._external_planner(codex_plan, args, review=True)
+
+    async def _external_planner(
+        self,
+        planner: Any,  # noqa: ANN401 — a module chosen at runtime by command name
+        args: str | None,
+        *,
+        review: bool,
+    ) -> CommandResult:
+        """Run another agent's CLI headless, then hand the result to Nova.
+
+        The external agent never touches this conversation: it explores the
+        repository in its own process, and Nova receives only its text. That
+        keeps one model holding the thread, which is the same rule the terminal
+        UI follows.
+
+        Args:
+            planner: The `claude_plan`/`codex_plan` module to drive.
+            args: Task (plan) or focus (review).
+            review: Whether this is a read-only review.
+
+        Returns:
+            The planner's output as blocks with the prompt Nova should act on.
+        """
+        text = (args or "").strip()
+        if planner.executable() is None:
+            return CommandResult(
+                ok=False,
+                message=(
+                    f"{planner.NAME} is not installed. Run {planner.COMMAND} once to install it, "
+                    f"or see {planner.DOCS_URL}."
+                ),
+            )
+        cwd = Path(self._cwd or Path.cwd())
+        task = text or (
+            "Review the changes in this repository"
+            if review
+            else "Plan how to do this in this repository"
+        )
+        self.log(Block("text", f"◆ {planner.NAME} is {'reviewing' if review else 'planning'}…"))
+        options = dict(planner.REVIEW_ARGS) if review else {}
+        try:
+            turn = await planner.run_turn(task, cwd, **options)
+        except (OSError, RuntimeError, ValueError) as exc:
+            return CommandResult(ok=False, message=f"{planner.NAME} could not run: {exc}")
+        if turn.error:
+            return CommandResult(ok=False, message=f"{planner.NAME} stopped: {turn.error}")
+        body = (turn.plan or turn.text or "").strip()
+        if not body:
+            return CommandResult(ok=False, message=f"{planner.NAME} returned nothing to report.")
+        if review:
+            return CommandResult(
+                ok=True,
+                message=f"◆ {planner.NAME} reviewed the changes.",
+                blocks=(Block("heading", f"{planner.NAME}'s review"), Block("code", body)),
+                prompt=_handoff(
+                    f"{planner.NAME} just reviewed this repository and submitted the report below. "
+                    "Check each finding against the code, then say what you will fix and what you "
+                    "will not, with reasons.",
+                    body,
+                ),
+            )
+        return CommandResult(
+            ok=True,
+            message=f"◆ {planner.NAME} produced a plan.",
+            blocks=(Block("heading", f"{planner.NAME}'s plan"), Block("code", body)),
+            prompt=_handoff(
+                f"{planner.NAME} produced the plan below for this repository. Implement it, "
+                "checking each step against the actual code, and say where you deviate.",
+                body,
+            ),
+        )
+
+    async def _loop_command(self, args: str | None) -> CommandResult:
+        """/loop: a bounded recurrence this session owns.
+
+        Args:
+            args: `30s <prompt>`, `<n>m <prompt>`, `"<cron>" <prompt>`, `list`,
+                `status`, or `stop [id]`.
+
+        Returns:
+            The scheduler's own wording; a listing arrives as blocks so it stays
+            in the transcript while one-shot confirmations can fade.
+        """
+        state = getattr(self._worker, "session_state", None)
+        if state is None or not getattr(state, "thread_id", ""):
+            return CommandResult(ok=False, message="Session loops need a live conversation.")
+        state._loop_host = True
+        if not any(existing is state for existing in self._loop_states):
+            self._loop_states.append(state)
+        self._start_loop_poll()
+        text = (args or "").strip()
+        try:
+            message = loop_command(state, text)
+        except (ValueError, OSError) as exc:
+            return CommandResult(ok=False, message=f"/loop: {exc}")
+        if text in {"list", "status"} and message:
+            lines = message.splitlines()
+            return CommandResult(
+                ok=True,
+                blocks=tuple(Block("text", line) for line in lines),
+            )
+        return CommandResult(ok=True, message=message)
+
+    def _start_loop_poll(self) -> None:
+        """One poll task per port, started on first use."""
+        if self._loop_poll is None or self._loop_poll.done():
+            self._loop_poll = asyncio.create_task(self._poll_loops())
+
+    async def _poll_loops(self) -> None:
+        """Look for a due job once a second, the way the terminal timer does."""
+        while True:
+            await asyncio.sleep(loops.POLL_SECONDS)
+            self._tick_loops()
+
+    def _tick_loops(self) -> None:
+        """Expire what ran out of time and claim at most one due job."""
+        for state in list(self._loop_states):
+            scheduler = getattr(state, "_loop_scheduler", None)
+            if scheduler is None:
+                continue
+            if scheduler.thread_id != getattr(state, "thread_id", ""):
+                scheduler.close()
+            if scheduler.closed:
+                self._loop_states.remove(state)
+                continue
+            for job_id in scheduler.expire():
+                self.log(Block("text", f"Loop {job_id} expired."))
+                running = self._loop_jobs.get((scheduler.thread_id, job_id))
+                if running is not None:
+                    running.cancel()
+            idle = not self._busy() and not self._loop_jobs
+            job = scheduler.take(idle=idle)
+            if job is not None:
+                key = (scheduler.thread_id, job.id)
+                self._loop_jobs[key] = asyncio.create_task(self._run_loop_job(state, job))
+
+    async def _run_loop_job(self, state: Any, job: Any) -> None:  # noqa: ANN401
+        """Run one iteration as a headless turn owned by this port.
+
+        The terminal UI streams its iteration into the transcript. The port
+        cannot: a client may not be attached when the timer fires. So the
+        iteration runs through the same headless executor `/trello` cards use,
+        and its progress arrives as blocks whenever a client is listening.
+        """
+        from novacode_cli.loops import current_loop
+        from novacode_cli.ui.execution import execute_task
+
+        scheduler = state._loop_scheduler
+        self._active_loop = (state, job)
+        token = current_loop.set((scheduler.thread_id, job.id))
+        try:
+            prompt = await loops.iteration_prompt(state, job.spec, self._worker.assistant_id)
+            if (
+                scheduler.closed
+                or scheduler.thread_id != getattr(state, "thread_id", "")
+                or job.id not in scheduler.jobs
+                or time.monotonic() >= job.expires
+            ):
+                return
+            self.log(Block("text", f"↻ Running loop {job.id}"))
+            await execute_task(
+                loops.instruction(job.id, prompt),
+                self._worker.agent,
+                self._worker.assistant_id,
+                state,
+                getattr(self._worker, "token_tracker", None),
+            )
+        except asyncio.CancelledError:
+            scheduler.stop(job.id)
+            raise
+        except Exception as exc:  # noqa: BLE001 — one bad loop must not kill the poller
+            scheduler.stop(job.id)
+            self.log(Block("text", f"Loop {job.id} stopped: {exc}"))
+        finally:
+            current_loop.reset(token)
+            scheduler.finish(job)
+            self._loop_jobs.pop((scheduler.thread_id, job.id), None)
+            if self._active_loop == (state, job):
+                self._active_loop = None
+
+    async def _remote_command(self, args: str | None) -> CommandResult:
+        """`/remote`: start, stop or inspect the Discord and Telegram bridges.
+
+        The shared handler already owns this surface and prints its own wording,
+        so the port delegates instead of re-implementing it. Bare `/remote` shows
+        the same status the Textual screen opens with.
+
+        Inbound remote messages still need a consumer that turns them into turns;
+        that loop lives in the terminal app, so a bridge started here notifies
+        nobody until a client owns it. The ledger row says so rather than
+        implying full parity.
+
+        Args:
+            args: A sub-command (`status`, `start …`, `stop`, `forget`, …).
+
+        Returns:
+            The handler's output as text blocks.
+        """
+        return await self._passthrough("remote", (args or "").strip() or "status")
 
     async def _set_conversation(
         self,

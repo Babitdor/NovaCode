@@ -42,13 +42,13 @@ per row. Nothing may be deleted from `novacode_cli/tui/` until every row is
 | `novacode_cli/tui/output_buffer.py` | not-started | The bounded tail moved to `novacode_cli/ui/output_buffer.py` (framework-free) and this module re-exports it, so `ui/stream_preview.py` no longer drags Textual in; the ratatui scrollback budget itself is still wave 5. |
 | `novacode_cli/tui/scrollback.py` | not-started | Owned by this wave; no ratatui counterpart yet. |
 | `novacode_cli/tui/session_transcript.py` | not-started | Owned by this wave; no ratatui counterpart yet. |
-| `novacode_cli/tui/terminal.py` | not-started | Owned by this wave; no ratatui counterpart yet. |
+| `novacode_cli/tui/terminal.py` | not-started | The `!!cmd` pane is served by `novacode_cli/ui/terminal.py` and `rust/nova-tui/src/ui/terminal.rs`; this Textual screen still builds its own cells. |
 | `novacode_cli/tui/terminal_view.py` | not-started | Owned by this wave; no ratatui counterpart yet. |
 | `novacode_cli/tui/widgets.py` | not-started | Owned by this wave; no ratatui counterpart yet. |
 | `novacode_cli/tui/icons.py` | not-started | Owned by this wave; no ratatui counterpart yet. |
 | `novacode_cli/tui/palette.py` | not-started | Owned by this wave; no ratatui counterpart yet. |
 | `novacode_cli/tui/themes.py` | server-side | Its palettes are AST-generated into `novacode_cli/ui/theme_table.py` (`scripts/gen_theme_table.py --check`) and reach the client as a `ui_theme` frame, so `/theme` works without importing Textual. The Textual module keeps serving the Textual UI. |
-| `novacode_cli/tui/home.py` | not-started | Owned by this wave; no ratatui counterpart yet. |
+| `novacode_cli/tui/home.py` | server-side | The layout table and `home_style` moved to `novacode_cli/ui/home.py` (Textual-free) and this module re-exports them, so `/settings` and the socket server read one list. The banner itself is drawn by `rust/nova-tui/src/ui/home.rs` from the `ready` frame's `home` payload; the fourteen Textual widget trees stay Textual-only. |
 | `novacode_cli/tui/home_scene.py` | not-started | Owned by this wave; no ratatui counterpart yet. |
 | `novacode_cli/tui/screens.py` | not-started | 40+ modals in one module. Served so far as generic `screen` specs: `/context`, `/settings`, `/statusline`, `/theme`, `/voice`, `/oracle-mode`, `/usage`, `/update`, `/subagents`, plus the sessions/rooms/council/teammates pickers and the council settings forms. The `/ui` layout editor is still Textual-only; `/rewind` is served as list → scope choice with the conversation replayed as blocks; its `USAGE_NOTE` now lives in `novacode_cli/commands/planner_usage.py` so both frontends print one caption. |
 | `novacode_cli/tui/reference_screens.py` | not-started | Owned by this wave; no ratatui counterpart yet. |
@@ -110,12 +110,10 @@ per row. Nothing may be deleted from `novacode_cli/tui/` until every row is
 
 | Module | State | Notes |
 |---|---|---|
-| `novacode_cli/tui/avatar.py` | not-started | Owned by this wave; no ratatui counterpart yet. |
-| `novacode_cli/tui/avatar_frames.py` | not-started | Owned by this wave; no ratatui counterpart yet. |
+| `novacode_cli/tui/avatar.py` | ported | The sheet data moved with it: `novacode_cli/ui/avatar_frames.py`, written by `scripts/build_avatar.py`. The pixel-to-glyph reduction moved to `novacode_cli/ui/avatar.py` (Textual-free, both frontends read it) and the sprite is drawn by `rust/nova-tui/src/ui/avatar.rs`, gated on the terminal UI's 100x32 minimum. The Rich `Text` wrapper stays here. |
 | `novacode_cli/tui/avatar_images.py` | not-started | Owned by this wave; no ratatui counterpart yet. |
-| `novacode_cli/tui/matrix3.py` | not-started | Owned by this wave; no ratatui counterpart yet. |
-| `novacode_cli/tui/pty_shell.py` | not-started | Owned by this wave; no ratatui counterpart yet. |
-| `novacode_cli/tui/shell_output.py` | not-started | Owned by this wave; no ratatui counterpart yet. |
+| `novacode_cli/tui/matrix3.py` | ported | `rust/nova-tui/src/ui/matrix.rs` ports the rain with its own xorshift PRNG (the client has no `rand`), and `rust/nova-tui/src/ui/home.rs` paints it behind the banner; the decorative `widgets.py` rain stays Textual-only. |
+| `novacode_cli/tui/shell_output.py` | server-side | A compatibility re-export of `novacode_cli/shell/output.py`; the terminal reads its output through `novacode_cli/ui/terminal.py`. |
 | `novacode_cli/tui/browser_settings_screen.py` | not-started | Owned by this wave; no ratatui counterpart yet. |
 | `novacode_cli/tui/caveman_screen.py` | not-started | Owned by this wave; no ratatui counterpart yet. |
 | `novacode_cli/tui/voice_downloads.py` | not-started | Owned by this wave; no ratatui counterpart yet. |
@@ -199,7 +197,7 @@ protocol. Everything below is checked by the test named in its row.
 | Loopback token server, session registry, real `attach` | `server-side` | `novacode_cli/server/transport.py`, `novacode_cli/server/sessions.py`, `tests/test_tui_multi_session.py` |
 | Session host: prompt/cancel/interrupt/command | `server-side` | `novacode_cli/server/host.py`, `tests/test_tui_server_protocol.py` |
 | Command catalogue: all 105 `TUI_COMMANDS` rows, generated, drift-checked | `server-side` | `novacode_cli/server/catalog.py`, `tests/test_tui_command_catalog.py` |
-| Command routing by catalogue (99 served, the rest answer explicitly) | `server-side` | `novacode_cli/ui/port_server.py`, `tests/test_tui_command_port.py` |
+| Command routing by catalogue (105 served: the whole table routes) | `server-side` | `novacode_cli/ui/port_server.py`, `tests/test_tui_command_port.py` |
 | First wave-2 screen: `/context` report + breakdown table, plus `/context imported [mode] [query]` over the stored transcript | `ported` | `novacode_cli/ui/screen_specs.py`, `tests/test_tui_screen_specs.py`, `rust/nova-tui/src/ui/screen.rs` |
 | `/theme`: generated table, picker, persisted choice, live repaint | `ported` | `novacode_cli/ui/theme_table.py`, `tests/test_tui_theme_command.py`, `rust/nova-tui/src/theme.rs` |
 | `/statusline`: toggle form, persisted field list, boolean answers | `ported` | `novacode_cli/ui/statusline_fields.py`, `tests/test_tui_statusline_command.py`, `rust/nova-tui/tests/screens.rs` |
@@ -208,6 +206,7 @@ protocol. Everything below is checked by the test named in its row.
 | `/oracle-mode`: on/off/status + validated settings form | `ported` | `novacode_cli/ui/port_server.py`, `tests/test_tui_preferences_command.py`, `rust/nova-tui/src/ui/screen.rs` |
 | Long forms scroll to the focused field (`↑↓`, `PgUp/PgDn`, `Home/End`) | `ported` | `rust/nova-tui/src/ui/screen.rs`, `rust/nova-tui/tests/screens.rs` |
 | Session tabs keep separate transcripts; switching restores entries/todos/composer/scroll | `ported` | `rust/nova-tui/src/state.rs`, `rust/nova-tui/tests/frames_replay.rs`, `rust/nova-tui/tests/fixtures/tabs.jsonl` |
+| `ctrl+o` expands/collapses every tool card and advertises `[ctrl+o to expand]` on collapsed output | `ported` | `novacode_cli/tui/app.py` (`action_toggle_expand`), `novacode_cli/tui/code_mode_panel.py`, `rust/nova-tui/src/main.rs`, `rust/nova-tui/src/ui/transcript.rs`, `rust/nova-tui/tests/screens.rs`, `tests/test_tui_expand.py` |
 | Recorded `tabs` corpus proves an attach round trip and transcript isolation | `ported` | `rust/nova-tui/tests/frames_replay.rs`, `rust/nova-tui/tests/fixtures/tabs.jsonl` |
 | `/proactive`: agent list → actions → validated form/run/history/remove | `ported` | `novacode_cli/ui/screen_specs.py`, `novacode_cli/ui/port_server.py`, `novacode_cli/proactive_runtime.py`, `tests/test_tui_proactive_command.py` |
 | `/council settings`: seat list → per-seat form → validated save | `ported` | `novacode_cli/ui/screen_specs.py`, `novacode_cli/ui/port_server.py`, `tests/test_tui_council_settings_command.py` |
@@ -226,6 +225,10 @@ protocol. Everything below is checked by the test named in its row.
 | `/ralph`: autonomous loop as a port-owned task; lines arrive as blocks, `--status` reports | `ported` | `novacode_cli/commands/ralph_handler.py`, `novacode_cli/ui/port_server.py`, `tests/test_tui_background_commands.py` |
 | `/trello`: board server + watcher as a port-owned task; cards run through the headless executor | `ported` | `novacode_cli/commands/trello_handler.py`, `novacode_cli/commands/trello_server.py`, `novacode_cli/ui/port_server.py`, `tests/test_tui_background_commands.py` |
 | `/create`: Skills & Agents browser through its handler; `stop` closes it | `ported` | `novacode_cli/commands/create_handler.py`, `novacode_cli/ui/port_server.py`, `tests/test_tui_background_commands.py` |
+| `/loop`: bounded recurrence owned by the port — `1m <prompt>`, `"<cron>" <prompt>`, `list`/`status` (blocks), `stop [id]`; each iteration runs through the headless executor so a client need not be attached | `ported` | `novacode_cli/ui/loops.py`, `novacode_cli/loops.py`, `novacode_cli/ui/port_server.py`, `tests/test_tui_loop_command.py` |
+| `/remote <args>`: delegates to the shared bridge handler; bare `/remote` asks for status instead of opening the Textual screen. Inbound remote messages still need the terminal app's consumer | `ported` | `novacode_cli/ui/port_server.py`, `novacode_cli/commands/commands.py`, `tests/test_tui_remote_command.py` |
+| `/claude-plan`, `/codex-plan`: the other agent's CLI plans headless in its own process; the plan arrives as blocks with the prompt Nova implements from | `ported` | `novacode_cli/ui/port_server.py`, `novacode_cli/commands/claude_plan.py`, `novacode_cli/commands/codex_plan.py`, `tests/test_tui_planner_commands.py` |
+| `/claude-review`, `/codex-review`: read-only review through the same CLIs; findings arrive as blocks with the prompt Nova checks them against | `ported` | `novacode_cli/ui/port_server.py`, `novacode_cli/commands/claude_plan.py`, `novacode_cli/commands/codex_plan.py`, `tests/test_tui_planner_commands.py` |
 | `/rewind`: checkpoint list → what to restore → rewritten checkpoint, transcript replayed | `ported` | `novacode_cli/ui/transcript.py`, `novacode_cli/ui/screen_specs.py`, `novacode_cli/ui/port_server.py`, `tests/test_tui_rewind_command.py`, `rust/nova-tui/tests/frames_replay.rs` |
 | App-side commands answered directly: `/computer`, `/artifacts`, `/cowork`, `/reload-plugins`, `/cron`, `/webhook`, `/prompt`, `/ponytail-*` | `ported` | `novacode_cli/ui/port_server.py`, `tests/test_tui_app_commands.py` |
 | `/auto-approve`, `/verbose`, `/stop`: session toggles + a client `cancel` action | `ported` | `novacode_cli/ui/port_server.py`, `tests/test_tui_port_commands.py`, `tests/test_tui_auto_approve_command.py`, `rust/nova-tui/src/state.rs` |

@@ -21,7 +21,7 @@ from novacode_cli.tui.avatar import (
     native_image_type,
     render,
 )
-from novacode_cli.tui.avatar_frames import COUNTS, FRAME_SIZE
+from novacode_cli.ui.avatar_frames import COUNTS, FRAME_SIZE
 from tests.test_tui_sessions import _app
 
 if TYPE_CHECKING:

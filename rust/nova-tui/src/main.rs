@@ -158,18 +158,9 @@ fn main() -> ExitCode {
     }
 
     let mut state = AppState::new();
-    if let Inbound::Ready {
-        session_id,
-        cwd,
-        model,
-        assistant_id,
-    } = &client.ready
-    {
-        state.status.session_id = session_id.clone();
-        state.status.cwd = cwd.clone();
-        state.status.model = model.clone();
-        state.status.assistant_id = assistant_id.clone();
-        state.status.connected = true;
+    // The same reducer the loop uses: the handshake must not grow a second path.
+    if matches!(client.ready, Inbound::Ready { .. }) {
+        let _ = apply(&mut state, &client.ready);
     }
 
     let terminal = ratatui::try_init();
@@ -307,6 +298,15 @@ fn run(
     let base = Theme::default();
     loop {
         state.tick = state.tick.wrapping_add(1);
+        // The sprite animates on the client's own clock, so it keeps moving
+        // without a server frame per step.
+        if let Some(banner) = state.home.as_mut() {
+            banner.advance(TICK.as_secs_f64());
+        }
+        if let Some(sprite) = state.avatar.as_mut() {
+            let busy = state.turn_running || !state.streaming.is_empty();
+            sprite.advance(TICK.as_secs_f64(), busy);
+        }
         terminal.draw(|frame| ui::draw(frame, state, &theme))?;
 
         if event::poll(TICK)? {
@@ -414,6 +414,15 @@ fn handle_key(state: &mut AppState, key: &KeyEvent) -> Vec<Effect> {
         return effects;
     }
 
+    // A live terminal takes the keyboard: every printable key is the child's,
+    // and escape closes the pane instead of clearing the composer.
+    if state.terminal.is_some() {
+        if let Some(effect) = ui::terminal::handle_key(state, key) {
+            effects.push(effect);
+        }
+        return effects;
+    }
+
     if state.screen.is_some() {
         if let Some(effect) = ui::screen::handle_key(state, key) {
             effects.push(effect);
@@ -460,6 +469,10 @@ fn handle_key(state: &mut AppState, key: &KeyEvent) -> Vec<Effect> {
             if state.turn_running {
                 effects.push(Effect::Send(frames::cancel()));
             }
+        }
+        KeyCode::Char('o') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            // ctrl+o: expand/collapse every tool card, like the other coding CLIs.
+            state.expand_all = !state.expand_all;
         }
         KeyCode::Char(digit @ '1'..='9') if key.modifiers.contains(KeyModifiers::ALT) => {
             // Alt+<n> picks a tab by position, matching the number the tab bar

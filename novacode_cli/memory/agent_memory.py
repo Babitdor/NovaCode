@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypedDict, cast
 
@@ -13,6 +14,8 @@ from langchain.tools import ToolRuntime
 if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
     from langchain_core.messages import SystemMessage
+
+    from novacode_cli.memory.search import MemoryCandidate
 
 try:
     from typing import NotRequired
@@ -36,6 +39,7 @@ from novacode_cli.config.config import Settings
 from novacode_cli.memory.limits import (
     DEFAULT_MEMORY_BLOCK_CHARS,
     DEFAULT_MEMORY_INDEX_CHARS,
+    DEFAULT_RELEVANT_MEMORY_CHARS,
     memory_budget,
 )
 from novacode_cli.prompts import render_template
@@ -47,6 +51,20 @@ logger = logging.getLogger(__name__)
 _MEMORY_TRUNCATION_NOTICE = "\n\n... [memory truncated — use read_file for full content]"
 #: The index is a pointer list; the tail is reachable via ``memory_search``.
 _INDEX_TRUNCATION_NOTICE = "\n\n... [index truncated — `memory_search` finds the rest]"
+
+#: Header for the per-turn associative recall block. Excerpts are discovery, not
+#: proof — the model must verify against the active project before relying.
+_RELEVANT_MEMORY_HEADER = (
+    "<relevant_memories>\n"
+    "Auto-matched from long-term memory for this request. Excerpts are discovery, "
+    "not proof — verify against the current project and read the linked page for "
+    "full context.\n"
+)
+_RELEVANT_MEMORY_FOOTER = "\n</relevant_memories>"
+
+#: A recall query needs at least this many meaningful tokens; fewer is a
+#: trivial message ("hi", "continue") not worth a corpus search.
+_MIN_RECALL_QUERY_TOKENS = 2
 
 
 class AgentMemoryState(AgentState):
@@ -206,6 +224,9 @@ class AgentMemoryMiddleware(AgentMiddleware):
         self._memory_section_cache: str | None = None
         self._memory_section_cache_time: float = 0
         self._memory_section_cache_ttl: float = 30.0  # 30 seconds TTL
+        # Associative pre-turn recall: (query, volatile block) for the latest
+        # human message, so repeated model calls in one turn search once.
+        self._recall_cache: tuple[str, str] | None = None
 
         from novacode_cli.memory.search import MemorySearchService
 
@@ -674,6 +695,7 @@ class AgentMemoryMiddleware(AgentMiddleware):
         """Keep guards authoritative and announce only completed reads."""
         result = handler(request)
         self._announce_memory_read(request, result)
+        self._invalidate_recall_cache(request, result)
         return result
 
     async def awrap_tool_call(
@@ -684,7 +706,21 @@ class AgentMemoryMiddleware(AgentMiddleware):
         """Async counterpart for normal and programmatic tool dispatch."""
         result = await handler(request)
         self._announce_memory_read(request, result)
+        self._invalidate_recall_cache(request, result)
         return result
+
+    def _invalidate_recall_cache(self, request: ToolCallRequest, result: object) -> None:
+        """A successful memory write can change what recall should return."""
+        if not isinstance(result, ToolMessage) or result.status == "error":
+            return
+        name = request.tool_call.get("name")
+        if name not in {"write_memory", "write_file", "edit_file"}:
+            return
+        if name != "write_memory":
+            path = str((request.tool_call.get("args") or {}).get("file_path", ""))
+            if not path.startswith("/memories"):
+                return
+        self._recall_cache = None
 
     async def _memory_search_tool(
         self, query: str, runtime: ToolRuntime, k: int = 5
@@ -729,20 +765,122 @@ class AgentMemoryMiddleware(AgentMiddleware):
         except Exception:  # noqa: BLE001 — overview is best-effort, never fatal
             return ""
 
-    def _build_system_prompt_parts(self, request: ModelRequest) -> tuple[str, str]:
-        """Build the stable system prompt and an empty volatile prompt section.
+    @staticmethod
+    def _latest_user_query(messages: object) -> str:
+        """Extract the text of the most recent human message for recall.
 
-        Learned topic bodies are available through ``memory_search`` and
-        explicit file reads, not injected automatically on each model call.
+        Injected ``Internal context`` nudges (verify/done gates, skill
+        suggestions) are skipped: they are not the user's task, and searching
+        them would recall gate machinery instead of what the user asked for.
+        The last real user message before the nudge is the right query.
+        """
+        for message in reversed(list(messages or ())):
+            if isinstance(message, dict):
+                if message.get("type") not in {"human", "user"} and message.get("role") != "user":
+                    continue
+                content = message.get("content")
+            else:
+                if getattr(message, "type", "") != "human":
+                    continue
+                content = getattr(message, "content", "")
+            if isinstance(content, list):
+                text = " ".join(
+                    part.get("text", "") for part in content if isinstance(part, dict)
+                )
+            else:
+                text = str(content or "")
+            if text.startswith("Internal context"):
+                continue
+            return text.strip()
+        return ""
+
+    def _format_relevant_memories(self, candidates: Sequence[MemoryCandidate]) -> str:
+        """Render auto-matched excerpts inside the bounded recall block."""
+        lines: list[str] = []
+        used = 0
+        for candidate in candidates:
+            source = f" `{candidate.source}`" if candidate.source else ""
+            line = f"- **{candidate.topic}**{source}: {candidate.excerpt}"
+            if lines and used + len(line) > DEFAULT_RELEVANT_MEMORY_CHARS:
+                break
+            lines.append(line)
+            used += len(line) + 1
+        if not lines:
+            return ""
+        return _RELEVANT_MEMORY_HEADER + "\n".join(lines) + _RELEVANT_MEMORY_FOOTER
+
+    def _recall_query(self, request: ModelRequest) -> str:
+        """A query worth recalling for, or "" for trivial or absent input."""
+        from novacode_cli.memory.search import tokens
+
+        query = self._latest_user_query(getattr(request, "messages", None))
+        if not query or len(tokens(query)) < _MIN_RECALL_QUERY_TOKENS:
+            return ""
+        return query
+
+    def _recall_volatile(self, request: ModelRequest) -> str:
+        """Associative pre-turn recall: auto-matched memories for this request.
+
+        Runs the local (no-model) retrieval over the topic corpus and injects a
+        short excerpt block after the cache breakpoint. Cached per human message
+        so the repeated model calls inside one turn search once. Best-effort:
+        any failure returns "" and never breaks the model call.
+        """
+        query = self._recall_query(request)
+        if not query:
+            return ""
+        cached = self._recall_cache
+        if cached is not None and cached[0] == query:
+            return cached[1]
+        try:
+            block = self._format_relevant_memories(
+                self._memory_search_service.local_candidates(query)
+            )
+        except Exception:  # noqa: BLE001 — recall must never break the model call
+            logger.debug("Associative memory recall failed", exc_info=True)
+            return ""
+        self._recall_cache = (query, block)
+        return block
+
+    async def _recall_volatile_async(self, request: ModelRequest) -> str:
+        """Async twin of :meth:`_recall_volatile`; file reads run in a thread."""
+        query = self._recall_query(request)
+        if not query:
+            return ""
+        cached = self._recall_cache
+        if cached is not None and cached[0] == query:
+            return cached[1]
+        try:
+            candidates = await asyncio.to_thread(
+                self._memory_search_service.local_candidates, query
+            )
+            block = self._format_relevant_memories(candidates)
+        except Exception:  # noqa: BLE001 — recall must never break the model call
+            logger.debug("Associative memory recall failed", exc_info=True)
+            return ""
+        self._recall_cache = (query, block)
+        return block
+
+    def _build_system_prompt_parts(self, request: ModelRequest) -> tuple[str, str]:
+        """Build the stable system prompt and the per-turn associative recall.
+
+        The stable part (core instructions + standing memory) stays byte-identical
+        across differently worded turns so the Anthropic prefix cache holds. The
+        volatile part carries a short ``<relevant_memories>`` block — auto-matched
+        topic excerpts for the latest human message — placed after the cache
+        breakpoint on purpose (varying content inside the prefix would miss on
+        every turn). Full topic bodies still come from ``memory_search`` and
+        explicit file reads.
 
         Returns:
-            A 2-tuple of (stable_prompt, "") for the model-call middleware.
+            A 2-tuple of (stable_prompt, volatile_recall_block).
         """
-        return self._build_system_prompt(request), ""
+        return self._build_system_prompt(request), self._recall_volatile(request)
 
     async def _build_system_prompt_parts_async(self, request: ModelRequest) -> tuple[str, str]:
         """Async twin of :meth:`_build_system_prompt_parts`."""
-        return self._build_system_prompt(request), ""
+        stable = self._build_system_prompt(request)
+        return stable, await self._recall_volatile_async(request)
 
     def _build_system_prompt(self, request: ModelRequest) -> str:
         """Build the STABLE part of the system prompt (memory sections + base).

@@ -120,13 +120,17 @@ class MemoryCandidate:
     relevance: float
 
 
-def _tokens(text: str) -> frozenset[str]:
+def tokens(text: str) -> frozenset[str]:
     """Keep meaningful words and short technical terms, excluding generic words."""
     return frozenset(
         word
         for word in re.findall(r"[a-z0-9]+", (text or "").lower())
         if (len(word) >= _MIN_TOKEN_CHARS or word in _TECHNICAL_TERMS) and word not in _STOPWORDS
     )
+
+
+# Internal call sites and older tests use the underscore name.
+_tokens = tokens
 
 
 def search_excerpt(body: str, query_tokens: frozenset[str]) -> str:
@@ -224,6 +228,20 @@ class MemorySearchService:
             )
 
         return self._format(candidates[:result_limit]) + planning_note + fallback_note
+
+    def local_candidates(self, query: str, *, limit: int = 3) -> list[MemoryCandidate]:
+        """Rank the corpus locally, without model planning or reranking.
+
+        Used for pre-turn associative recall, where retrieval must be cheap and
+        deterministic; the caller decides how much to inject. Applies the same
+        relevance thresholds as :meth:`_retrieve`, so weak matches are dropped.
+        """
+        if not query.strip():
+            return []
+        corpus = self._load_memory_corpus()
+        if not corpus:
+            return []
+        return self._retrieve(query, max(1, min(limit, _MAX_RESULTS)), corpus)
 
     @staticmethod
     def _recall_catalog(

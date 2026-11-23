@@ -39,7 +39,7 @@ pub fn lines(state: &AppState, theme: &Theme) -> Vec<Line<'static>> {
                     out.push(Line::from(Span::styled(line.to_string(), theme.muted())));
                 }
             }
-            BlockKind::Tool(card) => tool_lines(card, theme, &mut out),
+            BlockKind::Tool(card) => tool_lines(card, theme, state.expand_all, &mut out),
             BlockKind::Command {
                 ok,
                 message,
@@ -98,7 +98,7 @@ pub fn lines(state: &AppState, theme: &Theme) -> Vec<Line<'static>> {
     out
 }
 
-fn tool_lines(card: &ToolCard, theme: &Theme, out: &mut Vec<Line<'static>>) {
+fn tool_lines(card: &ToolCard, theme: &Theme, expand_all: bool, out: &mut Vec<Line<'static>>) {
     let status_style = if card.is_error {
         theme.error()
     } else if card.finished {
@@ -132,7 +132,8 @@ fn tool_lines(card: &ToolCard, theme: &Theme, out: &mut Vec<Line<'static>>) {
         .lines()
         .filter(|line| !line.trim().is_empty())
         .collect();
-    if card.expanded {
+    let expanded = card.expanded || expand_all;
+    if expanded {
         for line in &full_lines {
             out.push(Line::from(Span::styled(format!("   {line}"), theme.code())));
         }
@@ -144,6 +145,10 @@ fn tool_lines(card: &ToolCard, theme: &Theme, out: &mut Vec<Line<'static>>) {
         if let Some(last) = full_lines.last() {
             out.push(Line::from(Span::styled(format!("   {last}"), theme.code())));
         }
+        out.push(Line::from(Span::styled(
+            "   [ctrl+o to expand]",
+            theme.muted(),
+        )));
     } else {
         for line in &full_lines {
             out.push(Line::from(Span::styled(format!("   {line}"), theme.code())));

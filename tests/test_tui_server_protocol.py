@@ -94,6 +94,11 @@ async def test_ready_names_the_session_before_anything_else() -> None:
         assert sent[0]["session_id"] == "s1"
         assert sent[0]["model"] == "test-model"
         assert sent[0]["ui"] == "ratatui"
+        # The home banner: the saved layout, whether the rain animates, the version.
+        assert set(sent[0]["home"]) == {"style", "animation", "version"}
+        assert isinstance(sent[0]["home"]["style"], str)
+        assert isinstance(sent[0]["home"]["animation"], bool)
+        assert sent[0]["home"]["version"]
     finally:
         await host.close()
 

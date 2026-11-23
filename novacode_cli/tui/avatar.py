@@ -16,98 +16,54 @@ import re
 import sys
 import time
 from functools import cache
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from novacode_cli.ui.avatar import RGB
 
 from rich.style import Style
 from rich.text import Text
 from textual.geometry import Region
 from textual.widgets import Static
 
-from novacode_cli.tui.avatar_frames import COUNTS, FRAME_SIZE, NATIVE_CELL
+from novacode_cli.ui.avatar import (
+    COUNTS,
+    FPS,
+    HEIGHT,
+    NATIVE_SHEET,
+    OCTANTS,
+    REACTION_SECONDS,
+    RUNS_PER_ROW,
+    WIDTH,
+    Cell,
+    _dist,
+    _representative,
+    frame_pixels,
+)
+from novacode_cli.ui.avatar import cell as _pure_cell
+from novacode_cli.ui.avatar import quadrant_cell as _pure_quadrant
+from novacode_cli.ui.avatar_frames import NATIVE_CELL
 
 if TYPE_CHECKING:
     from textual import events
     from textual.app import ComposeResult
 
-__all__ = ["OCTANTS", "NovaAvatar", "render"]
+__all__ = [
+    "COUNTS",
+    "FPS",
+    "HEIGHT",
+    "OCTANTS",
+    "REACTION_SECONDS",
+    "RUNS_PER_ROW",
+    "WIDTH",
+    "NovaAvatar",
+    "_dist",
+    "_representative",
+    "frame_pixels",
+    "render",
+]
 
-#: Animation frames per second for each state.
-FPS = {
-    "idle": 2.0,
-    "walking": 3.0,
-    "running": 4.0,
-    "sitting": 2.0,
-    "sleeping": 0.5,
-    "cursor": 2.0,
-    "happy": 2.0,
-    "confused": 1.5,
-    "thinking": 1.5,
-    "talking": 3.0,
-    "window": 2.0,
-    "playful": 2.0,
-}
-#: Fixed overlay bounds shared by every animation.
-WIDTH = FRAME_SIZE[0] // 2
-HEIGHT = FRAME_SIZE[1] // 4
-RUNS_PER_ROW = (WIDTH + 1) // 2
 #: How long the end-of-turn reaction plays before going back to idle.
-REACTION_SECONDS = 4.0
-
-# Octant glyph per bitmask; bit k is pixel k of the cell, row-major (0 1 / 2 3 /
-# 4 5 / 6 7). U+1CD00.. holds the patterns in mask order, skipping the 26 that
-# already had a character. The four single-corner ones exist only in the newer
-# U+1CEAx supplement, which fewer fonts carry, so the enclosing quadrant
-# stands in (a one-pixel error).
-_TL, _TR, _BL, _BR = 0b00000101, 0b00001010, 0b01010000, 0b10100000
-_EXISTING = {
-    0: " ",
-    _TL | _TR | _BL | _BR: "█",
-    _TL | _TR: "▀",
-    _BL | _BR: "▄",
-    _TL | _BL: "▌",
-    _TR | _BR: "▐",
-    _TL: "▘",
-    _TR: "▝",
-    _BL: "▖",
-    _BR: "▗",
-    _TL | _BR: "▚",
-    _TR | _BL: "▞",
-    _TL | _BL | _BR: "▙",
-    _TL | _TR | _BL: "▛",
-    _TL | _TR | _BR: "▜",
-    _TR | _BL | _BR: "▟",
-    0b00000011: "\U0001fb82",  # upper one quarter
-    0b11000000: "▂",
-    0b00111111: "\U0001fb85",  # upper three quarters
-    0b11111100: "▆",
-    0b00010100: "\U0001fbe6",  # middle left one quarter
-    0b00101000: "\U0001fbe7",  # middle right one quarter
-    0b00000001: "▘",
-    0b00000010: "▝",
-    0b01000000: "▖",
-    0b10000000: "▗",
-}
-
-
-def _octants() -> tuple[str, ...]:
-    out, nxt = [], 0x1CD00
-    for mask in range(256):
-        if mask in _EXISTING:
-            out.append(_EXISTING[mask])
-        else:
-            out.append(chr(nxt))
-            nxt += 1
-    return tuple(out)
-
-
-OCTANTS = _octants()
-
-RGB = tuple[int, int, int]
-
-
-ATLAS = Path(__file__).resolve().parents[1] / "assets" / "nova-avatar.png"
-NATIVE_SHEET = ATLAS.with_name("nova-avatar-hq.png")
+_REACTION = REACTION_SECONDS
 
 
 @cache
@@ -140,77 +96,22 @@ def native_frame(state: str, index: int) -> Any:  # noqa: ANN401 - Lazily import
         return sheet.crop((x, y, x + NATIVE_CELL, y + NATIVE_CELL)).convert("RGBA")
 
 
-@cache
-def _atlas() -> Any:  # noqa: ANN401 — a PIL image, imported only when drawn
-    from PIL import Image
-
-    with Image.open(ATLAS) as image:
-        return image.convert("RGBA")
-
-
-@cache
-def frame_pixels(state: str, index: int) -> tuple[tuple[RGB | None, ...], ...]:
-    """One frame's pixel rows; ``None`` is transparent."""
-    w, h = FRAME_SIZE
-    x, y = index * w, list(COUNTS).index(state) * h
-    data = _atlas().crop((x, y, x + w, y + h)).tobytes()  # RGBA, row-major
-    px = [
-        None if data[i + 3] == 0 else (data[i], data[i + 1], data[i + 2])
-        for i in range(0, len(data), 4)
-    ]
-    return tuple(tuple(px[row * w : (row + 1) * w]) for row in range(h))
-
-
-def _representative(colours: list[RGB]) -> str:
-    """Keep an original pixel color instead of creating a blurred blend."""
-    n = len(colours)
-    center = (
-        sum(c[0] for c in colours) // n,
-        sum(c[1] for c in colours) // n,
-        sum(c[2] for c in colours) // n,
-    )
-    r, g, b = min(colours, key=lambda color: _dist(color, center))
-    return f"#{r:02x}{g:02x}{b:02x}"
-
-
-def _dist(a: RGB, b: RGB) -> int:
-    return (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2
+def _styled(value: Cell) -> tuple[str, Style | None]:
+    """One shared cell as the Rich pair the widget draws."""
+    glyph, foreground, background = value
+    if not foreground and not background:
+        return glyph, None
+    return glyph, Style(color=foreground or None, bgcolor=background or None)
 
 
 def _octant_cell(px: list[RGB | None]) -> tuple[str, Style | None]:
     """Eight pixels -> one glyph in at most two colours."""
-    solid = [i for i, p in enumerate(px) if p is not None]
-    if not solid:
-        return " ", None
-    if len(solid) < len(px):
-        # Transparent pixels show the background; the rest share one colour.
-        mask = sum(1 << i for i in solid)
-        return OCTANTS[mask], Style(color=_representative([px[i] for i in solid]))
-    full: list[RGB] = px  # type: ignore[assignment]
-    # Keep the most different original colours so outlines retain their contrast.
-    a, b = max(((p, q) for p in full for q in full), key=lambda pq: _dist(*pq))
-    near_a = [i for i, p in enumerate(full) if _dist(p, a) <= _dist(p, b)]
-    mask = sum(1 << i for i in near_a)
-    fg = _representative([a])
-    if mask == 0xFF:  # noqa: PLR2004 — every pixel is one colour
-        return "█", Style(color=fg)
-    bg = _representative([b])
-    return OCTANTS[mask], Style(color=fg, bgcolor=bg)
+    return _styled(_pure_cell(px))
 
 
 def _quadrant_cell(px: list[RGB | None]) -> tuple[str, Style | None]:
     """Keep both pixel columns using the widely supported 2x2 quadrant glyphs."""
-    samples: list[RGB | None] = []
-    for top in (0, 4):
-        pair = []
-        for column in (0, 1):
-            solid = [p for p in (px[top + column], px[top + column + 2]) if p is not None]
-            pair.append(
-                tuple(sum(p[c] for p in solid) // len(solid) for c in range(3)) if solid else None
-            )
-        # Duplicate each sample vertically so the octant mask uses only quadrants.
-        samples.extend(pair * 2)
-    return _octant_cell(samples)
+    return _styled(_pure_quadrant(px))
 
 
 def octants_supported() -> bool:

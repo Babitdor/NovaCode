@@ -1,4 +1,4 @@
-{"assistant_id": "nova-agent", "capacity": 4, "cwd": "C:/work/nova", "model": "recording-model", "protocol": 1, "session_id": "recorded-session", "t": "ready", "thread_id": "recorded-thread", "ui": "ratatui"}
+{"assistant_id": "nova-agent", "capacity": 4, "cwd": "C:/work/nova", "home": {"animation": false, "style": "dashboard", "version": "1.0.0"}, "model": "recording-model", "protocol": 1, "session_id": "recorded-session", "t": "ready", "thread_id": "recorded-thread", "ui": "ratatui"}
 {"c": "TextDelta", "d": {"text": "Reading the suite first."}, "prompt_id": "p1", "t": "ev"}
 {"c": "ReasoningDelta", "d": {"text": "The user wants the failures, not a summary."}, "prompt_id": "p1", "t": "ev"}
 {"c": "AssistantMessage", "d": {"agent_color": "cyan", "agent_name": "Nova", "is_subagent": false, "text": "# Plan\n\n1. Read the failing test\n2. Run `pytest -q`\n3. Report the *delta* between runs\n\nNothing is broken yet — verify first."}, "prompt_id": "p1", "t": "ev"}

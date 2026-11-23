@@ -13,6 +13,8 @@ use crate::frames::{
     Block, CommandHelp, CouncilAgent, CouncilUpdate, Inbound, SessionInfo, ThemePalette, Todo,
     UiEvent,
 };
+use crate::ui::avatar::Avatar;
+use crate::ui::home::Home;
 
 /// What the caller must do after a frame is applied.
 ///
@@ -29,6 +31,73 @@ pub enum Effect {
     ClearTranscript,
     /// Answer the open modal with this JSON, in the shape its kind documents.
     Answer { screen_id: String, value: Value },
+}
+
+/// One shell command the server is streaming into a terminal pane.
+///
+/// Lines, not cells: the server strips colour and hands over whole lines, so a
+/// cursor-addressed program is still rendered as text. `partial` holds the line
+/// that has not ended yet, and `pending_cr` remembers a carriage return until
+/// the next character decides whether it began a line break or rewrote the line.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Terminal {
+    pub id: String,
+    pub command: String,
+    pub lines: Vec<String>,
+    pub partial: String,
+    pub pending_cr: bool,
+    pub exit: Option<i32>,
+}
+
+/// The most lines a terminal keeps; older lines scroll out of reach.
+pub const TERMINAL_LINES: usize = 4000;
+
+impl Terminal {
+    fn newline(&mut self) {
+        let line = std::mem::take(&mut self.partial);
+        self.lines.push(line);
+        if self.lines.len() > TERMINAL_LINES {
+            let drop = self.lines.len() - TERMINAL_LINES;
+            self.lines.drain(..drop);
+        }
+    }
+
+    /// Fold one chunk of output into lines.
+    pub fn push(&mut self, text: &str) {
+        for glyph in text.chars() {
+            if self.pending_cr {
+                self.pending_cr = false;
+                if glyph == '\n' {
+                    self.newline();
+                    continue;
+                }
+                self.partial.clear();
+            }
+            match glyph {
+                '\r' => self.pending_cr = true,
+                '\n' => self.newline(),
+                '\u{8}' => {
+                    self.partial.pop();
+                }
+                '\0' => {}
+                other => self.partial.push(other),
+            }
+        }
+    }
+
+    /// The lines to draw: everything completed plus the unfinished line.
+    pub fn view(&self) -> Vec<String> {
+        let mut lines = self.lines.clone();
+        if !self.partial.is_empty() {
+            lines.push(self.partial.clone());
+        }
+        lines
+    }
+
+    /// Whether the pane should still take keystrokes.
+    pub fn live(&self) -> bool {
+        self.exit.is_none()
+    }
 }
 
 /// A rendering-relevant status snapshot, driven by `ready`, `status` and usage.
@@ -656,6 +725,14 @@ pub struct AppState {
     pub last_error: Option<String>,
     /// Frame counter for lightweight animation (council spinner and cursor).
     pub tick: u64,
+    /// The `/nova` sprite, once the server has shipped its sheet.
+    pub avatar: Option<Avatar>,
+    /// The shell command whose output is being streamed, if any.
+    pub terminal: Option<Terminal>,
+    /// The home banner, once the server has named the saved layout.
+    pub home: Option<Home>,
+    /// ctrl+o: expand every tool card for this session until pressed again.
+    pub expand_all: bool,
 }
 
 impl AppState {
@@ -870,7 +947,11 @@ pub fn apply(state: &mut AppState, frame: &Inbound) -> Vec<Effect> {
             cwd,
             model,
             assistant_id,
+            home,
         } => {
+            state.home = home
+                .as_ref()
+                .map(|config| Home::new(&config.style, config.animation, &config.version));
             state.status.session_id = session_id.clone();
             state.status.cwd = cwd.clone();
             state.status.model = model.clone();
@@ -905,6 +986,23 @@ pub fn apply(state: &mut AppState, frame: &Inbound) -> Vec<Effect> {
             state.last_error = Some(message.clone());
             state.entries.push(entry(BlockKind::Error, message.clone()));
         }
+        Inbound::Pty { id, command, text } => {
+            let terminal = state.terminal.get_or_insert_with(Terminal::default);
+            terminal.id.clone_from(id);
+            terminal.command.clone_from(command);
+            terminal.push(text);
+        }
+        Inbound::PtyExit { id, code } => {
+            if let Some(terminal) = state.terminal.as_mut() {
+                if terminal.id == *id {
+                    terminal.exit = Some(*code);
+                    if !terminal.partial.is_empty() {
+                        let tail = std::mem::take(&mut terminal.partial);
+                        terminal.lines.push(tail);
+                    }
+                }
+            }
+        }
         Inbound::Notice { level, message } => {
             state.entries.push(entry(
                 BlockKind::Notice {
@@ -923,6 +1021,7 @@ pub fn apply(state: &mut AppState, frame: &Inbound) -> Vec<Effect> {
             attach,
             create,
             resume,
+            avatar,
             close,
             // `prompt` needs no client action: the server already started that
             // turn, and echoing it here would duplicate the transcript.
@@ -968,15 +1067,20 @@ pub fn apply(state: &mut AppState, frame: &Inbound) -> Vec<Effect> {
                     }
                 }
                 Some("avatar") => {
-                    // `/nova`: the only avatar the client has is the greeting
-                    // line, so toggling repaints with a marker entry.
-                    state.entries.push(entry(
-                        BlockKind::Notice {
-                            level: "info".to_string(),
-                            text: "avatar hidden".to_string(),
-                        },
-                        "",
-                    ));
+                    // `/nova`: the sheet rides the frame that turns it on, and a
+                    // command without one is the instruction to hide it. A sheet
+                    // the client cannot read is refused rather than half drawn.
+                    match avatar.as_ref().map(Avatar::decode) {
+                        Some(Some(sprite)) => state.avatar = Some(sprite),
+                        Some(None) => state.entries.push(entry(
+                            BlockKind::Notice {
+                                level: "warning".to_string(),
+                                text: "This terminal cannot draw the avatar sheet.".to_string(),
+                            },
+                            "",
+                        )),
+                        None => state.avatar = None,
+                    }
                 }
                 _ => {}
             }

@@ -376,7 +376,7 @@ class Connection:
         await target.list_sessions()
 
 
-async def _host_dispatch(host: SessionHost, msg: dict[str, Any]) -> None:
+async def _host_dispatch(host: SessionHost, msg: dict[str, Any]) -> None:  # noqa: PLR0912
     """Route one authenticated client frame to the matching host method.
 
     Args:
@@ -410,6 +410,10 @@ async def _host_dispatch(host: SessionHost, msg: dict[str, Any]) -> None:
         await host.attach(str(msg.get("session_id") or ""))
     elif kind == "approval_mode":
         await host.set_approval_mode(msg.get("enabled"))
+    elif kind == "pty_input":
+        host.terminal_keys(str(msg.get("id") or ""), str(msg.get("text") or ""))
+    elif kind == "pty_close":
+        await host.terminal_close(str(msg.get("id") or "") or None)
     else:
         logger.debug("skipping unknown client frame %r", kind)
 

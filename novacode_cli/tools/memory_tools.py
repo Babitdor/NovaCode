@@ -116,9 +116,13 @@ def write_memory(
 ) -> dict[str, Any]:
     r"""Write content to agent memory file for persistence across sessions.
 
-    Memory allows the agent to remember information across conversations.
-    Use this tool when the user explicitly asks to remember something or when
-    you identify information that should be persisted for future sessions.
+    Memory allows the agent to remember information across conversations. Use
+    this tool proactively — not only when the user asks — whenever durable,
+    memory-worthy information emerges: user preferences and corrections,
+    decisions with rationale, verified debugging fixes, non-obvious commands,
+    version constraints and environment gotchas. Do not end a session with
+    learned-but-unrecorded durable facts. Skip trivia, transient task status
+    and duplicates.
 
     For discrete, look-up-by-key facts shared across subagents, prefer the
     ``remember`` / ``recall`` tools (durable LangGraph store). Use this tool for

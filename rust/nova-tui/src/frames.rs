@@ -7,6 +7,17 @@
 
 use serde_json::Value;
 
+/// The home banner: which layout, whether the rain animates, and the version.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HomeConfig {
+    /// The saved layout name (`dashboard`, `classic`, `signal`, …).
+    pub style: String,
+    /// Whether the saved preference enables animation.
+    pub animation: bool,
+    /// Nova's version, for the banner caption.
+    pub version: String,
+}
+
 /// Protocol version this build speaks.
 pub const PROTOCOL_VERSION: u64 = 1;
 
@@ -163,6 +174,8 @@ pub enum Inbound {
         cwd: Option<String>,
         model: Option<String>,
         assistant_id: Option<String>,
+        /// The home banner the server asked for, if it sent one.
+        home: Option<HomeConfig>,
     },
     Event(UiEvent),
     Interrupt {
@@ -198,12 +211,25 @@ pub enum Inbound {
         create: Option<String>,
         /// A saved session id the spawned child should continue (`/resume`).
         resume: Option<String>,
+        /// The `/nova` sprite sheet, when the command turned it on.
+        avatar: Option<Value>,
         /// A session id to close (`""` means the active session).
         close: Option<String>,
     },
     /// Every command the server offers, in `/help` order.
     Catalogue {
         commands: Vec<CommandHelp>,
+    },
+    /// One chunk of a shell command's output, as plain lines.
+    Pty {
+        id: String,
+        command: String,
+        text: String,
+    },
+    /// A shell command finished; `code` is its exit status.
+    PtyExit {
+        id: String,
+        code: i32,
     },
     /// A modal to present; the answer travels back as `screen_result`.
     Screen {
@@ -398,6 +424,11 @@ pub fn decode(line: &str) -> Option<Inbound> {
             cwd: opt_text(&doc, "cwd"),
             model: opt_text(&doc, "model"),
             assistant_id: opt_text(&doc, "assistant_id"),
+            home: doc.get("home").map(|home| HomeConfig {
+                style: text(home, "style"),
+                animation: flag(home, "animation"),
+                version: text(home, "version"),
+            }),
         },
         "ev" => Inbound::Event(decode_ui_event(&doc)),
         "ui_theme" => Inbound::UiTheme(ThemePalette {
@@ -427,6 +458,15 @@ pub fn decode(line: &str) -> Option<Inbound> {
             message: text(&doc, "message"),
             code: opt_text(&doc, "code"),
         },
+        "pty" => Inbound::Pty {
+            id: text(&doc, "id"),
+            command: text(&doc, "command"),
+            text: text(&doc, "text"),
+        },
+        "pty_exit" => Inbound::PtyExit {
+            id: text(&doc, "id"),
+            code: doc.get("code").and_then(Value::as_i64).unwrap_or(0) as i32,
+        },
         "notice" => Inbound::Notice {
             level: text(&doc, "level"),
             message: text(&doc, "message"),
@@ -453,6 +493,7 @@ pub fn decode(line: &str) -> Option<Inbound> {
             attach: opt_text(&doc, "attach"),
             create: opt_text(&doc, "create"),
             resume: opt_text(&doc, "resume"),
+            avatar: doc.get("avatar").cloned().filter(|value| !value.is_null()),
             close: opt_text(&doc, "close"),
         },
         "catalogue" => Inbound::Catalogue {
@@ -571,6 +612,21 @@ pub fn close_session(session_id: &str) -> String {
 /// Build a `catalogue` frame: ask the server for its command list.
 pub fn catalogue() -> String {
     line("catalogue", serde_json::Map::new())
+}
+
+/// Build a `pty_input` frame: keystrokes for the open terminal.
+pub fn pty_input(terminal_id: &str, keys: &str) -> String {
+    let mut fields = serde_json::Map::new();
+    fields.insert("id".into(), Value::from(terminal_id));
+    fields.insert("text".into(), Value::from(keys));
+    line("pty_input", fields)
+}
+
+/// Build a `pty_close` frame: stop the open terminal.
+pub fn pty_close(terminal_id: &str) -> String {
+    let mut fields = serde_json::Map::new();
+    fields.insert("id".into(), Value::from(terminal_id));
+    line("pty_close", fields)
 }
 
 /// Build a `cancel` frame.

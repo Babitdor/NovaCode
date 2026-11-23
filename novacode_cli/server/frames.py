@@ -97,6 +97,38 @@ def notice(message: str, *, level: str = "info") -> dict[str, Any]:
     return {"t": "notice", "level": level if level in NOTICE_LEVELS else "info", "message": message}
 
 
+def pty(terminal_id: str, command: str, text: str) -> dict[str, Any]:
+    """Build a `pty` frame carrying one chunk of a shell command's output.
+
+    The first frame of a terminal carries the command line so a client can
+    title its pane; later frames repeat it because it is a handful of bytes and
+    a client that attaches late must not have to guess.
+
+    Args:
+        terminal_id: Identifier the client echoes back with its keys.
+        command: The command line the child is running.
+        text: Plain output lines, newline separated, already stripped of colour.
+
+    Returns:
+        The `pty` envelope.
+    """
+    return {"t": "pty", "id": terminal_id, "command": command, "text": text}
+
+
+def pty_exit(terminal_id: str, code: int, command: str = "") -> dict[str, Any]:
+    """Build a `pty_exit` frame closing a shell command's pane.
+
+    Args:
+        terminal_id: Identifier of the terminal that finished.
+        code: The child's exit status.
+        command: The command line, for clients that missed the `pty` frames.
+
+    Returns:
+        The `pty_exit` envelope.
+    """
+    return {"t": "pty_exit", "id": terminal_id, "code": code, "command": command}
+
+
 def ui_theme(
     name: str,
     *,
@@ -165,6 +197,7 @@ def command_result(
     create: str | None = None,
     resume: str | None = None,
     close: str | None = None,
+    avatar: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the reply to a client `command` frame.
 
@@ -186,6 +219,8 @@ def command_result(
         resume: A saved session id the spawned child should continue
             (`/resume`). Additive, and only meaningful with `create`.
         close: A session id to close, or `""` for the active session.
+        avatar: `/nova`'s sprite frames, played by the client itself. Additive:
+            the frames travel once so the animation costs no per-tick frames.
 
     Returns:
         The `command_result` envelope.
@@ -211,6 +246,8 @@ def command_result(
         frame["resume"] = resume
     if close is not None:
         frame["close"] = close
+    if avatar:
+        frame["avatar"] = avatar
     return frame
 
 

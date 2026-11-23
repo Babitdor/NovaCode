@@ -1857,7 +1857,8 @@ def _build_middleware_stack(
         ),
         # Last, so its todo recitation is appended to the FINAL system message
         # (AgentMemoryMiddleware rebuilds it) and sits after the cache breakpoint.
-        TaskDisciplineMiddleware(verify_after_edit=os.environ.get("NOVA_VERIFY_AFTER_EDIT") == "1"),
+        # The verify gate is mandatory: edits end in an observed check.
+        TaskDisciplineMiddleware(),
         PlanTodoGuardMiddleware(),
     ]
 

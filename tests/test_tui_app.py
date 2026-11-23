@@ -1745,7 +1745,8 @@ async def _drive_context_warning():
         # Critical (no auto-compact) -> strong warning notified.
         tt._bd = _BD(96.0, True, True)
         await app._check_context()
-        await pilot.pause()
+        # Toast notices are coalesced on a 0.5s timer; let the flush fire.
+        await pilot.pause(delay=0.6)
         txt = " ".join(call.args[0] for call in notifications.call_args_list)
         assert "critical" in txt.lower(), txt
         # Back below the warning line -> re-arm so the next rise warns again.
@@ -1789,6 +1790,8 @@ async def _drive_live_steering():
         inp.focus()
         await pilot.press("enter")
         await pilot.pause()
+        # Toast notices are coalesced on a 0.5s timer; let the flush fire.
+        await pilot.pause(delay=0.6)
         # Injected as a steering instruction (not dispatched as a new turn).
         instrs = ss.steering_instructions
         assert any(si.instruction == "focus on error handling" for si in instrs), instrs
@@ -2843,6 +2846,8 @@ async def _drive_init_routes_native():
             await pilot.press("enter")
             await app.workers.wait_for_complete()
             await pilot.pause()
+            # Toast notices are coalesced on a 0.5s timer; let the flush fire.
+            await pilot.pause(delay=0.6)
         finally:
             cfg.settings.project_root = prev_root
         # native notice rendered; not the "isn't available in --tui" fallback
@@ -3865,6 +3870,8 @@ async def _drive_research_dream_native():
     async with app.run_test() as pilot:
         await submit(pilot, "/research quick how do async generators work")
         await submit(pilot, "/dream")
+        # Toast notices are coalesced on a 0.5s timer; let the flush fire.
+        await pilot.pause(delay=0.6)
         txt = " ".join(call.args[0] for call in notifications.call_args_list)
         assert "isn't available" not in txt, txt
         # research header surfaced natively
@@ -4208,6 +4215,8 @@ async def _drive_resume_replay():
     async with app.run_test() as pilot:
         await app.workers.wait_for_complete()
         await pilot.pause()
+        # Toast notices are coalesced on a 0.5s timer; let the flush fire.
+        await pilot.pause(delay=0.6)
         # Both prior turns are replayed as ChatMessage cards (user + nova),
         from novacode_cli.tui.app import ChatMessage
 
@@ -4298,6 +4307,8 @@ async def _drive_clear_resets_chat():
         # New conversation thread + cleared per-chat tracking.
         assert ss.thread_id != "orig-thread", ss.thread_id
         assert "sentinel" not in app._seen
+        # Toast notices are coalesced on a 0.5s timer; let the flush fire.
+        await pilot.pause(delay=0.6)
         txt = " ".join(call.args[0] for call in notifications.call_args_list)
         assert "new chat" in txt.lower(), txt
 
@@ -5793,3 +5804,142 @@ def test_tui_update_notice_and_manual_check(monkeypatch: pytest.MonkeyPatch) -> 
             assert notify.call_count == 0
 
     asyncio.run(drive())
+
+
+def test_combine_toasts_joins_and_caps_lines():
+    """The toast coalescer keeps the newest 3 lines, newest-wins, and summarizes
+    the dropped OLDEST as a leading "+N more" — the newest must stay visible."""
+    from novacode_cli.tui.app import _combine_toasts
+
+    assert _combine_toasts(["a"]) == "a"
+    assert _combine_toasts(["a", "b", "c"]) == "a\nb\nc"
+    combined = _combine_toasts(["a", "b", "c", "d", "e"])
+    assert combined == "+2 more\nc\nd\ne", combined
+    assert combined.splitlines()[-1] == "e", "the newest message must be visible"
+
+
+def test_toast_burst_coalesces_into_one():
+    """A burst of _log notices mounts ONE combined toast, not one per message."""
+    if not _HAS_TEXTUAL:
+        return
+    asyncio.run(_drive_toast_burst())
+
+
+async def _drive_toast_burst():
+    from unittest.mock import Mock
+
+    from rich.text import Text
+
+    from novacode_cli.tui.app import NovaApp, NovaStatusBar
+    from novacode_cli.ui.ui_elements import TokenTracker
+
+    app = NovaApp(
+        agent=_FakeAgent(),
+        assistant_id="nova-agent",
+        session_state=_SS(),
+        backend=None,
+        token_tracker=TokenTracker(),
+        image_tracker=None,
+        model_name="m",
+        session_manager=None,
+    )
+    notifications = Mock(wraps=app.notify)
+    app.notify = notifications
+    async with app.run_test() as pilot:
+        for i in range(4):
+            app._log(Text(f"Task completed: job {i} · t{i}"))
+        await pilot.pause()
+        assert notifications.call_count == 0, "notices queue for the 0.5s flush"
+        await pilot.pause(delay=0.6)
+        assert notifications.call_count == 1, notifications.call_args_list
+        msg = notifications.call_args[0][0]
+        assert "job 3" in msg, "the newest of the 4 queued messages must be visible"
+        assert "+1 more" in msg, msg
+        assert msg.splitlines()[-1].endswith("job 3 · t3"), msg
+
+
+class _FakeStyles:
+    """Mimics Textual styles.height: assignments read back as a Scalar."""
+
+    def __init__(self, height):
+        self._height = height
+        self.writes = 0
+
+    class _Scalar:
+        def __init__(self, value):
+            self.value = value
+
+    @property
+    def height(self):
+        if isinstance(self._height, (int, float)):
+            return _FakeStyles._Scalar(self._height)
+        return self._height
+
+    @height.setter
+    def height(self, value):
+        self.writes += 1
+        self._height = value
+
+
+def test_set_log_height_skips_noop_assignment():
+    """_set_log_height compares the current height; equal values never assign."""
+    from types import SimpleNamespace
+
+    from novacode_cli.tui.app import NovaApp
+
+    styles = _FakeStyles(None)
+    widget = SimpleNamespace(styles=styles)
+    NovaApp._set_log_height(widget, 6)
+    assert styles.writes == 1
+    NovaApp._set_log_height(widget, 6)
+    assert styles.writes == 1, "same height must not re-assign (layout churn)"
+    NovaApp._set_log_height(widget, 7)
+    assert styles.writes == 2
+
+
+def test_queue_pane_event_caps_buffer_length():
+    """The hidden-pane buffer is hard-capped; the newest entry is never dropped."""
+    from types import SimpleNamespace
+
+    from novacode_cli import ui_events as ev
+    from novacode_cli.tui import app as app_module
+
+    pane = SimpleNamespace(buffer=[], unread=0)
+    last = None
+    for i in range(app_module._PANE_BUFFER_MAX + 60):
+        # Alternate types so the coalescer can't collapse them into one slot.
+        last = (
+            ev.StatusUpdate(message=f"s{i}")
+            if i % 2
+            else ev.ContextMessage(message=f"c{i}")
+        )
+        app_module.NovaApp._queue_pane_event(pane, last)
+    assert len(pane.buffer) == app_module._PANE_BUFFER_MAX
+    assert pane.buffer[-1] is last
+
+
+def test_output_log_tail_matches():
+    """OutputLog.tail_matches detects when the final output is already painted."""
+    if not _HAS_TEXTUAL:
+        return
+    asyncio.run(_drive_output_log_tail_matches())
+
+
+async def _drive_output_log_tail_matches():
+    from textual.app import App
+
+    from novacode_cli.tui.widgets import OutputLog
+
+    class _A(App):
+        def compose(self):
+            yield OutputLog()
+
+    app = _A()
+    async with app.run_test() as pilot:
+        log = app.query_one(OutputLog)
+        log.write("line1\nline2")
+        await pilot.pause()
+        assert log.tail_matches("line1\nline2") is True
+        assert log.tail_matches("line2") is True  # ends with the tail
+        assert log.tail_matches("line1\nline3") is False
+        assert log.tail_matches("nope\nline1\nline2") is False

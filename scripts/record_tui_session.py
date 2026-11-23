@@ -266,6 +266,12 @@ async def _wait_for(
 # depends on the machine (log files, dev servers, model settings, workspace
 # contents) are deliberately absent: a corpus that changes with the host is not
 # a corpus.
+# The home banner the recording reports. A corpus that changes with the host is
+# not a corpus: the saved layout and the version are pinned, so the `ready` frame
+# stays byte-identical on every machine and every release.
+RECORDED_HOME: dict[str, object] = {"style": "dashboard", "animation": False, "version": "1.0.0"}
+
+
 # The theme the `theme` scenario selects. Nova's own palette, so the recording
 # exercises the extra themes as well as Textual's built-ins.
 THEME_NAME = "nova-signal"
@@ -574,6 +580,13 @@ def write_frames(frames: list[dict[str, Any]], out: Path) -> int:
     return len(frames)
 
 
+def _pin_home() -> None:
+    """Record a fixed home banner instead of the machine's saved layout."""
+    from novacode_cli.server import host as host_module
+
+    host_module.home_payload = lambda _version: dict(RECORDED_HOME)
+
+
 def main(argv: list[str] | None = None) -> int:
     """Entry point.
 
@@ -597,6 +610,7 @@ def main(argv: list[str] | None = None) -> int:
         help="Destination JSONL file (defaults to tests/fixtures/<scenario>.jsonl)",
     )
     args = parser.parse_args(argv)
+    _pin_home()
     out = args.out or FIXTURES / f"{args.scenario}.jsonl"
     frames = asyncio.run(record(args.scenario))
     count = write_frames(frames, out)

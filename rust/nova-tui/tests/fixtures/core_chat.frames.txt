@@ -47,7 +47,7 @@ Nothing is broken yet — verify first.
    tests/test_alpha.py .......  [ 25%]                                                              
    …                                                                                                
    final line: 28 passed                                                                            
-                                                                                                    
+   [ctrl+o to expand]                                                                               
                                                                                                     
                                                                                                     
                                                                                                     
@@ -83,7 +83,7 @@ Nothing is broken yet — verify first.
    tests/tes│                                                                          │            
    …        │shell: pytest -q in the project root                                      │            
    final lin│                                                                          │            
-            │y approve · n reject · a always allow · Esc closes                        │            
+   [ctrl+o t│y approve · n reject · a always allow · Esc closes                        │            
             │                                                                          │            
             │                                                                          │            
             │                                                                          │            
@@ -119,7 +119,8 @@ Nothing is broken yet — verify first.
    tests/tes│                                                                          │            
    …        │shell: pytest -q in the project root                                      │            
    final lin│                                                                          │            
-All green: 2│y approve · n reject · a always allow · Esc closes                        │            
+   [ctrl+o t│y approve · n reject · a always allow · Esc closes                        │            
+All green: 2│                                                                          │            
             │                                                                          │            
 ▸ Status    │                                                                          │            
 Session   re│                                                                          │            
@@ -128,7 +129,6 @@ Model     re│                                                                 
 Cwd       C:│                                                                          │            
 Approval  ma│                                                                          │            
 Todos     1/│                                                                          │            
-            │                                                                          │            
             │                                                                          │            
             │                                                                          │            
             │                                                                          │            

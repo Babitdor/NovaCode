@@ -229,7 +229,7 @@ async def test_selection_race_during_instruction_read_defers_instead_of_wrong_se
         app.session_state = SimpleNamespace(thread_id="new")
         return "old session instruction"
 
-    monkeypatch.setattr("novacode_cli.tui.loop_commands.load_instructions", read)
+    monkeypatch.setattr("novacode_cli.ui.loops.load_instructions", read)
     await run_loop_iteration(app, state, job)
     app._stream_prompt.assert_not_awaited()
     assert job.due == 0

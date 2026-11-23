@@ -3423,14 +3423,14 @@ dependencies = [
     { name = "typing-extensions" },
 ]
 wheels = [
-    { url = "https://github.com/abetlen/llama-cpp-python/releases/download/v0.3.30/llama_cpp_python-0.3.30-py3-none-linux_riscv64.whl" },
-    { url = "https://github.com/abetlen/llama-cpp-python/releases/download/v0.3.30/llama_cpp_python-0.3.30-py3-none-macosx_11_0_arm64.whl" },
-    { url = "https://github.com/abetlen/llama-cpp-python/releases/download/v0.3.30/llama_cpp_python-0.3.30-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl" },
-    { url = "https://github.com/abetlen/llama-cpp-python/releases/download/v0.3.30/llama_cpp_python-0.3.30-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl" },
-    { url = "https://github.com/abetlen/llama-cpp-python/releases/download/v0.3.30/llama_cpp_python-0.3.30-py3-none-musllinux_1_2_aarch64.whl" },
-    { url = "https://github.com/abetlen/llama-cpp-python/releases/download/v0.3.30/llama_cpp_python-0.3.30-py3-none-musllinux_1_2_x86_64.whl" },
-    { url = "https://github.com/abetlen/llama-cpp-python/releases/download/v0.3.30/llama_cpp_python-0.3.30-py3-none-pyemscripten_2026_0_wasm32.whl" },
-    { url = "https://github.com/abetlen/llama-cpp-python/releases/download/v0.3.30/llama_cpp_python-0.3.30-py3-none-win_amd64.whl" },
+    { url = "https://github.com/abetlen/llama-cpp-python/releases/download/v0.3.30/llama_cpp_python-0.3.30-py3-none-linux_riscv64.whl", hash = "sha256:f47eef3930c568dbc72450a3f721f65f17d6acab4b0548a9ddbd836ff4197ef0" },
+    { url = "https://github.com/abetlen/llama-cpp-python/releases/download/v0.3.30/llama_cpp_python-0.3.30-py3-none-macosx_11_0_arm64.whl", hash = "sha256:a66d416e5d4d789cdadb6283e2219c4ce3df2307c7008476bac70e749fb29819" },
+    { url = "https://github.com/abetlen/llama-cpp-python/releases/download/v0.3.30/llama_cpp_python-0.3.30-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:0720e1d122a4d1ad46607813bd34018ff46b0f50cd0a38fb93fad650b3b98ade" },
+    { url = "https://github.com/abetlen/llama-cpp-python/releases/download/v0.3.30/llama_cpp_python-0.3.30-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:591337ea31b6fea25f02da53db136041899a530eda1b2c2611f0bebe7c560a15" },
+    { url = "https://github.com/abetlen/llama-cpp-python/releases/download/v0.3.30/llama_cpp_python-0.3.30-py3-none-musllinux_1_2_aarch64.whl", hash = "sha256:571f901a866907871a3be7e68d594c40d98fda46faba4eec537cb29c29aab8f5" },
+    { url = "https://github.com/abetlen/llama-cpp-python/releases/download/v0.3.30/llama_cpp_python-0.3.30-py3-none-musllinux_1_2_x86_64.whl", hash = "sha256:dca09fcba47610d2d73789c0f4bb8fa3103522df3496b2bee618c07ea781c5f6" },
+    { url = "https://github.com/abetlen/llama-cpp-python/releases/download/v0.3.30/llama_cpp_python-0.3.30-py3-none-pyemscripten_2026_0_wasm32.whl", hash = "sha256:519ffbc476ea39e44656145a05c9b174d76dfa76269eb6117ecda3a57142009c" },
+    { url = "https://github.com/abetlen/llama-cpp-python/releases/download/v0.3.30/llama_cpp_python-0.3.30-py3-none-win_amd64.whl", hash = "sha256:8f238e24ed335ad05acf48648d0855714dfeb0ed341d1ff15d8b8cc06bd51d6a" },
 ]
 
 [[package]]
@@ -3974,7 +3974,7 @@ wheels = [
 
 [[package]]
 name = "novacode-cli"
-version = "1.2.55"
+version = "1.2.56"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },

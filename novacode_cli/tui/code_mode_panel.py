@@ -459,7 +459,7 @@ class CodeModePanel(Collapsible):
         self.preview.display = True
         omitted = max(0, len(lines) - _PREVIEW_LINES)
         more = f"+ {omitted} lines · " if omitted else ""
-        self.title = f"{more}Full output (Enter to expand)"
+        self.title = f"{more}Full output (ctrl+o to expand)"
         if isinstance(selected, str) and note.splitlines()[:1] == [_line(selected)]:
             note = "\n".join(note.splitlines()[1:])
         self.note.update(note)

@@ -37,7 +37,7 @@ fn fixture() -> Vec<Inbound> {
         .collect()
 }
 
-fn render(state: &AppState) -> String {
+fn render(state: &mut AppState) -> String {
     let theme = Theme::default();
     let backend = TestBackend::new(WIDTH, HEIGHT);
     let mut terminal = Terminal::new(backend).expect("terminal");
@@ -73,22 +73,22 @@ fn report() -> String {
             {
                 saw_assistant = true;
                 out.push_str("### assistant\n");
-                out.push_str(&render(&state));
+                out.push_str(&render(&mut state));
             }
             Inbound::Event(nova_tui::frames::UiEvent::ToolResult { .. }) if !saw_tool => {
                 saw_tool = true;
                 out.push_str("### tool\n");
-                out.push_str(&render(&state));
+                out.push_str(&render(&mut state));
             }
             Inbound::Interrupt { .. } => {
                 out.push_str("### modal\n");
-                out.push_str(&render(&state));
+                out.push_str(&render(&mut state));
             }
             _ => {}
         }
     }
     out.push_str("### final\n");
-    out.push_str(&render(&state));
+    out.push_str(&render(&mut state));
     out
 }
 
@@ -166,7 +166,7 @@ fn render_at_tool_result() -> String {
             frame,
             Inbound::Event(nova_tui::frames::UiEvent::ToolResult { .. })
         ) {
-            return render(&state);
+            return render(&mut state);
         }
     }
     panic!("the fixture must contain a tool result");
@@ -179,7 +179,7 @@ fn interrupt_opens_a_modal_that_occupies_the_screen() {
     for frame in fixture() {
         apply(&mut state, &frame);
         if matches!(frame, Inbound::Interrupt { .. }) {
-            modal_frame = render(&state);
+            modal_frame = render(&mut state);
         }
     }
     match state.modal {
@@ -208,7 +208,7 @@ fn status_bar_and_composer_render_live_values() {
     );
 
     state.composer = "/status".to_string();
-    let frame = render(&state);
+    let frame = render(&mut state);
     assert!(
         frame.contains("/status"),
         "the composer value must be drawn"
@@ -258,13 +258,13 @@ fn scrolling_offsets_a_taller_transcript() {
     for index in 0..80 {
         state.push(BlockKind::Assistant, format!("line {index}"), "Nova");
     }
-    let tail = render(&state);
+    let tail = render(&mut state);
     assert!(
         tail.contains("line 79"),
         "scroll 0 must follow the tail, so the newest line is visible"
     );
     state.scroll = 10;
-    let scrolled = render(&state);
+    let scrolled = render(&mut state);
     assert_ne!(
         tail, scrolled,
         "the scroll offset must change the transcript view"
@@ -389,7 +389,7 @@ fn the_recorded_theme_repaints_the_client() {
     assert_eq!(action.as_deref(), Some("theme"));
     assert_eq!(message, "Theme: nova-signal");
     // The transcript keeps the human line; the frame only changed the colours.
-    let text = render(&state);
+    let text = render(&mut state);
     assert!(text.contains("Theme set to nova-signal"), "got {text:.0}");
 }
 
@@ -461,7 +461,7 @@ fn command_output_becomes_transcript_lines() {
                 "the help output must become transcript lines: {painted:?}"
             );
             // ...and it must still reach a real buffer.
-            let rendered = render(&state);
+            let rendered = render(&mut state);
             assert!(!rendered.trim().is_empty(), "the frame must draw");
             return;
         }
@@ -483,6 +483,7 @@ fn clear_and_quit_actions_are_explicit_effects() {
         attach: None,
         create: None,
         resume: None,
+        avatar: None,
         close: None,
     };
     let effects = apply(&mut state, &clear);
@@ -503,6 +504,7 @@ fn clear_and_quit_actions_are_explicit_effects() {
         attach: None,
         create: None,
         resume: None,
+        avatar: None,
         close: None,
     };
     let effects = apply(&mut state, &quit);
@@ -536,11 +538,12 @@ fn a_clear_that_carries_blocks_rewrites_the_transcript() {
         attach: None,
         create: None,
         resume: None,
+        avatar: None,
         close: None,
     };
     let effects = apply(&mut state, &rewind);
     assert!(effects.contains(&Effect::ClearTranscript));
-    let painted = render(&state);
+    let painted = render(&mut state);
     assert!(
         painted.contains("add a parser"),
         "the replayed conversation must survive the clear: {painted:?}"
