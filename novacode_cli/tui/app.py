@@ -648,6 +648,9 @@ TUI_COMMANDS: dict[str, SlashCommand] = {
     "browser-use": SlashCommand(
         "_run_browser_use", "Browser research mode (on/off/status/settings or a task)"
     ),
+    "serena": SlashCommand(
+        "_run_serena", "Serena mode: MCP-only semantic toolset (on/off/status; needs Serena MCP)"
+    ),
     "ralph": SlashCommand("_run_ralph", "iterate on a task and save progress (/ralph <task>)"),
     "trello": SlashCommand("_run_trello", "kanban task board in the browser"),
     "create": SlashCommand("_run_create", "Skills & Agents web UI"),
@@ -2584,7 +2587,7 @@ class NovaApp(App):
         self._input_pulse_timer: Any = None
         self._pulse_on = False
         # Per-keystroke de-churn: last (plan, bash) mode state + last palette list.
-        self._last_mode_state: tuple[bool, bool, bool, bool, str, bool, bool] | None = None
+        self._last_mode_state: tuple[bool, bool, bool, bool, str, bool, bool, bool] | None = None
         self._last_palette: list[str] | None = None
         # Notification badge: last seen unread count (drives status refresh).
         self._last_notif_count = 0
@@ -8409,6 +8412,8 @@ class NovaApp(App):
         else:
             mode = Text("⏵ accept edits off", style=pal.muted)
         line = Text.assemble(mode, Text(" (shift+tab) · ? for shortcuts", style=pal.muted))
+        if getattr(self.session_state, "serena_mode_enabled", False):
+            line.append(" · serena: mcp only", style=f"bold {pal.success}")
         if self.tasks_bar_active():
             line.append(" · ↓ tasks", style=pal.dim)
         if getattr(self, "_caveman_enabled", False):
@@ -8643,7 +8648,8 @@ class NovaApp(App):
         self._refresh_composer_modes()
         plan = getattr(self.session_state, "plan_mode_enabled", False)
         browser = getattr(self.session_state, "browser_mode_enabled", False)
-        bash = input_value.startswith("!") and not browser
+        serena = getattr(self.session_state, "serena_mode_enabled", False)
+        bash = input_value.startswith("!") and not browser and not serena
         goal = (
             getattr(self.session_state, "active_goal", None)
             if getattr(self.session_state, "goal_status", "active") == "active"
@@ -8667,9 +8673,9 @@ class NovaApp(App):
         handoff_toggle.set_class(handoff, "enabled")
         pane = getattr(self, "_active_pane", None)
         handoff_toggle.disabled = pane is not None and pane.kind == "child"
-        if self._last_mode_state == (plan, bash, bool(goal), auto, prime, handoff, browser):
+        if self._last_mode_state == (plan, bash, bool(goal), auto, prime, handoff, browser, serena):
             return
-        self._last_mode_state = (plan, bash, bool(goal), auto, prime, handoff, browser)
+        self._last_mode_state = (plan, bash, bool(goal), auto, prime, handoff, browser, serena)
         try:
             badge = self._w("#mode-badge", Static)
             prompt = self._w("#prompt", PromptInput)
@@ -8679,6 +8685,7 @@ class NovaApp(App):
         prompt.screen.set_class(bool(prime), "prime-mode")
         prompt.screen.set_class(bool(plan), "planning-mode")
         prompt.screen.set_class(bool(browser), "browsing-mode")
+        prompt.screen.set_class(bool(serena), "serena-mode")
         browser_toggle = self._w("#browser-toggle", Button)
         browser_toggle.label = "browser:on" if browser else "browser:off"
         browser_toggle.set_class(bool(browser), "enabled")
@@ -8692,7 +8699,16 @@ class NovaApp(App):
         prompt.set_class(prime_composer, "prime-composer")
 
         pal = self._palette
-        if browser:
+        if serena:
+            _paint(
+                badge,
+                Text(
+                    "  SERENA MODE — MCP-only semantic toolset · Serena workflow",
+                    style=f"bold {pal.success}",
+                ),
+            )
+            badge.display = True
+        elif browser:
             _paint(
                 badge,
                 Text(
@@ -8744,8 +8760,9 @@ class NovaApp(App):
         prompt.set_class(bash, "bash-mode")
         prompt.set_class(plan and not bash, "plan-mode")
         prompt.set_class(bool(browser), "browser-mode")
-        prompt.set_class(not plan and not bash and not browser, "normal-mode")
-        prompt.set_class(auto and not bash and not browser, "auto-approve-mode")
+        prompt.set_class(bool(serena), "serena-mode")
+        prompt.set_class(not plan and not bash and not browser and not serena, "normal-mode")
+        prompt.set_class(auto and not bash and not browser and not serena, "auto-approve-mode")
 
         # Also style the > prefix chevron and the prompt row to match.
         try:
@@ -8753,8 +8770,9 @@ class NovaApp(App):
             prefix.set_class(bash, "bash-mode")
             prefix.set_class(plan and not bash, "plan-mode")
             prefix.set_class(bool(browser), "browser-mode")
-            prefix.set_class(not plan and not bash and not browser, "normal-mode")
-            prefix.set_class(auto and not bash and not browser, "auto-approve-mode")
+            prefix.set_class(bool(serena), "serena-mode")
+            prefix.set_class(not plan and not bash and not browser and not serena, "normal-mode")
+            prefix.set_class(auto and not bash and not browser and not serena, "auto-approve-mode")
             prefix.set_class(prime_composer, "prime-composer")
             _paint(prefix, "$ " if bash else "> ")
         except NoMatches:
@@ -8764,8 +8782,9 @@ class NovaApp(App):
             row.set_class(bash, "bash-mode")
             row.set_class(plan and not bash, "plan-mode")
             row.set_class(bool(browser), "browser-mode")
-            row.set_class(not plan and not bash and not browser, "normal-mode")
-            row.set_class(auto and not bash and not browser, "auto-approve-mode")
+            row.set_class(bool(serena), "serena-mode")
+            row.set_class(not plan and not bash and not browser and not serena, "normal-mode")
+            row.set_class(auto and not bash and not browser and not serena, "auto-approve-mode")
             row.set_class(prime_composer, "prime-composer")
             plan_composer = bool(plan) and not (bash or auto)
             row.set_class(plan_composer, "plan-composer")
@@ -18779,6 +18798,43 @@ class NovaApp(App):
         )
         if task:
             await self._stream_prompt(task)
+
+    async def _run_serena(self, text: str) -> None:
+        """Toggle Serena mode: MCP-only semantic toolset with a Serena prompt."""
+        from novacode_cli.agents.serena_mode import serena_mcp_ready
+
+        parts = text.split(maxsplit=1)
+        args = (parts[1].strip() if len(parts) > 1 else "").lower()
+        if args == "status":
+            enabled = getattr(self.session_state, "serena_mode_enabled", False)
+            self.notify(f"Serena Mode: {'on' if enabled else 'off'}")
+            return
+        if self._turn_running():
+            self.notify("Wait for the active request to finish before changing Serena Mode.")
+            return
+        enabled = (
+            not getattr(self.session_state, "serena_mode_enabled", False)
+            if not args
+            else args == "on"
+        )
+        if not enabled:
+            self.session_state.serena_mode_enabled = False
+            self._update_mode_badge()
+            self._refresh_status()
+            self.notify("Serena Mode off. Nova's full toolset is back for this conversation.")
+            return
+        ready, detail = await asyncio.to_thread(serena_mcp_ready)
+        if not ready:
+            self.notify(detail, severity="warning", timeout=10)
+            return
+        self.session_state.serena_mode_enabled = True
+        self._update_mode_badge()
+        self._refresh_status()
+        self.notify(
+            f"Serena Mode on: {detail} Nova's built-in tools are set aside — "
+            "work through Serena's semantic tools and the other MCP servers.",
+            timeout=8,
+        )
 
     def _ralph_mount(self, widget: Widget) -> None:
         self._set_home_visible(visible=False)

@@ -39,6 +39,7 @@ from novacode_cli.agents.provider_caching import (
     public_provider,
     unsupported_native_feature,
 )
+from novacode_cli.agents.serena_mode import serena_mode_enabled
 from novacode_cli.agents.tool_search_variants import (
     BM25_TOOL,
     REGEX_TOOL,
@@ -283,8 +284,12 @@ def sent_tools(tools: Sequence[Any], messages: Sequence[Any]) -> list[Any]:
     )
     middleware._frequent = set()
     request = _AccountingRequest(
-        tools=list(tools), messages=list(messages), system_message=SystemMessage(""), state={},
-        model=None, model_settings={},
+        tools=list(tools),
+        messages=list(messages),
+        system_message=SystemMessage(""),
+        state={},
+        model=None,
+        model_settings={},
     )
     return list(middleware._apply(request).tools)  # type: ignore[arg-type]
 
@@ -345,7 +350,8 @@ class ToolSearchMiddleware(AgentMiddleware):
     def _discovery_tools(tools, *, browsing: bool) -> list[Any]:
         trusted = trusted_browser_servers() if browsing else frozenset()
         return [
-            tool for tool in tools
+            tool
+            for tool in tools
             if _name(tool)
             and (
                 not browsing
@@ -688,14 +694,23 @@ class ToolSearchMiddleware(AgentMiddleware):
             for tool in request.tools
             if (getattr(tool, "metadata", None) or {}).get("_nova_skill_active")
         )
+        # Serena mode binds every remaining schema directly: the mode's whole
+        # point is that the MCP toolset IS the toolset, nothing sits behind a
+        # search step.
+        serena = serena_mode_enabled()
+        if serena:
+            keep.update(_name(tool) for tool in request.tools)
         bound: list[Any] = []
         deferred: list[Any] = []
         for tool in sorted(request.tools, key=_name):
             (bound if _name(tool) in keep else deferred).append(tool)
         browsing = browser_mode_enabled()
         # Search results carry specialist details; discovery never rewrites task's schema.
-        hidden = [] if browsing else sorted(self._deferred_subagents)
+        hidden = [] if (browsing or serena) else sorted(self._deferred_subagents)
         bound = [self._shorten(t, hidden) for t in bound]
+        if serena:
+            # Everything visible is meant to be bound; no "load on demand" note.
+            return self._native(request.override(tools=bound), request.tools)
         optional_names = [
             _name(tool) for tool in request.tools if _name(tool) and _name(tool) not in CORE_TOOLS
         ]

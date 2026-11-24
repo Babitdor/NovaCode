@@ -33,6 +33,7 @@ class Notification:
 
 class RalphTaskStatus(Enum):
     """Status of a Ralph background task."""
+
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
@@ -42,6 +43,7 @@ class RalphTaskStatus(Enum):
 @dataclass
 class BackgroundRalphTask:
     """Tracks a Ralph background task."""
+
     task_id: str  # Unique identifier
     iteration: int  # Current iteration number
     max_iterations: int  # Total iterations
@@ -91,6 +93,7 @@ class SessionState:
         # Steering instructions: persistent user guidance injected into
         # every model call.  List of SteeringInstruction(label, instruction).
         from novacode_cli.bootstrap.steering import SteeringInstruction
+
         self.steering_instructions: list[SteeringInstruction] = []
 
         # Dynamic fields (plugin/external only) stored here
@@ -124,7 +127,9 @@ class SessionState:
         self._pipe_startup_timer: Any = None
         self.workspace_root: str | None = None  # commands/log_commands.py, tui/app.py
         self.verify_enabled: bool = False  # ui/execution.py
-        self.active_goal: str | None = None  # commands/side_commands.py, core/agent_loop.py, tui/app.py
+        self.active_goal: str | None = (
+            None  # commands/side_commands.py, core/agent_loop.py, tui/app.py
+        )
         self.prime_enabled: bool = False
         self.oracle_settings = None
         self.oracle_enabled = False
@@ -198,6 +203,7 @@ class SessionState:
         self._ui_settings.plan_mode_enabled = value
         if value:
             self._ui_settings.browser_mode_enabled = False
+            self._ui_settings.serena_mode_enabled = False
 
     @property
     def browser_mode_enabled(self) -> bool:
@@ -208,6 +214,18 @@ class SessionState:
         self._ui_settings.browser_mode_enabled = value
         if value:
             self._ui_settings.plan_mode_enabled = False
+            self._ui_settings.serena_mode_enabled = False
+
+    @property
+    def serena_mode_enabled(self) -> bool:
+        return self._ui_settings.serena_mode_enabled
+
+    @serena_mode_enabled.setter
+    def serena_mode_enabled(self, value: bool) -> None:
+        self._ui_settings.serena_mode_enabled = value
+        if value:
+            self._ui_settings.plan_mode_enabled = False
+            self._ui_settings.browser_mode_enabled = False
 
     @property
     def verbose(self) -> bool:
@@ -493,50 +511,105 @@ class SessionState:
     # Names set in __init__ as plain instance attributes. __setattr__ must
     # route these through object.__setattr__ so they stay concrete instead of
     # falling into _dynamic.
-    _CONCRETE_FIELDS = frozenset({
-        "pipe_mode", "pipe_ready", "pipe_stopped", "pipe_instance_id",
-        "pipe_input_format", "pipe_startup_timeout", "pipe_request_timeout",
-        "pipe_approval_timeout", "cli_model_override", "session_model_provider",
-        "_pipe_emit", "_pipe_startup_timer",
-        "thread_id", "session_id", "is_continued", "todos",
-        "steering_instructions",
-        "_ui_settings", "_agent_runtime", "_remote_bridge", "_bg_tasks", "_ntf",
-        "_wiki", "_dynamic", "_pending_approvals",
-        # formerly-dynamic fields declared in __init__
-        "headless", "headless_prompt", "headless_output_format",
-        "headless_max_turns", "headless_deny_tools", "headless_out_fd",
-        "headless_exit_code",
-        "headless_timeout", "headless_deadline", "headless_include_partial_messages",
-        "headless_trust_workspace", "headless_result_emitted",
-        "workspace_root", "verify_enabled", "active_goal", "active_rubric",
-        "prime_enabled", "prime_report", "cli_prime_override", "prime_pending", "prime_forget_pending",
-        "prime_factory", "prime_factory_resume",
-        "oracle_settings", "oracle_enabled", "oracle_run",
-        "handoff_enabled", "handoff_pending", "handoff_latest", "handoff_delete_pending",
-        "goal_status", "goal_turns_used", "goal_max_turns", "goal_thread_id",
-        "goal_revision",
-        "browser_use_tasks", "create_server",
-        "_cron_scheduler", "_webhook_server",
-        "_loop_scheduler", "_loop_host",
-        "_ralph_stop_requested", "_ralph_checkpoint_requested",
-        "_background_threads", "_voice_pipeline",
-        "_remote_tool_notify", "_remote_todo_notify", "_remote_processor_task",
-        "_remote_approval_handler", "remote_connections",
-    })
+    _CONCRETE_FIELDS = frozenset(
+        {
+            "pipe_mode",
+            "pipe_ready",
+            "pipe_stopped",
+            "pipe_instance_id",
+            "pipe_input_format",
+            "pipe_startup_timeout",
+            "pipe_request_timeout",
+            "pipe_approval_timeout",
+            "cli_model_override",
+            "session_model_provider",
+            "_pipe_emit",
+            "_pipe_startup_timer",
+            "thread_id",
+            "session_id",
+            "is_continued",
+            "todos",
+            "steering_instructions",
+            "_ui_settings",
+            "_agent_runtime",
+            "_remote_bridge",
+            "_bg_tasks",
+            "_ntf",
+            "_wiki",
+            "_dynamic",
+            "_pending_approvals",
+            # formerly-dynamic fields declared in __init__
+            "headless",
+            "headless_prompt",
+            "headless_output_format",
+            "headless_max_turns",
+            "headless_deny_tools",
+            "headless_out_fd",
+            "headless_exit_code",
+            "headless_timeout",
+            "headless_deadline",
+            "headless_include_partial_messages",
+            "headless_trust_workspace",
+            "headless_result_emitted",
+            "workspace_root",
+            "verify_enabled",
+            "active_goal",
+            "active_rubric",
+            "prime_enabled",
+            "prime_report",
+            "cli_prime_override",
+            "prime_pending",
+            "prime_forget_pending",
+            "prime_factory",
+            "prime_factory_resume",
+            "oracle_settings",
+            "oracle_enabled",
+            "oracle_run",
+            "handoff_enabled",
+            "handoff_pending",
+            "handoff_latest",
+            "handoff_delete_pending",
+            "goal_status",
+            "goal_turns_used",
+            "goal_max_turns",
+            "goal_thread_id",
+            "goal_revision",
+            "browser_use_tasks",
+            "create_server",
+            "_cron_scheduler",
+            "_webhook_server",
+            "_loop_scheduler",
+            "_loop_host",
+            "_ralph_stop_requested",
+            "_ralph_checkpoint_requested",
+            "_background_threads",
+            "_voice_pipeline",
+            "_remote_tool_notify",
+            "_remote_todo_notify",
+            "_remote_processor_task",
+            "_remote_approval_handler",
+            "remote_connections",
+        }
+    )
 
     def __getattr__(self, name: str) -> Any:
         # First, check if the name is a private agent field on the runtime slice
-        agent_private = {"_backend", "_checkpointer", "_store", "_tools",
-                         "_assistant_id", "_model", "_sandbox_type"}
+        agent_private = {
+            "_backend",
+            "_checkpointer",
+            "_store",
+            "_tools",
+            "_assistant_id",
+            "_model",
+            "_sandbox_type",
+        }
         if name in agent_private:
             return getattr(self._agent_runtime, name, None)
         # Then check dynamic fields
         try:
             return object.__getattribute__(self, "_dynamic")[name]
         except KeyError:
-            raise AttributeError(
-                f"'{type(self).__name__}' object has no attribute '{name}'"
-            )
+            raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
 
     def __setattr__(self, name: str, value: Any) -> None:
         # Bypass for known instance attributes (set normally)
@@ -544,26 +617,50 @@ class SessionState:
             object.__setattr__(self, name, value)
             return
         # Private agent fields go to the agent runtime slice
-        agent_private = {"_backend", "_checkpointer", "_store", "_tools",
-                         "_assistant_id", "_model", "_sandbox_type",
-                         "_agent"}  # _agent (compiled graph) goes to runtime slice
+        agent_private = {
+            "_backend",
+            "_checkpointer",
+            "_store",
+            "_tools",
+            "_assistant_id",
+            "_model",
+            "_sandbox_type",
+            "_agent",
+        }  # _agent (compiled graph) goes to runtime slice
         if name in agent_private:
             setattr(self._agent_runtime, name, value)
             return
         # Property-backed fields — use object.__setattr__ which triggers the
         # property descriptor (data descriptors always win).
         if name in {
-            "auto_approve", "no_splash", "plan_mode_enabled", "browser_mode_enabled", "verbose",
-            "exit_hint_until", "exit_hint_handle",
-            "token_tracker", "plan_agent", "plan_backend", "plan_content",
+            "auto_approve",
+            "no_splash",
+            "plan_mode_enabled",
+            "browser_mode_enabled",
+            "serena_mode_enabled",
+            "verbose",
+            "exit_hint_until",
+            "exit_hint_handle",
+            "token_tracker",
+            "plan_agent",
+            "plan_backend",
+            "plan_content",
             "approved_plan_content",
-            "_remote_message_queue", "_remote_message_lock",
-            "_remote_bridge_manager", "_pre_remote_auto_approve",
-            "_image_tracker", "_seen_message_ids", "_composite_backend",
+            "_remote_message_queue",
+            "_remote_message_lock",
+            "_remote_bridge_manager",
+            "_pre_remote_auto_approve",
+            "_image_tracker",
+            "_seen_message_ids",
+            "_composite_backend",
             "_console",
-            "background_ralph_tasks", "trello_server",
+            "background_ralph_tasks",
+            "trello_server",
             "notifications",
-            "wiki_root", "wiki_enabled", "wiki_page_count", "wiki_last_ingest",
+            "wiki_root",
+            "wiki_enabled",
+            "wiki_page_count",
+            "wiki_last_ingest",
         }:
             object.__setattr__(self, name, value)
             return
@@ -594,8 +691,16 @@ class SessionState:
     ) -> None:
         """Set the agent context for dynamic model switching."""
         self._agent_runtime.set_agent_context(
-            agent, backend, checkpointer, store, tools,
-            assistant_id, model, sandbox_type, sandbox_id, sandbox,
+            agent,
+            backend,
+            checkpointer,
+            store,
+            tools,
+            assistant_id,
+            model,
+            sandbox_type,
+            sandbox_id,
+            sandbox,
         )
 
     async def switch_model(self, new_model: Any) -> tuple[Any, Any]:
@@ -725,6 +830,7 @@ class SessionState:
         # discard any approved-but-unconsumed plan.
         self.clear_plan_agent()
         self.browser_mode_enabled = False
+        self.serena_mode_enabled = False
         self.consume_approved_plan()
         # Agent-to-agent mailbox is per-conversation; start the new chat empty.
         try:
@@ -763,7 +869,9 @@ class SessionState:
         When *action_id* is set the notification represents a *pending approval*
         — see :meth:`register_pending_approval` and :meth:`resolve_approval`.
         """
-        nid = self._ntf.add(level, title, message, source, action_id=action_id, action_type=action_type)
+        nid = self._ntf.add(
+            level, title, message, source, action_id=action_id, action_type=action_type
+        )
         n = next((item for item in list(self._ntf.notifications) if item.id == nid), None)
         callback = getattr(self, "_notification_callback", None)
         desktop_managed = False
@@ -774,8 +882,8 @@ class SessionState:
                 pass
         # Fire hook with session_id (cross-domain coordination in SessionState)
         try:
-            from novacode_cli.hooks import HookEvent, dispatch_hook_fire_and_forget
             from novacode_cli.desktop_notifications import ICON_PATH
+            from novacode_cli.hooks import HookEvent, dispatch_hook_fire_and_forget
 
             if n is None:
                 return nid
@@ -813,9 +921,7 @@ class SessionState:
 
     # -- pending approval resolution ---------------------------------------
 
-    def register_pending_approval(
-        self, action_id: str, future: asyncio.Future
-    ) -> None:
+    def register_pending_approval(self, action_id: str, future: asyncio.Future) -> None:
         """Store a Future that the approval flow must resolve.
 
         Called by the agent loop when an ``InterruptRequest`` is yielded.
@@ -839,9 +945,7 @@ class SessionState:
         if fut is None or fut.done():
             return False
         if approve:
-            fut.set_result(
-                {"decisions": [{"type": "approve"}], "any_rejected": False}
-            )
+            fut.set_result({"decisions": [{"type": "approve"}], "any_rejected": False})
         else:
             fut.set_result(
                 {
@@ -865,7 +969,5 @@ class SessionState:
         if self.auto_approve:
             return 0
         return sum(
-            1
-            for n in self._ntf.notifications
-            if not n.dismissed and n.action_type == "approve"
+            1 for n in self._ntf.notifications if not n.dismissed and n.action_type == "approve"
         )

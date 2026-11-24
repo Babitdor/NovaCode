@@ -2654,6 +2654,9 @@ This file stores your preferences and context that persist across sessions.
     from novacode_cli.agents.browser_mode import BrowserModeMiddleware
 
     agent_middleware.append(BrowserModeMiddleware())
+    from novacode_cli.agents.serena_mode import SerenaModeMiddleware
+
+    agent_middleware.append(SerenaModeMiddleware())
     agent_middleware.append(
         ToolSearchMiddleware(
             skills=skills_middleware,
