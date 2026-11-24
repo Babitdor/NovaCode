@@ -244,6 +244,16 @@ class AgentProfileMiddleware(AgentMiddleware):
             ),
         }[profile or "nova"]
         sections = [f"You are {profile.title()}. {guidance}"] if profile is not None else []
+        if profile == "serena" and can_summon:
+            sections.append(
+                "Use Serena's execute_shell_command for short checks. For long builds, "
+                "test suites, or servers, ask Nova via summon_agent to start the exact "
+                "command with the native shell's background option. Give Nova the "
+                "working directory and ask it to return the background task ID. Collect "
+                "the worker's result before ending your turn. The task ID confirms launch "
+                "only. If you need the exit status or logs, ask Nova to inspect that task "
+                "by ID. Avoid launching a second copy while it is running."
+            )
         if can_summon:
             sections.append(
                 "Use summon_agent to hand off a well-scoped task that benefits from "

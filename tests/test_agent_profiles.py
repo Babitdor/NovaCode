@@ -32,6 +32,8 @@ from novacode_cli.mcp.generic import MCPInput, build_mcp_tool, resolve_target
         ("serena", False, True, True),
         ("ralph", False, True, False),
         ("nova", True, True, False),
+        ("serena", True, True, False),
+        ("serena", False, False, False),
         ("nora", False, False, False),
     ],
 )
@@ -55,6 +57,7 @@ def test_delegation_guidance_matches_profile_and_mode(profile, planning, has_too
     prompt = prepared.system_message.text
     assert "Base instructions" in prompt
     assert ("Use summon_agent" in prompt) == can_summon
+    assert ("native shell's background option" in prompt) == (profile == "serena" and can_summon)
     if can_summon:
         assert "Ralph for autonomous loops or autoresearch" in prompt
         assert "Nora for web research" in prompt

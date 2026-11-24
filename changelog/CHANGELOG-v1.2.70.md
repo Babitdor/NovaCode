@@ -6,6 +6,7 @@
 - Nora can use the built-in Browser Use screenshot tool alongside Nova’s search and page-fetch tools. Existing browser trust selections take precedence.
 - The startup spinner gives feedback while the agent runtime loads.
 - Nova, Nora, Serena, and Ralph have clearer handoff instructions for research, symbol-level edits, integration, and measurable experiments.
+- Serena can ask Nova to launch long shell commands as background tasks and return their task IDs.
 
 ## Ratatui
 
