@@ -170,7 +170,7 @@ async def remote_message_processor(
         if low == "/goal" or low.startswith("/goal "):
             from novacode_cli.commands.side_commands import handle_goal_command
 
-            args = text[len("/goal"):].strip()
+            args = text[len("/goal") :].strip()
             result = handle_goal_command(session_state, args)
             msg = result.message
             if result.kickoff and not allow_kickoff:
@@ -187,7 +187,7 @@ async def remote_message_processor(
         if low == "/btw" or low.startswith("/btw "):
             from novacode_cli.commands.side_commands import run_btw_question
 
-            question = text[len("/btw"):].strip()
+            question = text[len("/btw") :].strip()
 
             async def _btw_task() -> None:
                 answer = await run_btw_question(question)
@@ -209,8 +209,7 @@ async def remote_message_processor(
         nonlocal image_tracker
         try:
             logger.info(
-                "Remote message from %s on %s",
-                remote_msg.user_name, remote_msg.platform.value
+                "Remote message from %s on %s", remote_msg.user_name, remote_msg.platform.value
             )
 
             console.print()
@@ -223,12 +222,16 @@ async def remote_message_processor(
 
             try:
                 from novacode_cli.hooks import HookEvent, dispatch_hook_fire_and_forget
-                dispatch_hook_fire_and_forget(HookEvent.REMOTE_MESSAGE, {
-                    "platform": remote_msg.platform.value,
-                    "user": remote_msg.user_name,
-                    "text": remote_msg.text[:500],
-                    "session_id": getattr(session_state, "session_id", ""),
-                })
+
+                dispatch_hook_fire_and_forget(
+                    HookEvent.REMOTE_MESSAGE,
+                    {
+                        "platform": remote_msg.platform.value,
+                        "user": remote_msg.user_name,
+                        "text": remote_msg.text[:500],
+                        "session_id": getattr(session_state, "session_id", ""),
+                    },
+                )
             except Exception:
                 pass
 
@@ -237,7 +240,8 @@ async def remote_message_processor(
             # through to run as a turn; everything else is fully handled here.
             _side = (
                 await _handle_side_command(remote_msg, allow_kickoff=True)
-                if not getattr(remote_msg, "images", None) else "run"
+                if not getattr(remote_msg, "images", None)
+                else "run"
             )
             if _side == "done":
                 return
@@ -252,6 +256,7 @@ async def remote_message_processor(
                     typing_fn = getattr(remote_msg, "typing_fn", None)
                     if typing_fn is not None:
                         if inspect.iscoroutinefunction(typing_fn):
+
                             async def _typing_loop():
                                 try:
                                     while True:
@@ -259,6 +264,7 @@ async def remote_message_processor(
                                         await asyncio.sleep(8)
                                 except asyncio.CancelledError:
                                     pass
+
                             typing_task = asyncio.create_task(_typing_loop())
                         else:
                             try:
@@ -315,6 +321,16 @@ async def remote_message_processor(
                     if status is not None:
                         session_state._remote_todo_notify = status.note_todos
 
+                    async def _send_read_image(path: str) -> None:
+                        """Forward an agent's image read to the bridge as a photo."""
+                        fn = getattr(remote_msg, "read_image_fn", None)
+                        if fn is None:
+                            return
+                        root = getattr(backend, "root_dir", None) or getattr(backend, "cwd", None)
+                        await fn(str(path), str(root) if root else None)
+
+                    session_state._remote_image_read = _send_read_image
+
                     previous_approval_handler = getattr(
                         session_state, "_remote_approval_handler", None
                     )
@@ -341,13 +357,11 @@ async def remote_message_processor(
 
                     session_state._remote_approval_handler = request_approval
                     try:
-                        config = {
-                            "configurable": {"thread_id": session_state.thread_id}
-                        }
+                        config = {"configurable": {"thread_id": session_state.thread_id}}
                         pre_state = await agent.aget_state(config)
-                        pre_msg_count = len(
-                            pre_state.values.get("messages", [])
-                        ) if pre_state else 0
+                        pre_msg_count = (
+                            len(pre_state.values.get("messages", [])) if pre_state else 0
+                        )
 
                         if execute_fn is not None:
                             await execute_fn(
@@ -369,10 +383,20 @@ async def remote_message_processor(
                         # Settle the status line, then send the answer as its own
                         # message (the status carries the tool/subagent summary).
                         if status is not None:
-                            await status.finalize(outcome="failed" if answer and answer.error else "stopped" if answer and answer.cancelled else "done")
+                            await status.finalize(
+                                outcome="failed"
+                                if answer and answer.error
+                                else "stopped"
+                                if answer and answer.cancelled
+                                else "done"
+                            )
                         # _extract_response already selects the final AI message.
                         # Keep code indentation and Markdown exactly as generated.
-                        final_text = response_text.strip() if response_text else "✅ Task completed (no text response)."
+                        final_text = (
+                            response_text.strip()
+                            if response_text
+                            else "✅ Task completed (no text response)."
+                        )
                         if getattr(remote_msg, "user_mention", None):
                             final_text = f"{remote_msg.user_mention}\n{final_text}"
                         try:
@@ -423,9 +447,7 @@ async def remote_message_processor(
                 except Exception as e:
                     logger.error(f"Error processing remote message: {e}")
                     try:
-                        await remote_msg.reply_fn(
-                            f"❌ Error: {str(e)[:200]}"
-                        )
+                        await remote_msg.reply_fn(f"❌ Error: {str(e)[:200]}")
                     except Exception:
                         pass
         except Exception as ex:
@@ -488,8 +510,10 @@ async def remote_message_processor(
                     if low.startswith("/steer"):
                         text = text[len("/steer") :].strip()
                     elif (
-                        low == "/goal" or low.startswith("/goal ")
-                        or low == "/btw" or low.startswith("/btw ")
+                        low == "/goal"
+                        or low.startswith("/goal ")
+                        or low == "/btw"
+                        or low.startswith("/btw ")
                     ):
                         # /btw runs concurrently; /goal records for the running
                         # task. Neither needs the turn lock.

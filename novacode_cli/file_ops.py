@@ -86,9 +86,7 @@ def _safe_read(path: Path) -> str | None:
         logger.warning(f"_safe_read OSError for {path}: {e}")
         return None
     except Exception as e:
-        logger.warning(
-            f"_safe_read unexpected error for {path}: {type(e).__name__}: {e}"
-        )
+        logger.warning(f"_safe_read unexpected error for {path}: {type(e).__name__}: {e}")
         return None
 
 
@@ -205,6 +203,10 @@ class FileOperationRecord:
     before_content: str | None = None
     after_content: str | None = None
     read_output: str | None = None
+    read_image: str | None = None
+    """Virtual path of an image this read returned (deepagents hands images
+    back as base64 content blocks plus the source path) — the TUI mounts an
+    inspectable card and remote bridges send a photo preview for it."""
     hitl_approved: bool = False
     parent_call_id: str | None = None
     """The call this operation happened inside, when it was not a tool call of
@@ -217,9 +219,7 @@ class FileOperationRecord:
 WRITE_TOOLS = frozenset({"write_file", "edit_file", "Write", "Edit"})
 
 
-def resolve_physical_path(
-    path_str: str | None, assistant_id: str | None
-) -> Path | None:
+def resolve_physical_path(path_str: str | None, assistant_id: str | None) -> Path | None:
     """Convert a virtual/relative path to a physical filesystem path.
 
     Handles the following virtual path prefixes:
@@ -287,11 +287,7 @@ def build_approval_preview(
 
     if tool_name == "write_file":
         content = str(args.get("content", ""))
-        before = (
-            _safe_read(physical_path)
-            if physical_path and physical_path.exists()
-            else ""
-        )
+        before = _safe_read(physical_path) if physical_path and physical_path.exists() else ""
         after = content
         diff = compute_unified_diff(before or "", after, display_path, max_lines=100)
         additions = 0
@@ -304,8 +300,7 @@ def build_approval_preview(
         total_lines = _count_lines(after)
         details = [
             f"File: {path_str}",
-            "Action: Create new file"
-            + (" (overwrites existing content)" if before else ""),
+            "Action: Create new file" + (" (overwrites existing content)" if before else ""),
             f"Lines to write: {additions or total_lines}",
         ]
         return ApprovalPreview(
@@ -332,9 +327,7 @@ def build_approval_preview(
         old_string = str(args.get("old_string", ""))
         new_string = str(args.get("new_string", ""))
         replace_all = bool(args.get("replace_all", False))
-        replacement = perform_string_replacement(
-            before, old_string, new_string, replace_all
-        )
+        replacement = perform_string_replacement(before, old_string, new_string, replace_all)
         if isinstance(replacement, str):
             return ApprovalPreview(
                 title=f"Update {display_path}",
@@ -375,9 +368,7 @@ def build_approval_preview(
 class FileOpTracker:
     """Collect file operation metrics during a CLI interaction."""
 
-    def __init__(
-        self, *, assistant_id: str | None, backend: BACKEND_TYPES | None = None
-    ) -> None:
+    def __init__(self, *, assistant_id: str | None, backend: BACKEND_TYPES | None = None) -> None:
         """Initialize the tracker."""
         self.assistant_id = assistant_id
         self.backend = backend
@@ -436,9 +427,7 @@ class FileOpTracker:
 
                 mgr = get_recovery_manager()
                 if mgr:
-                    mgr.snapshot_from_content(
-                        path_str, record.before_content, reason=tool_name
-                    )
+                    mgr.snapshot_from_content(path_str, record.before_content, reason=tool_name)
             except Exception:
                 pass
 
@@ -459,14 +448,10 @@ class FileOpTracker:
             "Write",
             "Edit",
         }:
-            path_str = str(
-                record.args.get("file_path") or record.args.get("path") or ""
-            )
+            path_str = str(record.args.get("file_path") or record.args.get("path") or "")
             if path_str:
                 record.display_path = format_display_path(path_str)
-                record.physical_path = resolve_physical_path(
-                    path_str, self.assistant_id
-                )
+                record.physical_path = resolve_physical_path(path_str, self.assistant_id)
                 if self.backend:
                     try:
                         responses = self.backend.download_files([path_str])  # type: ignore
@@ -514,6 +499,14 @@ class FileOpTracker:
 
         if record.tool_name in {"read_file", "Read"}:
             record.read_output = content_text
+            # deepagents returns images as base64 content blocks and stamps the
+            # source path into additional_kwargs — surface it for the preview
+            # surfaces (TUI card, remote photo).
+            media_kwargs = getattr(tool_message, "additional_kwargs", None) or {}
+            media_path = media_kwargs.get("read_file_path")
+            media_type = media_kwargs.get("read_file_media_type")
+            if media_path and isinstance(media_type, str) and media_type.startswith("image/"):
+                record.read_image = str(media_path)
             lines = _count_lines(content_text)
             record.metrics.lines_read = lines
             offset = record.args.get("offset")
@@ -539,9 +532,7 @@ class FileOpTracker:
                 elif record.physical_path is None:
                     error_parts.append("(physical_path is None)")
                 else:
-                    error_parts.append(
-                        f"(filesystem read failed for {record.physical_path})"
-                    )
+                    error_parts.append(f"(filesystem read failed for {record.physical_path})")
                 record.error = " ".join(error_parts) + "."
                 logger.error(
                     f"File operation failed: tool={record.tool_name}, "
@@ -573,15 +564,11 @@ class FileOpTracker:
                 record.metrics.lines_added = additions
                 record.metrics.lines_removed = deletions
             elif (
-                record.tool_name in {"write_file", "Write"}
-                and (record.before_content or "") == ""
+                record.tool_name in {"write_file", "Write"} and (record.before_content or "") == ""
             ):
                 record.metrics.lines_added = record.metrics.lines_written
             record.metrics.bytes_written = len(record.after_content.encode("utf-8"))
-            if (
-                record.diff is None
-                and (record.before_content or "") != record.after_content
-            ):
+            if record.diff is None and (record.before_content or "") != record.after_content:
                 record.diff = compute_unified_diff(
                     record.before_content or "",
                     record.after_content,
@@ -589,9 +576,7 @@ class FileOpTracker:
                     max_lines=100,
                 )
             if record.diff is None and before_lines != record.metrics.lines_written:
-                record.metrics.lines_added = max(
-                    record.metrics.lines_written - before_lines, 0
-                )
+                record.metrics.lines_added = max(record.metrics.lines_written - before_lines, 0)
 
         self._finalize(record)
         return record
@@ -603,9 +588,7 @@ class FileOpTracker:
             return
 
         # Normalize tool name for comparison (handle both lowercase and capitalized)
-        normalized_tool = (
-            tool_name.lower() if tool_name in {"Write", "Edit", "Read"} else tool_name
-        )
+        normalized_tool = tool_name.lower() if tool_name in {"Write", "Edit", "Read"} else tool_name
 
         # Mark all active records that match
         for record in self.active.values():
@@ -662,9 +645,7 @@ class FileOpTracker:
             return
         record.after_content = _safe_read(record.physical_path)
         if record.after_content is None:
-            logger.warning(
-                f"Failed to read back file from filesystem: {record.physical_path}"
-            )
+            logger.warning(f"Failed to read back file from filesystem: {record.physical_path}")
 
     def take_nested(self, parent_call_id: str | None) -> list[FileOperationRecord]:
         """Operations performed inside ``parent_call_id``, removed as they leave.
@@ -695,13 +676,13 @@ class FileOpTracker:
         # compounds memory. Retain only the most recent records and drop the
         # heavy content fields from the ones we evict.
         if len(self.completed) > _MAX_COMPLETED_RECORDS:
-            evicted = self.completed[: -_MAX_COMPLETED_RECORDS]
+            evicted = self.completed[:-_MAX_COMPLETED_RECORDS]
             for old in evicted:
                 old.before_content = None
                 old.after_content = None
                 old.read_output = None
                 old.diff = None
-            del self.completed[: -_MAX_COMPLETED_RECORDS]
+            del self.completed[:-_MAX_COMPLETED_RECORDS]
 
 
 # ============================================================================

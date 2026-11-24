@@ -148,6 +148,7 @@ from novacode_cli.tui.widgets import (
     SubagentsDock,
     TranscriptScroll,
     TuiInitRenderer,
+    ImageReadCard,
 )
 from novacode_cli.tui.screens import (
     AgentCreateModal,
@@ -159,6 +160,7 @@ from novacode_cli.tui.screens import (
     ContextScreen,
     HookCreateModal,
     HooksScreen,
+    ImagePreviewScreen,
     InfoListScreen,
     LearningScreen,
     McpCustomModal,
@@ -7145,6 +7147,10 @@ class NovaApp(App):
             )
             self._schedule_subagents_paint()
 
+    def _open_image_preview(self, path: str) -> None:
+        """Inspect an image the agent read (Sixel/TGP or half-block fallback)."""
+        self.push_screen(ImagePreviewScreen(path))
+
     def _open_subagent_preview(self, task_id: str) -> None:
         """Show what one row is doing, updating while it runs."""
         opened = self._subagent_rows.get(task_id)
@@ -10455,6 +10461,10 @@ class NovaApp(App):
                 # A retained reasoning card folds/unfolds on click.
                 if isinstance(w, ChatMessage) and w.has_class("reason"):
                     w.toggle_collapsed()
+                    return
+                # An agent-read image opens its preview.
+                if isinstance(w, ImageReadCard):
+                    w.action_inspect()
                     return
                 w = getattr(w, "parent", None)
         except Exception:  # noqa: BLE001
@@ -19841,10 +19851,22 @@ class NovaApp(App):
                     )
                 elif body is not None:
                     body.update(classic)
+                # An agent-read image: a dedicated inspectable card under the card.
+                image_path = getattr(rec, "read_image", None)
+                if image_path:
+                    with contextlib.suppress(Exception):
+                        await self._transcript().mount(
+                            ImageReadCard(str(image_path)),
+                            after=comp if isinstance(comp, Widget) else None,
+                        )
             else:
                 self._mark_tool_group_result(
                     e.call_id, is_error=errored, detail=self._fileop_summary(rec)
                 )
+                image_path = getattr(rec, "read_image", None)
+                if image_path:
+                    with contextlib.suppress(Exception):
+                        await self._transcript().mount(ImageReadCard(str(image_path)))
                 if e.call_id is not None:
                     self._tool_group_lines.pop(e.call_id, None)
                 self._trim_tool_group_history()

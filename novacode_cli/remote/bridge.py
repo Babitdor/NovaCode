@@ -109,6 +109,9 @@ class RemoteMessage:
     answer_edit_fn: Callable[..., Awaitable[None]] | None = None
     #: Optional sender for local image previews in the final response.
     image_preview_fn: Callable[[str, str | None], Awaitable[None]] | None = None
+    #: Optional sender for a photo preview when the agent READS an image file.
+    #: Called with the read path and the workspace root; best-effort per bridge.
+    read_image_fn: Callable[[str, str | None], Awaitable[None]] | None = None
     #: Stable platform account ID, used for scoped launch confirmations.
     sender_id: str | int | None = None
     #: Incoming message ID, for requester-specific Telegram picker replies.
@@ -118,9 +121,7 @@ class RemoteMessage:
     #: Revalidate approval senders against the live bridge and current authorization.
     approval_check: Callable[[str], bool] | None = None
     #: Optional native approval controls, bound to the broker's single-use nonce.
-    approval_fn: Callable[
-        [str, str], Awaitable[Callable[[], Awaitable[None]] | None]
-    ] | None = None
+    approval_fn: Callable[[str, str], Awaitable[Callable[[], Awaitable[None]] | None]] | None = None
 
 
 @dataclass
@@ -499,7 +500,10 @@ class RemoteBridgeManager:
             if await bridge.wait_for_ready():
                 self._ensure_watchdog()
                 return True, ""
-            error = bridge.last_error or "Rootapp startup timed out. Check the Dev Token, Bot ID and network."
+            error = (
+                bridge.last_error
+                or "Rootapp startup timed out. Check the Dev Token, Bot ID and network."
+            )
         except BaseException:
             await self.stop_bridge(bridge_id)
             raise
@@ -843,9 +847,15 @@ class RemoteBridgeManager:
                                 on_status=self._on_status,
                             )
                             previous = entry.get("bridge")
-                            bridge._session_threads = dict(getattr(previous, "_session_threads", {}))
-                            bridge._session_thread_names = dict(getattr(previous, "_session_thread_names", {}))
-                            bridge._outgoing_owners.update(getattr(previous, "_outgoing_owners", {}))
+                            bridge._session_threads = dict(
+                                getattr(previous, "_session_threads", {})
+                            )
+                            bridge._session_thread_names = dict(
+                                getattr(previous, "_session_thread_names", {})
+                            )
+                            bridge._outgoing_owners.update(
+                                getattr(previous, "_outgoing_owners", {})
+                            )
                             new_task = asyncio.create_task(
                                 bridge.run(), name=f"discord-bridge-{bridge_id}"
                             )
@@ -853,7 +863,9 @@ class RemoteBridgeManager:
                             from novacode_cli.remote.rootapp_bridge import RootappBridge
 
                             bridge = RootappBridge(config, self._queue, on_status=self._on_status)
-                            new_task = asyncio.create_task(bridge.run(), name=f"rootapp-bridge-{bridge_id}")
+                            new_task = asyncio.create_task(
+                                bridge.run(), name=f"rootapp-bridge-{bridge_id}"
+                            )
                         else:
                             from novacode_cli.remote.telegram_bridge import TelegramBridge
 

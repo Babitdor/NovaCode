@@ -23,11 +23,11 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.content import Content
 from textual.css.query import NoMatches
-from textual.strip import Strip
+from textual.message import Message
 from textual.selection import Selection
+from textual.strip import Strip
 from textual.theme import Theme
 from textual.widget import Widget
-from textual.message import Message
 from textual.widgets import Input, Static, TextArea
 
 if TYPE_CHECKING:
@@ -2193,6 +2193,35 @@ class TuiInitRenderer:
             await self._app._stream_prompt(prompt)
         finally:
             session_state.auto_approve = prev
+
+
+class ImageReadCard(Static):
+    """An image the agent just read: one dim line, click/Enter to inspect."""
+
+    can_focus = True
+    BINDINGS: ClassVar = [("enter", "inspect", "View image")]
+    DEFAULT_CSS = """
+    ImageReadCard {
+        height: auto; padding: 0 0 0 2; margin-bottom: 1;
+        color: $text-muted; background: transparent;
+    }
+    ImageReadCard:hover, ImageReadCard:focus { background: $surface; color: $accent; }
+    """
+
+    def __init__(self, path: str, media_type: str = "") -> None:
+        self.image_path = path
+        super().__init__(
+            f"Image read: {path} — click to inspect", classes="image-read", markup=False
+        )
+        self.tooltip = "Inspect the image the agent read"
+
+    def on_click(self, event: events.Click) -> None:
+        """Open the preview without triggering transcript click handlers."""
+        event.stop()
+        self.action_inspect()
+
+    def action_inspect(self) -> None:
+        cast("NovaApp", self.app)._open_image_preview(self.image_path)
 
 
 class SubagentStatus(Static):

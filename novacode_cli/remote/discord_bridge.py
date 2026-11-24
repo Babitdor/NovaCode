@@ -135,7 +135,9 @@ class DiscordBridge(DiscordSessionThreads):
         return authorized
 
     def _asker(
-        self, channel: Messageable, route: dict[str, Any],
+        self,
+        channel: Messageable,
+        route: dict[str, Any],
     ) -> Callable[[str], Awaitable[Callable[[], Awaitable[None]]]]:
         """Send every prompt page or fail; retract exactly the pages this prompt created."""
         import discord
@@ -160,7 +162,8 @@ class DiscordBridge(DiscordSessionThreads):
             try:
                 for page in render(text):
                     message = await channel.send(
-                        page, allowed_mentions=discord.AllowedMentions.none(),
+                        page,
+                        allowed_mentions=discord.AllowedMentions.none(),
                     )
                     sent.append(message)
                     self._remember_owner(message, route)
@@ -196,6 +199,22 @@ class DiscordBridge(DiscordSessionThreads):
 
         from novacode_cli.remote.streaming import connected_editor
 
+        async def read_image_fn(path: str, workspace_root: str | None = None):
+            """Send a photo preview for an image the agent read (best-effort)."""
+            import discord
+
+            from novacode_cli.remote.images import resolve_workspace_image
+
+            if not self.is_connected:
+                return
+            resolved = await asyncio.to_thread(resolve_workspace_image, path, workspace_root)
+            if resolved is None:
+                return
+            await channel.send(
+                file=discord.File(str(resolved)),
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
+
         return RemoteMessage(
             platform=RemotePlatform.DISCORD,
             chat_id=self._config.chat_id,
@@ -204,6 +223,7 @@ class DiscordBridge(DiscordSessionThreads):
             reply_fn=reply,
             edit_fn=connected_editor(self, self._editor(channel, route=route)),
             answer_edit_fn=connected_editor(self, self._editor(channel, route=route)),
+            read_image_fn=read_image_fn,
             thread_id=tid,
             route=route,
         )
@@ -214,7 +234,11 @@ class DiscordBridge(DiscordSessionThreads):
 
         from novacode_cli.remote.discord_format import render
 
-        channel = await self._discord_channel(thread_id) if thread_id is not None else await self._session_destination(sid)
+        channel = (
+            await self._discord_channel(thread_id)
+            if thread_id is not None
+            else await self._session_destination(sid)
+        )
         if channel is None:
             return
         if thread_id is not None:
@@ -253,7 +277,10 @@ class DiscordBridge(DiscordSessionThreads):
             for sid, (session_id, _tid) in list(self._session_threads.items()):
                 try:
                     await self.ensure_session_topic(
-                        sid, session_id, self._session_thread_names.get(sid, sid), verify=True,
+                        sid,
+                        session_id,
+                        self._session_thread_names.get(sid, sid),
+                        verify=True,
                     )
                 except Exception as error:
                     await self._status(f"Discord session thread could not reconnect: {error}")
@@ -296,7 +323,12 @@ class DiscordBridge(DiscordSessionThreads):
             route = {"thread": thread_id}
             if thread_id is not None:
                 route["thread_session"] = next(
-                    (sid for sid, (_session, tid) in self._session_threads.items() if tid == thread_id), None,
+                    (
+                        sid
+                        for sid, (_session, tid) in self._session_threads.items()
+                        if tid == thread_id
+                    ),
+                    None,
                 )
             reference = getattr(message, "reference", None)
             reply_owner = self._outgoing_owners.get(getattr(reference, "message_id", None))
@@ -351,6 +383,25 @@ class DiscordBridge(DiscordSessionThreads):
                 except Exception as e:  # noqa: BLE001 — reactions are optional
                     logger.debug(f"Discord reaction failed: {e}")
 
+            async def read_image_fn(path: str, workspace_root: str | None = None) -> None:
+                """Send a photo preview for an image the agent read (best-effort)."""
+                from novacode_cli.remote.images import resolve_workspace_image
+
+                if not self.is_connected:
+                    return
+                resolved = await asyncio.to_thread(resolve_workspace_image, path, workspace_root)
+                if resolved is None:
+                    return
+                try:
+                    await message.channel.send(
+                        file=discord.File(str(resolved)),
+                        allowed_mentions=discord.AllowedMentions.none(),
+                    )
+                except discord.HTTPException as e:
+                    logger.error(f"Discord read-image send error: {e}")
+                except Exception as e:
+                    logger.error(f"Unexpected Discord read-image error: {e}")
+
             edit_fn = self._editor(message.channel, route=route)
             answer_edit_fn = self._editor(message.channel, route=route)
 
@@ -366,11 +417,13 @@ class DiscordBridge(DiscordSessionThreads):
                     reply_fn=reply_fn,
                     typing_fn=message.channel.typing,
                     react_fn=react_fn,
+                    read_image_fn=read_image_fn,
                     edit_fn=edit_fn,
                     answer_edit_fn=answer_edit_fn,
                     ask_fn=self._asker(message.channel, route),
                     approval_check=self._approval_check(
-                        message.channel, private=getattr(message, "guild", None) is None,
+                        message.channel,
+                        private=getattr(message, "guild", None) is None,
                     ),
                     user_mention=user_mention,
                     sender_id=message.author.id,
@@ -389,11 +442,13 @@ class DiscordBridge(DiscordSessionThreads):
                     text=content,
                     reply_fn=reply_fn,
                     react_fn=react_fn,
+                    read_image_fn=read_image_fn,
                     edit_fn=edit_fn,
                     answer_edit_fn=answer_edit_fn,
                     ask_fn=self._asker(message.channel, route),
                     approval_check=self._approval_check(
-                        message.channel, private=getattr(message, "guild", None) is None,
+                        message.channel,
+                        private=getattr(message, "guild", None) is None,
                     ),
                     user_mention=user_mention,
                     sender_id=message.author.id,

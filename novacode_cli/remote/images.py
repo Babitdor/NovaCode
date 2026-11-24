@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import base64
 import io
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING
+from urllib.parse import unquote, urlsplit
 
 from PIL import Image
 
@@ -13,6 +15,41 @@ from novacode_cli.image_utils import MAX_IMAGE_DIMENSION, MAX_IMAGE_SIZE_BYTES, 
 
 if TYPE_CHECKING:
     from novacode_cli.input_utils import ImageTracker
+
+
+def resolve_workspace_image(source: str, workspace_root: str | None) -> Path | None:
+    """Map an agent-side image path to a real file inside the workspace.
+
+    Accepts the paths an agent reads — virtual roots such as ``/.shots/x.png``
+    map to the workspace root, relative paths join it, and absolute local paths
+    are kept only when they stay inside the workspace. URLs and anything
+    outside the workspace (or not an image file) return ``None``.
+    """
+    if not source or not workspace_root:
+        return None
+    root = Path(workspace_root).expanduser().resolve()
+    windows_absolute = bool(re.match(r"^[A-Za-z]:[\\/]", source))
+    parsed = urlsplit(source)
+    if (parsed.scheme and not windows_absolute) or parsed.netloc:
+        return None
+    raw_path = unquote(source if windows_absolute else parsed.path).strip()
+    if not raw_path:
+        return None
+    candidate = Path(raw_path)
+    if raw_path.startswith(("/", "\\")) and not candidate.is_relative_to(root):
+        candidate = root / raw_path.lstrip("/\\")
+    elif not candidate.is_absolute():
+        candidate = root / candidate
+    try:
+        resolved = candidate.resolve(strict=True)
+        resolved.relative_to(root)
+    except (OSError, ValueError):
+        return None
+    from novacode_cli.image_utils import is_image_file
+
+    if not resolved.is_file() or not is_image_file(resolved):
+        return None
+    return resolved
 
 
 def decode_image(data: bytes) -> ImageData:

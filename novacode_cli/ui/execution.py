@@ -197,33 +197,19 @@ async def _capture_fallback_usage(agent, config, token_tracker: TokenTracker) ->
 
 
 async def execute_task(  # type: ignore
-
     user_input: str,
-
     agent,
-
     assistant_id: str | None,
-
     session_state,
-
     token_tracker: TokenTracker | None = None,
-
     backend=None,
-
     is_subagent: bool = False,
-
     image_tracker: ImageTracker | None = None,
-
     seen_message_ids: set[str] | None = None,
-
     *,
-
     skip_file_mentions: bool = False,
-
     verify: bool = False,
-
 ) -> bool:
-
     """Execute any task by passing it directly to the AI agent.
 
 
@@ -244,11 +230,6 @@ async def execute_task(  # type: ignore
 
     """
 
-
-
-
-
-
     # NB: input content (file mentions + images) is prepared inside
 
     # iterate_agent_events; preparing it here too would read mentioned files
@@ -259,27 +240,16 @@ async def execute_task(  # type: ignore
 
     config = build_agent_config(thread_id, assistant_id)
 
-
-
     agent_display_name = get_agent_display_name(assistant_id)
 
     agent_colors = (
-
         get_agent_color(assistant_id)
-
         if assistant_id and assistant_id != "nova-agent"
-
         else (COLORS["success"] if assistant_id == "nova-agent" else COLORS["agent"])
-
     )
 
-
-
     if token_tracker:
-
         token_tracker.increment_user_messages()
-
-
 
     has_responded = False
 
@@ -301,109 +271,70 @@ async def execute_task(  # type: ignore
 
     _last_known_state: object = None
 
-
-
     status = console.status(
-
         f"[bold {agent_colors}]{status_phrases.status_line('thinking', agent_display_name)}",
-
         spinner="dots",
-
     )
 
     status.start()
 
     spinner_active = True
 
-
-
     file_op_tracker = get_session_file_op_tracker(assistant_id=assistant_id, backend=backend)
-
-
 
     displayed_tool_ids: set[str] = set()
 
     _tool_preview_buffer: list[Text] = []
 
-
-
     import os as _os
 
-
-
     _DEBUG_ENABLED = _os.environ.get("Nova_DEBUG", "").lower() in ("1", "true", "yes")
-
-
 
     def _dbg(tag: str, msg: str) -> None:
 
         pass
 
-
-
     if _DEBUG_ENABLED:
-
         import datetime as _dt
 
-
-
         _DBG_PATH = Path("_Nova_debug.log")
-
-
 
         def _dbg(tag: str, msg: str) -> None:  # type: ignore
 
             with open(_DBG_PATH, "a", encoding="utf-8") as f:
-
                 f.write(f"[{_dt.datetime.now():%H:%M:%S.%f}] [{tag}] {msg}\n")
 
-
-
     _dbg(
-
         "START",
-
         f"=== new execute_task ===  plan_mode={getattr(session_state, 'plan_mode_enabled', '?')}",
-
     )
-
-
 
     subagent_remaining = 0
 
     subagent_done = 0
 
-
-
     def flush_tool_previews() -> None:
-
         """Print all buffered tool-result preview lines in a single stop/start cycle."""
 
         nonlocal spinner_active
 
         if not _tool_preview_buffer:
-
             return
 
         if spinner_active:
-
             status.stop()
 
             spinner_active = False
 
         for _detail in _tool_preview_buffer:
-
             console.print(_detail)
 
         _tool_preview_buffer.clear()
 
         if not spinner_active:
-
             status.start()
 
             spinner_active = True
-
-
 
     # Opt-in inline verification loop (Enhancement 1). Falls back to the plain
 
@@ -412,64 +343,38 @@ async def execute_task(  # type: ignore
     _verify = verify or bool(getattr(session_state, "verify_enabled", False))
 
     if _verify and not is_subagent:
-
         from novacode_cli.core.verification_loop import run_with_verification
 
         from novacode_cli.hermes.verifier import InlineVerifier
 
         from novacode_cli.memory.store import get_durable_store
 
-
-
         _event_source = run_with_verification(
-
             user_input,
-
             agent,
-
             assistant_id,
-
             session_state,
-
             backend=backend,
-
             image_tracker=image_tracker,
-
             seen_message_ids=seen_message_ids,
-
             skip_file_mentions=skip_file_mentions,
-
             verifier=InlineVerifier(get_durable_store(), enabled=True),
-
         )
 
     else:
-
         _event_source = run_with_goal(
-
             user_input,
-
             agent,
-
             assistant_id,
-
             session_state,
-
             backend=backend,
-
             image_tracker=image_tracker,
-
             seen_message_ids=seen_message_ids,
-
             skip_file_mentions=skip_file_mentions,
-
         )
-
-
 
     preview = ConsoleStreamPreview(console)
     try:
-
         async for event in _event_source:
             if not isinstance(event, (ev.TextDelta, ev.StatusUpdate)):
                 preview.stop()
@@ -478,12 +383,8 @@ async def execute_task(  # type: ignore
                 remote_notify(event)
 
             if isinstance(event, ev.StatusUpdate):
-
                 if spinner_active and event.message:
-
                     status.update(f"[bold {COLORS['thinking']}]{event.message}")
-
-
 
             elif isinstance(event, ev.TextDelta):
                 if console.is_terminal:
@@ -492,30 +393,19 @@ async def execute_task(  # type: ignore
                         spinner_active = False
                     preview.append(event.text)
 
-
-
             elif isinstance(event, ev.TextDiscard):
-
                 pass  # The transient preview was cleared before dispatch.
 
-
-
             elif isinstance(event, ev.ReasoningDelta):
-
                 pass  # Silently skip in rich console
 
-
-
             elif isinstance(event, ev.AssistantMessage):
-
                 if spinner_active:
-
                     status.stop()
 
                     spinner_active = False
 
                 if not has_responded:
-
                     console.print()
 
                     console.print("●", style=agent_colors, markup=False, end=" ")
@@ -531,114 +421,64 @@ async def execute_task(  # type: ignore
                 console.print(md, justify="full")
 
                 try:
-
                     from novacode_cli.hooks import (
-
                         HookEvent,
-
                         dispatch_hook_fire_and_forget,
-
                     )
 
-
-
                     dispatch_hook_fire_and_forget(
-
                         HookEvent.AGENT_MESSAGE,
-
                         {
-
                             "session_id": getattr(session_state, "session_id", ""),
-
                             "thread_id": getattr(session_state, "thread_id", ""),
-
                             "message": event.text[:500],
-
                         },
-
                     )
 
                 except Exception:
-
                     pass
 
-
-
             elif isinstance(event, ev.ToolCall):
-
                 flush_tool_previews()
 
                 if spinner_active:
-
                     status.stop()
 
                     spinner_active = False
 
-
-
                 if has_responded:
-
                     console.print()
-
-
 
                 render_tool_panel(event.name, event.display_str, event.icon)
 
-
-
                 try:
-
                     from novacode_cli.hooks import (
-
                         HookEvent,
-
                         dispatch_hook_fire_and_forget,
-
                     )
 
-
-
                     dispatch_hook_fire_and_forget(
-
                         HookEvent.TOOL_CALL,
-
                         {
-
                             "tool": event.name,
-
                             "args": str(event.args)[:500] if event.args else "",
-
                             "session_id": getattr(session_state, "session_id", ""),
-
                         },
-
                     )
 
                 except Exception:
-
                     pass
-
-
 
                 _notify = getattr(session_state, "_remote_tool_notify", None)
 
                 if _notify is not None:
-
                     try:
-
                         _notify(event.name, event.display_str)
 
                     except Exception:
-
                         pass
 
-
-
-
-
-
             elif isinstance(event, ev.ToolResult):
-
                 sty = "red" if event.is_error else f"dim {COLORS['tool']}"
 
                 detail = Text()
@@ -649,91 +489,54 @@ async def execute_task(  # type: ignore
 
                 _tool_preview_buffer.append(detail)
 
-
-
                 try:
-
                     from novacode_cli.hooks import (
-
                         HookEvent,
-
                         dispatch_hook_fire_and_forget,
-
                     )
 
-
-
                     dispatch_hook_fire_and_forget(
-
                         HookEvent.TOOL_RESULT,
-
                         {
-
                             "tool": "",
-
                             "status": "success" if not event.is_error else "error",
-
                             "preview": event.preview[:300],
-
                             "session_id": getattr(session_state, "session_id", ""),
-
                         },
-
                     )
 
                 except Exception:
-
                     pass
 
-
-
                 if spinner_active:
-
                     if subagent_done + subagent_remaining > 0:
-
                         total = subagent_done + subagent_remaining
 
                         if subagent_remaining > 0:
-
                             status.update(
-
                                 f"[bold {COLORS['thinking']}]"
-
                                 f"{subagent_done}/{total} subagents done, "
-
                                 f"waiting for {subagent_remaining} more..."
-
                             )
 
                         else:
-
                             label = "subagent" if subagent_done == 1 else "subagents"
 
                             status.update(
-
                                 f"[bold {COLORS['thinking']}]"
-
                                 f"All {subagent_done} {label} done, stitching it together..."
-
                             )
 
                     else:
-
                         status.update(
-
                             f"[bold {COLORS['thinking']}]"
                             f"{status_phrases.status_line('thinking', agent_display_name)}"
-
                         )
 
-
-
             elif isinstance(event, ev.FileOp):
-
                 flush_tool_previews()
 
                 if spinner_active:
-
                     status.stop()
 
                     spinner_active = False
@@ -744,18 +547,23 @@ async def execute_task(  # type: ignore
 
                 console.print()
 
-                if not spinner_active:
+                # An agent-read image: remote bridges send a photo preview.
+                _image_read = getattr(session_state, "_remote_image_read", None)
+                _image_path = getattr(event.record, "read_image", None)
+                if _image_read is not None and _image_path:
+                    try:
+                        await _image_read(str(_image_path))
 
+                    except Exception:
+                        pass
+
+                if not spinner_active:
                     status.start()
 
                     spinner_active = True
 
-
-
             elif isinstance(event, ev.TodoUpdate):
-
                 if spinner_active:
-
                     status.stop()
 
                     spinner_active = False
@@ -769,7 +577,6 @@ async def execute_task(  # type: ignore
                 console.print()
 
                 if not spinner_active:
-
                     status.start()
 
                     spinner_active = True
@@ -779,35 +586,23 @@ async def execute_task(  # type: ignore
                 _todo_notify = getattr(session_state, "_remote_todo_notify", None)
 
                 if _todo_notify is not None:
-
                     try:
-
                         _todo_notify(event.todos)
 
                     except Exception:  # noqa: BLE001
-
                         pass
 
-
-
             elif isinstance(event, ev.SubagentActivity):
-
                 if event.kind == "dispatched":
-
                     subagent_remaining += 1
 
                     if subagent_remaining > 1:
-
                         status.update(
-
                             f"[bold {COLORS['thinking']}]"
-
                             f"{subagent_remaining} agents out on errands..."
-
                         )
 
                     else:
-
                         sub_color = event.color or COLORS["thinking"]
 
                         status.update(
@@ -816,19 +611,16 @@ async def execute_task(  # type: ignore
                         )
 
                     if not spinner_active:
-
                         status.start()
 
                         spinner_active = True
 
                 elif event.kind == "completed":
-
                     subagent_remaining -= 1
 
                     subagent_done += 1
 
                     if spinner_active:
-
                         rem = subagent_remaining
 
                         done = subagent_done
@@ -836,33 +628,21 @@ async def execute_task(  # type: ignore
                         total = done + rem
 
                         if rem > 0:
-
                             status.update(
-
                                 f"[bold {COLORS['thinking']}]"
-
                                 f"{done}/{total} subagents done, "
-
                                 f"waiting for {rem} more..."
-
                             )
 
                         else:
-
                             label = "subagent" if done == 1 else "subagents"
 
                             status.update(
-
                                 f"[bold {COLORS['thinking']}]"
-
                                 f"All {done} {label} done, stitching it together..."
-
                             )
 
-
-
             elif isinstance(event, ev.InterruptRequest):
-
                 # Resolve in a finally so a handler that raises before
 
                 # set_result fails closed (reject) instead of leaving the agent
@@ -903,9 +683,7 @@ async def execute_task(  # type: ignore
                             _ars = (req or {}).get("action_requests", [])
                             event.future.set_result(
                                 {
-                                    "decisions": [
-                                        {"type": "approve"} for _ in _ars
-                                    ],
+                                    "decisions": [{"type": "approve"} for _ in _ars],
                                     "any_rejected": False,
                                 }
                             )
@@ -914,103 +692,63 @@ async def execute_task(  # type: ignore
                         event.future.set_result(await remote_approval_handler(event))
 
                     elif event.kind == "plan" and (
-                        isinstance(event.payload, dict)
-                        and event.payload.get("factory") is True
+                        isinstance(event.payload, dict) and event.payload.get("factory") is True
                     ):
                         event.future.set_result(default_interrupt_response("plan"))
 
                     elif event.kind == "question":
-
                         _dbg(
-
                             "HITL-QUESTION",
-
                             f"auto_approve={session_state.auto_approve}",
-
                         )
 
                         response, spinner_active = await handle_question_interrupt(
-
                             question_request=event.payload,
-
                             auto_approve=session_state.auto_approve,
-
                             spinner_active=spinner_active,
-
                             status=status,
-
                         )
 
                         event.future.set_result(response)
 
                         if not spinner_active:
-
                             status.start()
 
                             spinner_active = True
 
-
-
                     elif event.kind == "plan":
-
                         _dbg(
-
                             "HITL-PLAN",
-
                             f"plan_mode={getattr(session_state, 'plan_mode_enabled', '?')}",
-
                         )
 
                         (
-
                             response,
-
                             occurred,
-
                             spinner_active,
-
                             cmd_state_update,
-
                         ) = await handle_plan_approval_interrupt(
-
                             current_todos=current_todos,
-
                             session_state=session_state,
-
                             spinner_active=spinner_active,
-
                             status=status,
-
                             dbg_func=_dbg,
-
                             interrupt_payload=event.payload,
-
                         )
 
                         event.future.set_result(
-
                             {
-
                                 "response": response,
-
                                 "state_update": cmd_state_update,
-
                             }
-
                         )
 
                 finally:
-
                     if not event.future.done():
-
                         event.future.set_result(default_interrupt_response(event.kind))
 
-
-
             elif isinstance(event, ev.ErrorOutput):
-
                 if spinner_active:
-
                     status.stop()
 
                     spinner_active = False
@@ -1018,17 +756,12 @@ async def execute_task(  # type: ignore
                 console.print(f"[yellow]{event.text}[/yellow]")
 
                 if not spinner_active:
-
                     status.start()
 
                     spinner_active = True
 
-
-
             elif isinstance(event, ev.Error):
-
                 if spinner_active:
-
                     status.stop()
 
                     spinner_active = False
@@ -1042,37 +775,25 @@ async def execute_task(  # type: ignore
                 notice = event.message if event.is_provider_notice else None
 
                 if notice is None and event.exception is not None:
-
                     from novacode_cli.errors import friendly_model_error
-
-
 
                     notice = friendly_model_error(event.exception)
 
                 if notice:
-
                     console.print(f"[yellow]{notice}[/yellow]")
 
                 else:
-
                     console.print(f"[red]{event.message}[/red]")
 
                 return False
 
-
-
             elif isinstance(event, ev.Cancelled):
-
                 if spinner_active:
-
                     status.stop()
 
                 console.print("\n[yellow]Interrupted by user[/yellow]")
 
-
                 return False
-
-
 
             elif isinstance(event, ev.CompactionNotice):
                 context_compacted = not event.preserve_api_context
@@ -1081,14 +802,10 @@ async def execute_task(  # type: ignore
 
                 console.print("[dim]⟳ Context compacted — old messages replaced with summary[/dim]")
 
-
-
             elif isinstance(event, ev.ContextMessage):
-
                 flush_tool_previews()
 
                 if spinner_active:
-
                     status.stop()
 
                     spinner_active = False
@@ -1096,20 +813,14 @@ async def execute_task(  # type: ignore
                 console.print()
 
                 console.print(
-
                     f"{event.icon}  {event.message}",
-
                     style=_event_color(event.color),
-
                 )
 
                 if not spinner_active:
-
                     status.start()
 
                     spinner_active = True
-
-
 
             elif isinstance(event, ev.UsageUpdate):
                 captured_session_tokens = (captured_session_tokens or 0) + (
@@ -1137,85 +848,49 @@ async def execute_task(  # type: ignore
                 if event.input_tokens > 0:
                     context_compacted = False
 
-
-
             elif isinstance(event, ev.Done):
-
                 has_responded = event.had_response
-
-
 
     except KeyboardInterrupt:
         preview.stop()
         if spinner_active:
-
             status.stop()
 
         console.print("\n[yellow]Interrupted[/yellow]")
 
-
-
-
-
-
         # Let the graph know about the keyboard interrupt
 
         try:
-
             await asyncio.wait_for(
-
                 asyncio.shield(
-
                     agent.aupdate_state(
-
                         config=config,
-
                         values={
-
                             "messages": [
-
                                 HumanMessage(
-
                                     content="[User interrupted the previous request with Ctrl+C]"
-
                                 )
-
                             ]
-
                         },
-
                         as_node="model",
-
                     )
-
                 ),
-
                 timeout=3.0,
-
             )
 
         except Exception:
-
             pass
 
-
-
         return False
-
-
 
     except asyncio.CancelledError:
         preview.stop()
         if spinner_active:
-
             status.stop()
 
         console.print("\n[yellow]Interrupted by user[/yellow]")
 
-
         return False
-
-
 
     finally:
         preview.stop()
@@ -1237,45 +912,28 @@ async def execute_task(  # type: ignore
     # ------------------------------------------------------------------
 
     if spinner_active:
-
         status.stop()
 
-
-
     if current_todos:
-
         session_state.todos = current_todos
 
-
-
     if _prev_auto_approve is not None:
-
         session_state.auto_approve = _prev_auto_approve
 
-
-
     if has_responded:
-
         console.print()
 
         if token_tracker and (captured_input_tokens or captured_output_tokens):
-
             token_tracker.add(
-
                 captured_input_tokens,
-
                 captured_output_tokens,
-
                 cache_read_tokens=captured_cache_read_tokens,
-
                 cache_creation_tokens=captured_cache_creation_tokens,
                 session_tokens=captured_session_tokens,
                 session_input_tokens=captured_session_input_tokens,
-
             )
 
         elif token_tracker and not captured_input_tokens:
-
             # Stream mode didn't surface usage (e.g. Ollama) — fall back to the
 
             # usage_metadata on the persisted final AIMessage.
@@ -1289,22 +947,15 @@ async def execute_task(  # type: ignore
             token_tracker.increment_assistant_messages()
 
             if displayed_tool_ids:
-
                 token_tracker.increment_tool_calls(len(displayed_tool_ids))
 
-
-
             try:
-
                 from novacode_cli.context import ContextManager
                 from novacode_cli.context.history import effective_messages
-
-
 
                 _bd_state = _last_known_state
 
                 if _bd_state is None:
-
                     _bd_state = await agent.aget_state(config)
 
                     _last_known_state = _bd_state
@@ -1312,7 +963,6 @@ async def execute_task(  # type: ignore
                 _bd_msgs = effective_messages(_bd_state.values) if _bd_state else []
 
                 if token_tracker.model_name:
-
                     _bd_tools = getattr(session_state, "_tools", None) or _bound_tools(agent)
                     breakdown = ContextManager(token_tracker.model_name).breakdown(
                         _bd_msgs, tools=_bd_tools
@@ -1329,12 +979,9 @@ async def execute_task(  # type: ignore
                     # console path previously recorded the breakdown and then did
                     # NOTHING, so a long session sailed into the provider's
                     # limit with no warning and no compaction.
-                    await _react_to_context_pressure(
-                        agent, session_state, token_tracker, breakdown
-                    )
+                    await _react_to_context_pressure(agent, session_state, token_tracker, breakdown)
 
             except Exception:
-
                 pass
 
     return has_responded

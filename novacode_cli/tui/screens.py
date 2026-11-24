@@ -8,19 +8,20 @@ import from app.py — screens reach the running app via ``self.app``.
 from __future__ import annotations
 
 import asyncio
-import copy
 import contextlib
+import copy
 import re
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, ClassVar
 
+from rich.console import RenderableType
 from rich.text import Text
 from textual import work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.screen import ModalScreen
 from textual.css.query import NoMatches
+from textual.screen import ModalScreen
 from textual.widgets import (
     Button,
     Input,
@@ -1365,6 +1366,7 @@ class McpScreen(ModalScreen[None]):
     async def _discover_then_refresh(self) -> None:
         """Join the startup discovery without starting duplicate connections."""
         import asyncio
+
         from novacode_cli.mcp import get_shared_mcp_middleware
 
         try:
@@ -5351,8 +5353,8 @@ class WikiScreen(ModalScreen[None]):
         self._switch_tab("pages")
 
     def _reload(self) -> None:
-        from novacode_cli.wiki.manager import WikiManager
         from novacode_cli.wiki.ingest import IngestEngine
+        from novacode_cli.wiki.manager import WikiManager
 
         # Synthesized Pages
         try:
@@ -5810,6 +5812,7 @@ class HooksScreen(ModalScreen[None]):
             command = h.get("command", [])
             self.app._log(Text(f"Testing hook: {' '.join(command)}...", style="cyan"))
             import time
+
             from novacode_cli.hooks import dispatch_hook
 
             test_payload = {
@@ -6533,6 +6536,86 @@ class SubagentPreviewScreen(ModalScreen[None]):
         self.query_one("#preview-body", Static).update(body)
         if follow:
             scroll.scroll_end(animate=False)
+
+    def action_close(self) -> None:
+        self.dismiss(None)
+
+
+class ImagePreviewScreen(ModalScreen[None]):
+    """An image the agent read: native graphics when the terminal supports
+    them (Sixel/TGP via textual-image), half-block pixels otherwise."""
+
+    BINDINGS = [("escape", "close", "Close")]
+    DEFAULT_CSS = """
+    ImagePreviewScreen #image-page { width: 100%; height: 100%; background: $background; }
+    ImagePreviewScreen #image-head { height: auto; padding: 0 2; background: $surface; }
+    ImagePreviewScreen #image-scroll { height: 1fr; padding: 1 2; }
+    ImagePreviewScreen #image-hint { height: auto; padding: 0 2; color: $text-muted; }
+    """
+
+    def __init__(self, path: str) -> None:
+        super().__init__()
+        self._path = path
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="image-page"):
+            yield Static(f"Image · {self._path}", id="image-head")
+            with VerticalScroll(id="image-scroll"):
+                yield Static(Text("  Loading image…", style="dim"), id="image-body")
+            yield Static(Text("Esc · back to the session", style="dim"), id="image-hint")
+
+    def on_mount(self) -> None:
+        body = self.query_one("#image-body", Static)
+        body.update(self._renderable())
+        self.query_one("#image-scroll", VerticalScroll).scroll_home(animate=False)
+
+    def _renderable(self) -> RenderableType:
+        from PIL import Image as PILImage
+        from rich.style import Style
+        from rich.text import Text as RichText
+
+        try:
+            with PILImage.open(self._path) as source:
+                source.load()
+                pil = source.convert("RGB")
+        except Exception as exc:  # noqa: BLE001 — a broken image is a message, not a crash
+            return Text(f"  Could not load image: {exc}", style="red")
+
+        from novacode_cli.tui.avatar import native_image_type
+
+        native = native_image_type()
+        if native is not None:
+            try:
+                from textual_image.widget import Image as TextualImage
+
+                self.query_one("#image-body", Static).display = False
+                self.query_one("#image-scroll", VerticalScroll).mount(TextualImage(pil))
+                return Text("")
+            except Exception:  # noqa: BLE001 — fall through to half-blocks
+                pass
+
+        # Half-block fallback: two pixel rows per terminal row, top pixel as
+        # foreground colour, bottom as background.
+        width, height = pil.size
+        cols = max(1, min(100, width))
+        rows = max(1, round(height / width * cols / 2))
+        scaled = pil.resize((cols, rows * 2))
+        pixels = scaled.load()
+        text = RichText()
+        for y in range(rows):
+            for x in range(cols):
+                top = pixels[x, y * 2]
+                bottom = pixels[x, y * 2 + 1]
+                text.append(
+                    "▀",
+                    style=Style(
+                        color=f"rgb({top[0]},{top[1]},{top[2]})",
+                        bgcolor=f"rgb({bottom[0]},{bottom[1]},{bottom[2]})",
+                    ),
+                )
+            if y < rows - 1:
+                text.append("\n")
+        return text
 
     def action_close(self) -> None:
         self.dismiss(None)
