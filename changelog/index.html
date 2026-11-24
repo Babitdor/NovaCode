@@ -320,7 +320,7 @@ html[data-view="agent"] .agent-cl-note p{color:var(--muted);font-size:.95rem;lin
       <p class="cmdline"><span class="ps" aria-hidden="true">&#10095;</span><span class="c">cat changelog/CHANGELOG-v*.md</span></p>
       <h1>Changelog</h1>
       <!-- generated:changelog-summary -->
-<p class="lede">145 releases &middot; v1.0.0 &rarr; v1.2.37 &middot; from the repository's <code>changelog/</code> directory</p>
+<p class="lede">175 releases &middot; v1.0.0 &rarr; v1.2.67 &middot; from the repository's <code>changelog/</code> directory</p>
 <!-- /generated:changelog-summary -->
       <p class="body"><a class="gh" href="https://github.com/Babitdor/NovaCode/tree/main/changelog" rel="noopener">changelog/ on GitHub &#8599;</a></p>
     </div>
@@ -332,6 +332,545 @@ html[data-view="agent"] .agent-cl-note p{color:var(--muted);font-size:.95rem;lin
     </div>
     <div id="releases">
     <!-- generated:changelog-releases -->
+<details class="changelog-entry" id="v1-2-67" data-version="1.2.67" data-sha="f1b29e6b1d84e0445cf4ab2cfd7d74bb71570516">
+<summary class="entry-toggle"><h2 class="version">v1.2.67</h2><span class="release-summary">Clicking an image card the agent read (e.g. read_file(/.shots/theme-light.png)) opened the preview at the raw virtual path and failed with Could not load image: [Errno 2] No such file or directory.</span></summary>
+<div class="release-content"><h3>Fixed: TUI image preview for virtual `.shots` paths</h3>
+<ul>
+<li>Clicking an image card the agent read (e.g. <code>read_file(/.shots/theme-light.png)</code>) opened the preview at the raw virtual path and failed with <code>Could not load image: [Errno 2] No such file or directory</code>.</li>
+<li>The TUI preview now resolves agent-side paths against the workspace root via the same <code>resolve_workspace_image</code> the Telegram and Discord bridges use, so <code>/.shots/x.png</code> maps to <code>&lt;workspace&gt;/.shots/x.png</code>. Missing files, paths outside the workspace, and URLs still fall back to a clear load error.</li>
+<li>The TUI preview test previously accepted the error text as &quot;content&quot;; it now asserts the image actually loads through the workspace mapping.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-2-66" data-version="1.2.66" data-sha="a32056b87602ca58ec69867d865b5ff0a46abd88">
+<summary class="entry-toggle"><h2 class="version">v1.2.66</h2><span class="release-summary">Nova, Nora, and Serena now get clearer guidance on when to delegate. Ralph handles measurable experiments, Nora verifies sources, Serena handles precise code changes, and Nova handles broader implementation and integration.</span></summary>
+<div class="release-content"><h3>Agent collaboration</h3>
+<ul>
+<li>Nova, Nora, and Serena now get clearer guidance on when to delegate. Ralph handles measurable experiments, Nora verifies sources, Serena handles precise code changes, and Nova handles broader implementation and integration.</li>
+<li>Background worker briefs specify the expected result, verification, and whether edits are allowed. The requesting agent can continue working while the worker runs and collects its result before ending the turn.</li>
+<li>Nora can inspect local source material using read-only tools and access additional search and extraction operations from trusted Tavily, Parallel, Exa, and Firecrawl MCP servers.</li>
+<li>Ralph can load a bundled autoresearch playbook in Code Mode. It covers baselines, reversible experiments, correctness checks, and stopping conditions.</li>
+<li>Serena's prompts now direct directory inspection to <code>list_dir</code> and reserve <code>read_file</code> for confirmed file paths.</li>
+</ul>
+<h3>Textual output</h3>
+<ul>
+<li>Coalesced inline terminal repaints and reduced redundant layout work for busy logs while preserving reflow when a line wraps.</li>
+<li>Moved ANSI decoding for live tool output off the paint path and increased background shell read sizes.</li>
+</ul>
+<h3>Install or upgrade</h3>
+<ul>
+<li><code>`</code>sh uv tool install --python 3.11 --force &quot;novacode-cli==1.2.66&quot; <code>`</code> To include the optional browser, voice, server, Bedrock, and computer-use features, use the extras below. <code>`</code>sh uv tool install --python 3.11 --force &quot;novacode-cli[browser,voice,agents-server,server,bedrock,computer]==1.2.66&quot; <code>`</code></li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-2-65" data-version="1.2.65" data-sha="ffa2b663b1917eaa3a195f2e08ad7f796227db91">
+<summary class="entry-toggle"><h2 class="version">v1.2.65</h2><span class="release-summary">Added nova-obsidian, a low-glare dark theme with indigo bars and peach highlights, and nova-editorial, a parchment theme with oxblood accents and plum activity indicators. Choose either with /theme in the Textual or Rust TUI.</span></summary>
+<div class="release-content"><h3>Themes</h3>
+<ul>
+<li>Added <code>nova-obsidian</code>, a low-glare dark theme with indigo bars and peach highlights, and <code>nova-editorial</code>, a parchment theme with oxblood accents and plum activity indicators. Choose either with <code>/theme</code> in the Textual or Rust TUI.</li>
+<li>Softened the Textual Light, Catppuccin Latte, Solarized Light, Rosé Pine Dawn, and Atom One Light palettes while preserving saved theme names.</li>
+<li>The Rust TUI applies the selected palette to the workspace, composer, session tabs, and popups.</li>
+</ul>
+<h3>Composer and Rust TUI</h3>
+<ul>
+<li>The Textual composer groups agent selection and mode toggles in a responsive row. Serena and browser research remain accessible through the agent picker and their slash commands.</li>
+<li>The Rust composer shows the selected agent and active modes, supports keyboard and mouse controls, and exposes agent selection and MCP setup through the server.</li>
+<li>Rust responses use the active agent’s name and color. The worker panel shows subagent progress and context usage when available.</li>
+</ul>
+<h3>Install or upgrade</h3>
+<ul>
+<li><code>`</code>sh uv tool install --python 3.11 --force &quot;novacode-cli==1.2.65&quot; <code>`</code> With optional browser, voice, server, Bedrock, and computer-use support: <code>`</code>sh uv tool install --python 3.11 --force &quot;novacode-cli[browser,voice,agents-server,server,bedrock,computer]==1.2.65&quot; <code>`</code></li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-2-64" data-version="1.2.64" data-sha="37ed597dcbaf87b3c28a43fa6308473ea8c20491">
+<summary class="entry-toggle"><h2 class="version">v1.2.64</h2><span class="release-summary">Toggle buttons show only their name — Prime, Passing, plan, browser, lite, serena, Code Mode, Oracle. Selection is the highlight (accent tint + bold); no more :off/:on suffixes anywhere.</span></summary>
+<div class="release-content"><h3>Composer toggles restyled: state is the highlight, not the label</h3>
+<ul>
+<li>Toggle buttons show only their name — Prime, Passing, plan, browser, lite, serena, Code Mode, Oracle. Selection is the highlight (accent tint + bold); no more <code>:off/:on</code> suffixes anywhere.</li>
+<li>The <code>lite</code> toggle is coloured by its active compression mode: Caveman tints amber, Ponytail tints green; off stays muted.</li>
+<li>The Oracle <code>Settings</code> button is gone from the strip — the same screen stays available via <code>/oracle settings</code>.</li>
+<li>The grid was rebalanced for the shorter labels (row now fits at ~75 columns before wrapping) and the obsolete Oracle-settings handler and CSS were removed.</li>
+</ul>
+<h3>Agent profiles: per-agent identity, boundaries and workers</h3>
+<ul>
+<li>New <code>agents/profiles.py</code> defines composer agent profiles — <code>nova</code>, <code>serena</code>, <code>ralph</code>, <code>nora</code> — each with its own display identity and colour, plus per-profile capability boundaries (control, delegation and research-MCP toolsets) enforced by a request-scoped middleware, and a system-message append per profile.</li>
+<li>New <code>core/profile_workers.py</code> runs profile-scoped worker subagents: the agent loop threads a workers context through the turn, re-renders profile identity in the transcript, and forwards profile worker subagent/preview events into the dynamic agents panel. Plan-mode approval requests inside a worker inherit the owner's original request text.</li>
+<li><code>summon_agent</code> is blocked during plan mode like the other implementation subagents; the harness adapter stamps AI messages with their agent profile; Ralph's progress card shows live context usage.</li>
+<li>New MCP presets: Obscura (headless browser navigation, path-based install) and Browser Use (session screenshots).</li>
+</ul>
+<h3>Housekeeping</h3>
+<ul>
+<li>Removed the stale <code>Subagent-failed.png</code> / <code>Subagent-success.png</code> screenshots and <code>trace-subagent.html</code> from the repo root.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-2-63" data-version="1.2.63" data-sha="55581427517abc0dab21e35775ea4d69a071e533">
+<summary class="entry-toggle"><h2 class="version">v1.2.63</h2><span class="release-summary">When the agent calls read_file on an image (deepagents already hands it back as base64 content blocks with the source path stamped into the tool message), that read now surfaces everywhere Nova shows activity:</span></summary>
+<div class="release-content"><h3>Agent image reads become inspectable</h3>
+<ul>
+<li>When the agent calls <code>read_file</code> on an image (deepagents already hands it back as base64 content blocks with the source path stamped into the tool message), that read now surfaces everywhere Nova shows activity:</li>
+<li><strong>TUI</strong>: a dim <code>Image read: &lt;path&gt; — click to inspect</code> card mounts under the tool card. Clicking it (or focusing and pressing Enter) opens an image preview modal: native terminal graphics (Sixel/TGP via <code>textual-image</code>) when the terminal supports them, PIL half-block pixel rendering otherwise, with <code>Esc</code> to close.</li>
+<li><strong>Telegram</strong>: the bridge sends the image as a native photo at the moment of the read. The path resolves through the same workspace-root mapping as the final-response previews — virtual paths (<code>/.shots/x.png</code>), relative paths, and in-workspace absolute paths work; URLs and anything outside the workspace are refused.</li>
+<li><strong>Discord</strong>: the bridge gains image sending entirely (<code>discord.File</code>), wired for both inbound-message sessions and pre-provisioned session targets, with the same workspace-root resolution and best-effort error handling.</li>
+<li>The headless/remote event loop (<code>execute_task</code>) forwards image reads through a <code>read_image_fn</code> hook on the remote message; bridges without one (none today) simply no-op. Data plumbing: <code>FileOperationRecord.read_image</code> carries the read's image path (from the tool message's <code>read_file_path</code>/<code>read_file_media_type</code>), so no new event type or agent-loop change was needed.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-2-62" data-version="1.2.62" data-sha="65a6ca70bf92edc40701e9d4dc8d4c7dada4e87b">
+<summary class="entry-toggle"><h2 class="version">v1.2.62</h2><span class="release-summary">Serena Mode now has a Serena: off/on button in the composer's toggle row, right beside the Code Mode toggle — same interaction model: click to flip, the badge/prompt-styling update, and the button label mirrors the live flag however the mode changes (/serena, the button, or session reset).</span></summary>
+<div class="release-content"><h3>Serena toggle in the prompt composer</h3>
+<ul>
+<li>Serena Mode now has a <code>Serena: off/on</code> button in the composer's toggle row, right beside the Code Mode toggle — same interaction model: click to flip, the badge/prompt-styling update, and the button label mirrors the live flag however the mode changes (<code>/serena</code>, the button, or session reset).</li>
+<li>Turning it on from the button still goes through the Serena MCP gate: an unconnected server keeps the mode off and surfaces the <code>/mcp</code> guidance.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-2-61" data-version="1.2.61" data-sha="27c1bd7078887d46453564632327710bfec2de58">
+<summary class="entry-toggle"><h2 class="version">v1.2.61</h2><span class="release-summary">/serena (on/off/status) activates a mode where Nova's built-in filesystem, shell, web and knowledge tools step aside and the model works exclusively through MCP tools — Serena's language-server-backed semantic tools plus any other configured MCP servers.</span></summary>
+<div class="release-content"><h3>Serena Mode: Nova acts through the Serena MCP toolset</h3>
+<ul>
+<li><code>/serena</code> (on/off/status) activates a mode where Nova's built-in filesystem, shell, web and knowledge tools step aside and the model works exclusively through MCP tools — Serena's language-server-backed semantic tools plus any other configured MCP servers.</li>
+<li><strong>Gated on a live Serena connection.</strong> Activating checks the shared MCP runtime for a connected <code>serena</code> server (case-insensitive). Without one, the command refuses with guidance: no server configured → open <code>/mcp</code>, where Serena ships as a ready-made preset; connection failed → inspect or retry there; still connecting → wait and re-run.</li>
+<li><strong>Serena-shaped system prompt.</strong> A mode block re-anchors the workflow on Serena's discipline: navigate symbols before files (find_symbol, get_symbols_overview, find_referencing_symbols), edit at the symbol level, pattern search and shell for the rest, use Serena's thinking checkpoints when bound, treat project memories as first-class, and call serena_initial_instructions once per coding task when present.</li>
+<li><strong>Request-local tool filter, no agent rebuild.</strong> Modeled on Browser Mode: only MCP tool schemas (plus the MCPTool router and Code Mode's eval surface) are exposed, and execution fail-closed rejects anything else even if a model guesses the call. <code>task</code> stays bound so subagent delegation — and Code Mode's <code>task()</code> bridge — keep working.</li>
+<li><strong>Works with Code Mode.</strong> Snippets reach MCP via <code>mcp.list()/mcp.describe()/mcp.call(...)</code>; the Serena prompt says so, because the <code>tools.call</code> namespace intentionally does not carry MCP tools. ToolSearch binds the whole MCP inventory directly in this mode — nothing hides behind <code>search_tools</code>.</li>
+<li>Mutually exclusive with plan and browser modes, like they are with each other; the mode badge, prompt styling, and the composer modes line (&quot;serena: mcp only&quot;) all reflect the state. The flag rides session state and resets with the conversation.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-2-60" data-version="1.2.60" data-sha="6f78fd2f649888499b2880ed6312c73a63ed5dfd">
+<summary class="entry-toggle"><h2 class="version">v1.2.60</h2><time datetime="2026-11-24">2026-11-24</time><span class="release-summary">xhigh and max join the effort dial. OpenAI exposes xhigh (deep research / long agentic runs) and max on GPT-5.5+; Anthropic's adaptive models take max (Sonnet 4.6+); Grok 4.6+ takes xhigh. /effort xhigh and /effort max now pass through natively on OpenAI, ride max on Claude, and clamp to each provider's verified ceiling elsewhere (Gemini, GLM, DeepSeek → high; Ollama → high; OpenRouter forwards verbatim). Available everywhere effort is: /effort, /settings, the router editor, and remote clients.</span></summary>
+<div class="release-content"><h3>Reasoning effort: new tiers, honest footer, one semantic</h3>
+<ul>
+<li><strong><code>xhigh</code> and <code>max</code> join the effort dial.</strong> OpenAI exposes <code>xhigh</code> (deep research / long agentic runs) and <code>max</code> on GPT-5.5+; Anthropic's adaptive models take <code>max</code> (Sonnet 4.6+); Grok 4.6+ takes <code>xhigh</code>. <code>/effort xhigh</code> and <code>/effort max</code> now pass through natively on OpenAI, ride <code>max</code> on Claude, and clamp to each provider's verified ceiling elsewhere (Gemini, GLM, DeepSeek → <code>high</code>; Ollama → <code>high</code>; OpenRouter forwards verbatim). Available everywhere effort is: <code>/effort</code>, <code>/settings</code>, the router editor, and remote clients.</li>
+<li><strong>The footer stops advertising effort a model never receives.</strong> Several providers silently drop the field (catalog providers, plain openai-compatible endpoints, gateway families without a verified control). The composer line now shows &quot;model with high effort&quot; only when the built model actually consumes it — a new <code>model_accepts_effort</code> predicate mirrors the construction branches.</li>
+<li><strong><code>/effort default</code> means one thing everywhere.</strong> The legacy CLI handler used to normalize <code>default</code>/<code>none</code> to <code>off</code> — silently pinning *minimum* thinking instead of restoring the provider default. Both handlers now clear the override (stored unset), and every settings surface displays an unset value as &quot;Default · provider&quot; instead of misleadingly showing &quot;Off&quot;.</li>
+<li><strong>GLM-5 effort is real.</strong> Live-verified 2026-11-24 against the Zen gateway: <code>reasoning_effort</code> is accepted on glm-5.3-flash — <code>none</code> disables thinking, <code>low</code>/<code>high</code> reason, raw <code>medium</code> produced no reasoning at all (so it follows <code>high</code>). The footer previously claimed an effort the model never received.</li>
+<li><strong>One effort renderer.</strong> The opt-in <code>effort</code> statusline field is gone; the composer line is the single place effort is shown (fixes the duplicated &quot;with high effort · high effort&quot; footer).</li>
+</ul>
+<h3>Code Mode subagents appear in the dynamic agents panel</h3>
+<ul>
+<li>A <code>task()</code> delegation from a Code Mode snippet now renders in the SubagentsDock — the same panel async background tasks use — with running → done/failed states, duration, and error text. They previously showed only as inline transcript cards.</li>
+<li>Cleaned up as a proper phase kind (<code>code</code>) rather than a string-prefix hack: the panel's model column resolves it to the subagent role like direct/eval dispatches, and the delegation no longer double-renders inline.</li>
+</ul>
+<h3>Small TUI fixes</h3>
+<ul>
+<li>The plan-mode indicator is plain text — no symbol prefix, matching the accept-edits indicator style.</li>
+<li><code>?</code> on an empty composer opens the command/shortcuts reference, as the modes line has always advertised. Mid-text <code>?</code> still types itself.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-2-59" data-version="1.2.59" data-sha="24fee0e00ba74a458bc8fd78549d20d31ced9fab">
+<summary class="entry-toggle"><h2 class="version">v1.2.59</h2><span class="release-summary">v1.2.58's entry-point refactor wrapped _open_tasks_panel in a second run_worker. That method is decorated with @work — calling it already spawns its own worker and returns the Worker object, so passing that Worker as work raised WorkerError: Unsupported attempt to run an async worker the first time the panel was opened from the down-arrow gesture, Ctrl+B, a click on the tasks bar, or /tasks. open_background_tasks now calls the @work-decorated method directly.</span></summary>
+<div class="release-content"><h3>Fixed: Background Tasks panel crashed on open</h3>
+<ul>
+<li>v1.2.58's entry-point refactor wrapped <code>_open_tasks_panel</code> in a second <code>run_worker</code>. That method is decorated with <code>@work</code> — calling it already spawns its own worker and returns the Worker object, so passing that Worker as work raised <code>WorkerError: Unsupported attempt to run an async worker</code> the first time the panel was opened from the down-arrow gesture, Ctrl+B, a click on the tasks bar, or <code>/tasks</code>. <code>open_background_tasks</code> now calls the <code>@work</code>-decorated method directly.</li>
+<li>The v1.2.58 changelog's &quot;dangling coroutines&quot; root-cause claim was wrong — the pre-1.2.58 call sites worked fine via <code>@work</code>. Regression test added that exercises the real <code>@work</code>-decorated path end to end (the earlier tests monkeypatched the method away, which is why the crash shipped).</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-2-58" data-version="1.2.58" data-sha="36c3e19e706976d380ddd73dcf44a7737fa7c28d">
+<summary class="entry-toggle"><h2 class="version">v1.2.58</h2><span class="release-summary">LoopGuardMiddleware — the identical-repeat tool-call breaker — is gone from the main agent, every subagent, and the plan agent. Its near-match heuristic treated legitimate retries (a read retried after a truncation error, a check re-run with an edited artifact) as stalls and blocked them with &quot;LOOP STOPPED&quot; walls; the escalation/hard-stop machinery then ended productive turns. The model's own error-driven recovery and the existing turn guards are the mechanism now. TextRepetitionGuard (streamed-prose repeat detection in the agent loop) remains — it is a different failure shape and not affected.</span></summary>
+<div class="release-content"><h3>Loop guard removed</h3>
+<ul>
+<li><code>LoopGuardMiddleware</code> — the identical-repeat tool-call breaker — is gone from the main agent, every subagent, and the plan agent. Its near-match heuristic treated legitimate retries (a read retried after a truncation error, a check re-run with an edited artifact) as stalls and blocked them with &quot;LOOP STOPPED&quot; walls; the escalation/hard-stop machinery then ended productive turns. The model's own error-driven recovery and the existing turn guards are the mechanism now. <code>TextRepetitionGuard</code> (streamed-prose repeat detection in the agent loop) remains — it is a different failure shape and not affected.</li>
+</ul>
+<h3>Code Mode recovery hints are failure-aware</h3>
+<ul>
+<li>The &quot;Completed side effects remain in place. Resume unstarted work…&quot; hint fired on every failed snippet — including plain bad-path and oversized-page read failures, where nothing could have changed. The hint is now side-effect-aware: read-only snippets get &quot;The dispatched calls were reads — no state changed. Fix the reported error and retry.&quot;; the conservative boilerplate remains for writes/executes, timeouts, and elided outcomes.</li>
+<li>Oversized-page read errors now carry numbers: what the display pipeline kept vs the rendered size, and a computed <code>limit=N</code> retry suggestion — one retry instead of bouncing off the guard repeatedly.</li>
+<li>Not-found reads gain &quot;did you mean&quot; path suggestions: one bounded <code>rg --files</code> pass matches the requested basename (substring, then near-misses) and appends up to three existing virtual paths, so a bad path recovers in one call.</li>
+</ul>
+<h3>MCP management screen no longer crashes on slow retries</h3>
+<ul>
+<li>Pressing Retry (or Authenticate / Select tools) and leaving the screen mid-await crashed the worker with <code>NoMatches: #mcp-configured</code> — <code>is_mounted</code> reads True during teardown while the DOM is already gone. <code>_reload</code> is now tear-down-safe and every post-await DOM touch in the screen checks attachment first.</li>
+</ul>
+<h3>Composer: pasted images are explained, not deferred around</h3>
+<ul>
+<li>When vision is unavailable for the routed model, the failure placeholder now demands immediate resolution — ask the user to run <code>/vision on</code> (a multimodal model sees images directly) or describe the image in text — instead of letting the model defer image-dependent design work to &quot;later&quot; and never ask. Regression tests pin both routing modes: a multimodal main model receives the pasted image block; a text-only model gets it stripped with the <code>[image-N]</code> marker intact.</li>
+</ul>
+<h3>Background-tasks bar rebuilt as a compact summary; down arrow opens the panel</h3>
+<ul>
+<li>The collapsed indicator now matches the coding-CLI shape: a dim <code>Background</code> header over a count line — <code>1 active shell</code> (agents and waiters append to the same line) — with a <code>(↓ tasks)</code> hint. Per-command detail moved to the expanded panel instead of cramming truncated commands into one row.</li>
+<li>Pressing Down on the last composer line — after input history is exhausted — opens the Background Tasks panel: the natural &quot;look down at what's running&quot; gesture. Ctrl+B (empty prompt), a click on the bar, and <code>/tasks</code> open the same panel; the composer modes line shows <code>· ↓ tasks</code> while background work is active.</li>
+<li>All sync entry points into the panel (click, two Ctrl+B branches, <code>/tasks</code>, down arrow) route through a single <code>open_background_tasks</code> helper. (Correction: the &quot;dangling coroutines&quot; root-cause claim originally in this section was wrong — the pre-1.2.58 call sites worked via <code>@work</code>. v1.2.59 fixes the double-worker wrap this refactor introduced and adds a real-path regression test.)</li>
+</ul>
+<h3>Shell tool description accuracy</h3>
+<ul>
+<li>On Linux/macOS the <code>shell</code> tool runs <code>/bin/sh</code> — dash on Debian/Ubuntu — not bash. The description now says so and points bash-specific syntax (arrays, <code>[[ ]]</code>, <code>${var,,}</code>) at the <code>bash</code> tool, so the two no longer read as aliases.</li>
+</ul>
+<h3>Packaging</h3>
+<ul>
+<li>New tests: composer footer routing, paste vision routing, <code>file_outline</code>, the background-tasks bar and down-arrow gesture, and the first-party import contract test. Loop-guard test files removed with the feature.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-2-57" data-version="1.2.57" data-sha="fb1f140d0736ecd960f8fdc96d73a7274c3237cb">
+<summary class="entry-toggle"><h2 class="version">v1.2.57</h2><span class="release-summary">Removed dead and redundant tools. Deleted outright: http_request (merged into fetch_url long ago), the Twitter scraper pair (registered nowhere), the unregistered create_memory_structure scaffolding tool, and the oracle agent tool (unadvertised, untested, and redundant with Oracle mode and Council). docs_search is gone as a separate tool — it was duckduckgo_search plus a static site: filter table; the model gets the same results with one site: query, and the plan/research prompts now say so. 105/105 port-served command surface is unchanged.</span></summary>
+<div class="release-content"><h3>Tool audit: fewer, better-documented tools</h3>
+<ul>
+<li>Removed dead and redundant tools. Deleted outright: <code>http_request</code> (merged into <code>fetch_url</code> long ago), the Twitter scraper pair (registered nowhere), the unregistered <code>create_memory_structure</code> scaffolding tool, and the <code>oracle</code> agent tool (unadvertised, untested, and redundant with Oracle mode and Council). <code>docs_search</code> is gone as a separate tool — it was <code>duckduckgo_search</code> plus a static <code>site:</code> filter table; the model gets the same results with one <code>site:</code> query, and the plan/research prompts now say so. 105/105 port-served command surface is unchanged.</li>
+<li>Kept after verification: <code>shell</code>/<code>bash</code>/<code>execute</code> are NOT redundant — <code>shell</code> is the native shell, <code>bash</code> is the real bash binary (model-reflex compatibility), <code>execute</code> is deepagents' backend tool with an explicit dialect parameter. The <code>shell</code> description on Linux/macOS now states it runs <code>/bin/sh</code> (dash on Debian/Ubuntu) and that <code>bash</code> is the tool for bash-specific syntax — they stopped reading as aliases.</li>
+<li>A new contract test (<code>tests/test_package_imports.py</code>) walks the AST of every module — deferred, function-level imports included — and fails when a first-party import no longer resolves. It caught two real breakages on its first run: a stale import of the removed <code>_DOCS_SITES</code> table (now moved into <code>prime_factory/research.py</code>, its only consumer) and a remote <code>evolution</code> command importing a module that no longer exists behind an always-firing <code>except ImportError</code> fallback.</li>
+</ul>
+<h3>/export asks what to export</h3>
+<ul>
+<li><code>/export</code> now opens a dialog: Markdown or JSON, and whether to include thinking, tools, both, or neither. Cancelling writes nothing; a destination argument still wins and gets the chosen format's extension. The builders render the conversation along the current path (the HTML tree export stays the whole-branch view), redact secrets, recover tool-result names from their calls, and cap oversized tool output. Over the remote port the same questions arrive as a form screen; headless runs keep the HTML default.</li>
+</ul>
+<h3>Knowledge cache fixes</h3>
+<ul>
+<li>The <code>/cache</code> screen's &quot;Cache generation&quot; row actually displayed the epoch — the count of clears, not generations. It is now labelled &quot;Clears (epoch)&quot;.</li>
+<li>A dead feedback loop was starving the cache: a lookup miss returned generic guidance that never said <code>paths</code> is what builds a reusable overview, so <code>generation_calls</code> stayed 0 forever. Misses now return explicit guidance to re-call with 2-8 key files.</li>
+</ul>
+<h3>Memory and verification hardening (follow-ups)</h3>
+<ul>
+<li>Associative pre-turn recall no longer mistakes gate nudges (&quot;Internal context: …&quot;) for the user's query — it recalls the last real user message — and the recall cache invalidates when memory is written mid-turn.</li>
+<li>The post-edit verification detector recognises more shell forms: custom check scripts by name (<code>scratch_test.py</code>, <code>check_env.sh</code>, <code>verify_install.py</code>), file-writing commands (redirection, <code>sed -i.bak</code>, <code>tee</code>, <code>cp</code>/<code>mv</code>, <code>patch</code>, <code>git apply</code>, PowerShell write cmdlets), while ignoring <code>/dev/null</code>, stream dups and comparison operators.</li>
+</ul>
+<h3>TUI composer footer</h3>
+<ul>
+<li>The live-chat composer gained a compact two-line footer in the coding-CLI style: model · context used/window · percentages · workspace · branch · session · version, then the permission mode with a <code>shift+tab</code> cycle (normal → accept edits → plan mode → normal) and <code>? for shortcuts</code>. The labelled info-bar columns remain on the home layouts; tiny/short terminals keep the lean chrome.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-2-56" data-version="1.2.56" data-sha="9ffe7ed8c7994bdd669ec043f0504c44280bd015">
+<summary class="entry-toggle"><h2 class="version">v1.2.56</h2><span class="release-summary">The agent now researches before guessing. A new &lt;research&gt; block (in both main prompts) directs it to check the codebase and installed package source first, then use web_search/fetch_url for official documentation of the exact version in use, and to never invent API signatures or option names from memory. Citations are required when an outside fact drives a consequential decision.</span></summary>
+<div class="release-content"><h3>Prompt and agent behaviour</h3>
+<ul>
+<li>The agent now <strong>researches before guessing</strong>. A new <code>&lt;research&gt;</code> block (in both main prompts) directs it to check the codebase and installed package source first, then use <code>web_search</code>/<code>fetch_url</code> for official documentation of the exact version in use, and to never invent API signatures or option names from memory. Citations are required when an outside fact drives a consequential decision.</li>
+<li>Root-cause fixes over symptom patches, <code>git log</code>/<code>git blame</code> for history context, checking neighbouring files and manifests before picking a library, and leaving pre-existing broken tests alone (reported, not silently fixed) are now explicit workflow rules. Code findings reference <code>file_path:line_number</code>, and large files the agent just wrote are referenced by path instead of pasted.</li>
+</ul>
+<h3>Memory that is actually used</h3>
+<ul>
+<li><strong>Proactive recording.</strong> The write-side instructions no longer wait for &quot;when useful&quot;: concrete triggers (a stated preference, a correction, a decision with rationale, a verified fix, an environment gotcha, a project convention) plus an end-of-session gate — never end with durable, learned-but-unrecorded facts. The <code>write_memory</code> tool description carries the same triggers and the correct scoping (user preferences → agent.md, repo facts → project memory, lessons → topic pages).</li>
+<li><strong>Proactive recall.</strong> Every non-trivial task now starts with one orienting <code>memory_search</code>, and a new <strong>associative pre-turn recall</strong> injects a short <code>&lt;relevant_memories&gt;</code> block of auto-matched topic excerpts into each model call — after the Anthropic cache breakpoint, so prefix caching is unaffected. Excerpts are labelled discovery-not-proof; full pages still come from explicit reads. Recall is cached per user message, invalidated by memory writes, and skipped for trivial input.</li>
+</ul>
+<h3>Verification is mandatory</h3>
+<ul>
+<li>The post-edit verify gate is always on: a turn that ends after a file edit with no later observed check is sent back once to run one (and a failed check sends it back to fix and rerun). The <code>NOVA_VERIFY_AFTER_EDIT</code> opt-out is gone.</li>
+<li>The detector now recognises custom check scripts (<code>uv run python scratch_test.py</code>, <code>bash tests/check_env.sh</code>, <code>./scripts/verify_all.sh</code>) and shell file writes (redirection, <code>sed -i</code>/<code>-i.bak</code>, <code>tee</code>, <code>cp</code>/<code>mv</code>, <code>patch</code>, <code>git apply</code>, PowerShell write cmdlets) as edits, while ignoring <code>/dev/null</code>, <code>2&gt;&amp;1</code> and comparison operators. Builds and typechecks (<code>cargo build/check</code>, <code>go vet</code>, <code>tsc</code>, <code>npm run build</code>, <code>make</code>) count as verification.</li>
+</ul>
+<h3>TUI: ctrl+o expands output</h3>
+<ul>
+<li><code>ctrl+o</code> toggles expansion of every tool surface for the session — the condensed tool group, per-call cards and history tool cards — in the Textual client and the Rust client alike. Collapsed tool output advertises <code>[ctrl+o to expand]</code>, and with the toggle on, live streams render up to 2,000 lines / 200k chars instead of the usual 200 / 20k tail. Collapsing never re-closes the group while a tool is streaming.</li>
+</ul>
+<h3>Remote port: 105 of 105 commands served</h3>
+<ul>
+<li>The socket port gained the last six app-side commands — <code>/claude-plan</code>, <code>/codex-plan</code>, <code>/claude-review</code>, <code>/codex-review</code>, <code>/loop</code> and <code>/remote</code> — so the port command surface is complete (105/105, 0 waiting).</li>
+<li><code>/claude-plan</code> and <code>/codex-plan</code> run the other agent's CLI headless in its own process and return its plan as blocks plus a hand-off prompt for Nova; the <code>/claude-review</code> and <code>/codex-review</code> variants run read-only and ask Nova to check each finding. A missing CLI reports a targeted &quot;not installed&quot; failure; the external agent never enters Nova's conversation.</li>
+<li><code>/loop</code> works from the port: bounded, session-owned recurrence (<code>30s &lt;prompt&gt;</code>, <code>&lt;n&gt;m &lt;prompt&gt;</code>, <code>&quot;&lt;cron&gt;&quot; &lt;prompt&gt;</code>, <code>list</code>/<code>status</code>/<code>stop [id]</code>) with a 1-second poll that expires overdue jobs and claims at most one due iteration — headless, so it runs even with no client attached. <code>instruction()</code> and <code>iteration_prompt()</code> moved to <code>novacode_cli/ui/loops.py</code> so both frontends share the exact wording.</li>
+<li><code>/remote</code> delegates to the shared bridge handler; bare <code>/remote</code> reports status.</li>
+</ul>
+<h3>Real terminal in the remote client</h3>
+<ul>
+<li>A prompt starting with <code>!!</code> spawns a real pseudo-terminal instead of a queued shell command: one terminal at a time, output streams to the client as new <code>pty</code> / <code>pty_exit</code> frames (plain, colour-stripped lines with the command echoed for late-attaching clients), and keystrokes flow back via <code>pty_input</code> / <code>pty_close</code>. The Rust client's new terminal pane captures the whole keyboard (Esc closes the pane). Cursor-addressed programs still render imperfectly — a cell-grid terminal emulator is the documented next step.</li>
+</ul>
+<h3>Rust client parity (avatar, home, brand art)</h3>
+<ul>
+<li><code>/nova</code> now ships the full sprite sheet once over the port (24 frames, glyph rows + colour palettes in the new <code>command_result.avatar</code> field) and the Rust client plays it with the same rules as Textual: reaction mood, talking/thinking while busy, sleep after 60 s idle, an idle cycle every 8 s — drawn as an overlay above the composer, hidden under modals and on small terminals.</li>
+<li>The <code>ready</code> frame carries a <code>home</code> layout payload, and the Rust client draws the home banner (portrait/wordmark/version lockup) with the matrix code rain behind it — a dependency-free xorshift64* port of <code>matrix3.py</code>.</li>
+<li><code>scripts/gen_brand_art.py</code> generates <code>rust/nova-tui/src/ui/brand_art.rs</code> from <code>novacode_cli/brand.py</code>, so both frontends render identical startup art; <code>--check</code> fails CI on drift. <code>avatar_frames.py</code> and <code>pty_shell.py</code> moved to <code>novacode_cli/ui/</code> to stay importable without Textual.</li>
+<li>All wire changes are additive; <code>PROTOCOL_VERSION</code> stays at 1.</li>
+</ul>
+<h3>TUI performance</h3>
+<ul>
+<li>Non-transcript notices queue for half a second and flush as one toast (&quot;+N more&quot; for older ones) instead of stacking overlapping bubbles during background-task bursts.</li>
+<li><code>OutputLog.tail_matches()</code> skips the clear-and-rebuild of up to 200k chars when the live stream already painted the identical tail; chat bodies reuse a repaint-only path when their wrap-aware dimensions are unchanged; hidden-pane event buffers are capped at 400 entries; log-pane heights only change when they actually change.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-2-55" data-version="1.2.55" data-sha="62763e565e8ce3dac3002d53798d342fd7dce542">
+<summary class="entry-toggle"><h2 class="version">v1.2.55</h2><span class="release-summary">A streamed answer no longer disappears. The final chunk marked its message id as seen *before* flushing the prose it carried, and the flush discards prose whose id is already seen — so on providers whose chunks share one stable id, the whole answer the user had just watched stream was dropped and the turn ended with no reply. The flush now runs first.</span></summary>
+<div class="release-content"><h3>Agent loop</h3>
+<ul>
+<li>A streamed answer no longer disappears. The final chunk marked its message id as seen *before* flushing the prose it carried, and the flush discards prose whose id is already seen — so on providers whose chunks share one stable id, the whole answer the user had just watched stream was dropped and the turn ended with no reply. The flush now runs first.</li>
+<li>A provider that delivers one whole message instead of deltas (non-streaming) has its answer rendered through the same guardrail, redaction and dedup path as streamed text. Previously such a turn committed nothing at all.</li>
+<li>A completed message with several text parts commits all of its parts in one message, and pending prose from an earlier streamed id is committed under its own id before a different completed message accumulates — no more merged &quot;HelFinal.&quot; bubbles.</li>
+</ul>
+<h3>Compaction</h3>
+<ul>
+<li>Code Mode sessions can compact again. The cut point had to be a user message, and index 0 was excluded, so a run driven from a single user message — the normal Code Mode shape — always summarized an empty head and saved nothing. Single-user-turn sessions now cut at the overflow boundary instead, advanced past any tool result so no call is separated from its answer.</li>
+</ul>
+<h3>Shell and background tasks</h3>
+<ul>
+<li><code>wait_for_task</code> works on the first call again. The gate counted the call's own tool-call row, which the running graph already includes in its state, so every first wait was refused with &quot;you already waited&quot;. A wait now counts only once its result exists in the history — which also un-blocks two waits dispatched in parallel, while a genuinely repeated wait is still refused.</li>
+<li>The documented 10-second cap and the schema default agree; the schema offered 30 seconds while the code clamped to 10.</li>
+<li><code>get_task_logs</code> page cursors no longer drift on coloured output. Offsets count raw characters; the page now slices the raw join and strips ANSI for display, instead of slicing the stripped string against raw offsets — which repeated or skipped lines whenever the buffer held escape sequences. A cut landing inside a split escape resumes after the sequence closes instead of leaving orphan fragments. <code>tail_lines=0</code> returns the whole buffer on both paths.</li>
+<li>A failed background subagent wait reports the run's real error, recovered from the checkpoint and redacted, instead of a bare &quot;The subagent failed.&quot;</li>
+<li><code>terminate_task</code> gained <code>force</code>: a job whose drain loop died can be settled immediately instead of staying &quot;running&quot; forever with no wait resolving.</li>
+</ul>
+<h3>Async subagents</h3>
+<ul>
+<li>Launches keep their context. The model override from the stored <code>async</code> role, the owner-consent record and the auto-approve stamp were silently dropped whenever the launch carried any other configurable key — the run then fell back to the server's default model.</li>
+<li>A task record that can never be monitored (missing ids, or an agent spec that no longer resolves) is reported once as unmonitorable instead of being re-enqueued by every turn-end sync forever. Transient discovery failures still retry, three times, and the retry budget resets when the specs are invalidated.</li>
+<li>Polls in flight are no longer evicted from the dedup set, which could emit a second completion and a second report turn for the same task.</li>
+<li>A <code>/model</code> change to the <code>async</code> role invalidates the watcher's cached agent specs under the same lock a discovery holds, so polls cannot write stale specs back after the change.</li>
+<li>The subagent panel maps <code>timeout</code> and <code>interrupted</code> to failed instead of spinning them as running forever, freezes a finished row's duration instead of recomputing it larger on every poll, and drops rows whose task vanished from state.</li>
+<li>A completion whose report turn is cancelled is re-queued rather than lost, and completions that arrive while an approved plan runs are reported after the plan's turn settles instead of waiting for the next user message.</li>
+</ul>
+<h3>Code Mode</h3>
+<ul>
+<li>A subagent dispatched from a snippet returns its result. The evaluator rejected any state update outside <code>messages</code> and <code>files</code>, and the child's final state carries internal bookkeeping keys (compaction privates, caveman originals), so a fully successful research child died at hand-off with &quot;Subagent returned unsupported state mutation&quot; — its report visible in the preview while the task row read failed. Internal keys are now dropped and the report transfers; genuinely unknown keys still fail loudly.</li>
+<li>Snippet errors name the OS path when one rode on the exception, and take the first line of a multi-line message — Windows spawn failures carry the path in <code>filename</code>, which <code>str()</code> hides, so &quot;[WinError 267] The directory name is invalid&quot; could previously not be diagnosed at all.</li>
+<li>The shell and Python-kernel spawn paths name their working directory when a start fails, for the same reason.</li>
+</ul>
+<h3>Steering</h3>
+<ul>
+<li>Standing <code>/steer</code> rules reach subagents. The middleware was only on the main stack, so a constraint like &quot;never modify test files without asking&quot; did not bind the children that edit files — the block claimed to apply on every step.</li>
+<li>Instructions that already exist when an agent is rebuilt (model switch, MCP reload, plan agent) are not re-delivered as a false &quot;just added&quot; nudge.</li>
+<li>Mid-turn <code>/steer clear</code> discards queued live steers instead of resurrecting them as fresh turns, and remote mid-turn <code>/steer</code> uses the same add/list/clear handling as the TUI on both the drain and the inline path.</li>
+<li>The context-margin guard counts image parts, which previously weighed nothing, and a skipped standing block now announces itself once per skip streak instead of silently disappearing between 80% and the auto-compact threshold.</li>
+<li><code>/steer add</code> and <code>/steer list</code> state the honest lifetime: the rules last for the session, survive <code>/resume</code>, and do not survive a restart.</li>
+</ul>
+<h3>Prompt</h3>
+<ul>
+<li>The persistence and verification guidance the tests pin is back: the Understand → Change → Verify → Leave it clean cycle with an end-state check, &quot;unverifiable is a last resort&quot;, numeric-aggregation checks, the task-size table, and work-through-without-stopping-for-approval — all dropped in an earlier prompt audit while the tests kept requiring them.</li>
+</ul>
+<h3>Packaging</h3>
+<ul>
+<li>The release now also builds the Rust TUI client on Linux, macOS (ARM) and Windows and attaches each binary to the GitHub release, stamped with the wire-protocol version it speaks.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-2-54" data-version="1.2.54" data-sha="68068d010823350ff30bd6f766b8ba34d2b60bcf">
+<summary class="entry-toggle"><h2 class="version">v1.2.54</h2><span class="release-summary">Edits made inside a snippet now reach the transcript. A nested write has no message of its own, so the eval call is the only card the transcript has; the file-operation tracker records the nested write against that call, and its diff is emitted before the eval result. Code Mode edits now show a diff, participate in undo, and count for verification — all three read the same records.</span></summary>
+<div class="release-content"><h3>Code Mode</h3>
+<ul>
+<li>Edits made inside a snippet now reach the transcript. A nested write has no message of its own, so the eval call is the only card the transcript has; the file-operation tracker records the nested write against that call, and its diff is emitted before the eval result. Code Mode edits now show a diff, participate in undo, and count for verification — all three read the same records.</li>
+<li>A snippet that fails, times out or is cancelled abandons its pending record instead of reading the file back: the write may or may not have landed, and a diff built from that would describe a guess as a change.</li>
+<li>The recovery hint and the Code Mode prompt now say what the runtime actually wants: a snippet is a script, leave the value in its final expression instead of writing <code>return</code>, and a background job reports back on its own rather than being polled with <code>Start-Sleep</code> once per round trip.</li>
+</ul>
+<h3>Policy and approvals</h3>
+<ul>
+<li><code>git config</code> is judged by its form instead of by substring. Reading is how an agent learns the identity it is about to commit with, so reads are allowed; <code>--add</code>, <code>--unset</code>, <code>--replace-all</code>, <code>--edit</code> and a second positional argument are still blocked. A command with several segments is split first, so a read in front of a write cannot hide it.</li>
+<li>Commands whose effect has already left the machine — a pushed tag, a published package — now always require a fresh decision. A remembered &quot;always allow&quot; for <code>npm run build</code> was never an answer for <code>npm publish</code>, and a published version number can never be reused.</li>
+<li>A policy denial names the tool and its reason in the approval prompt, instead of a bare &quot;denied by policy&quot;.</li>
+</ul>
+<h3>Shell</h3>
+<ul>
+<li>Captured output is stripped of terminal colour and escape sequences. Tools that believe they are talking to a console (PowerShell’s <code>Select-String</code> highlights the match inside the line it prints) were sending <code>ESC[7m</code> through to the model. Stripping happens where the log is joined, so a sequence split across two reads is removed whole.</li>
+<li>A command whose only effect is passing time (<code>Start-Sleep</code>, <code>sleep</code>) gets one advisory per session in the model’s copy of the output, never in the job result.</li>
+</ul>
+<h3>Updates</h3>
+<ul>
+<li>A <code>uv tool</code> installation created from a Git requirement can update again. uv resolves a Git requirement to the commit it already has, so <code>uv tool upgrade</code> reported &quot;Nothing to upgrade&quot; forever while <code>nova update</code> then claimed Nova was up to date. The recorded requirement is now reinstalled (<code>uv tool install --force --reinstall</code>); registry installs keep using <code>uv tool upgrade</code>.</li>
+<li>On POSIX, installers take a real lock on the installation, and the lock is re-entrant inside a process so the TUI can still update while its own launch holds the shared runtime lock. Two updates can no longer write one prefix at the same time.</li>
+<li>Every install step has a 15-minute deadline: a stalled <code>uv</code> or <code>git</code> is killed and the failure names the limit. Ctrl+C stops the child instead of waiting for it to finish.</li>
+<li>A source checkout updates with untracked files present (they cannot block a fast-forward). A checkout with commits that are not on its upstream says to rebase or merge them, before anything is fetched.</li>
+<li>A handoff that times out now prints why and how to resume, including the session id, instead of dropping to a bare prompt.</li>
+<li>Whether an update changed anything is read from the installed version and revision, not from uv’s wording.</li>
+<li>The Windows native-file pre-check walks the prefix with build output pruned instead of globbing every path.</li>
+<li>CI now exercises the updater against real installations: <code>nova update --check</code> from a registry install, the refusal a locally built wheel must produce, and the Git requirement install at the version the checkout declares.</li>
+</ul>
+<h3>TUI</h3>
+<ul>
+<li>Tool rows show their own duration and the turn’s elapsed time: <code>Took 120ms · Elapsed 1.3s</code>. Durations render in milliseconds below a second, seconds with one decimal above, and minutes beyond that; the elapsed value updates while a call runs and replayed history carries no timing.</li>
+</ul>
+<h3>Install or upgrade</h3>
+<ul>
+<li>Close NovaCode before upgrading from your shell. <code>`</code>text uv tool upgrade novacode-cli <code>`</code> For a fresh installation, run <code>uv tool install --python 3.11 novacode-cli</code>. Include any optional extras you use. <code>`</code>text uv tool install --python 3.11 &quot;novacode-cli[browser,voice]&quot; <code>`</code></li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-2-53" data-version="1.2.53" data-sha="4f77f6de4c251db17b979dd9b05e810ff312e8f4">
+<summary class="entry-toggle"><h2 class="version">v1.2.53</h2><span class="release-summary">A locked, missing or broken OS keychain no longer reads as &quot;ANTHROPIC_API_KEY is not set or is empty&quot; in /auth. The status now says the credential store could not be read and what to do about it, instead of blaming a key you may already have stored. A key that is genuinely absent still gets the precise &quot;not set or is empty&quot; message, and a key set in your shell still wins over an unreadable keychain.</span></summary>
+<div class="release-content"><h3>Credentials</h3>
+<ul>
+<li>A locked, missing or broken OS keychain no longer reads as &quot;<code>ANTHROPIC_API_KEY</code> is not set or is empty&quot; in <code>/auth</code>. The status now says the credential store could not be read and what to do about it, instead of blaming a key you may already have stored. A key that is genuinely absent still gets the precise &quot;not set or is empty&quot; message, and a key set in your shell still wins over an unreadable keychain.</li>
+</ul>
+<h3>Reliability</h3>
+<ul>
+<li>The auth, model and provider paths are now pinned by tests where they used to be dark: a failing keychain read/write/delete, a rejected save followed by a failed session export, a corrupt config, an unstarted keychain reader, a refused voice-key migration, provider status for limited or under-configured providers, error classification (including a property-based layer), the managed GitLab/watsonx/SAP credential-transport guards, endpoint and provider resolution, and the reasoning-effort mapping for every provider family.</li>
+<li>Coverage of the credential store, keychain reader, provider auth, provider transports and provider-error classifier is 100%; model construction is 83%.</li>
+</ul>
+<h3>Install or upgrade</h3>
+<ul>
+<li>Close NovaCode before upgrading from your shell. <code>`</code>text uv tool upgrade novacode-cli <code>`</code> For a fresh installation, run <code>uv tool install --python 3.11 novacode-cli</code>. Include any optional extras you use. <code>`</code>text uv tool install --python 3.11 &quot;novacode-cli[browser,voice]&quot; <code>`</code></li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-2-52" data-version="1.2.52" data-sha="5625030a27374733190a0076fb465430b8d7dfd0">
+<summary class="entry-toggle"><h2 class="version">v1.2.52</h2><span class="release-summary">A key saved through /auth now reaches Google and Anthropic. Both clients were built without one: Google resolved the key and then never passed it, and Anthropic relied on ANTHROPIC_API_KEY being in the environment, which it is not for a key held in the system keychain. Google failed with &quot;API key required for Gemini Developer API&quot;; Anthropic failed with &quot;Could not resolve authentication method&quot;.</span></summary>
+<div class="release-content"><h3>Providers</h3>
+<ul>
+<li>A key saved through <code>/auth</code> now reaches Google and Anthropic. Both clients were built without one: Google resolved the key and then never passed it, and Anthropic relied on <code>ANTHROPIC_API_KEY</code> being in the environment, which it is not for a key held in the system keychain. Google failed with &quot;API key required for Gemini Developer API&quot;; Anthropic failed with &quot;Could not resolve authentication method&quot;.</li>
+<li>A 429 that merely mentions &quot;quota&quot; is no longer treated as an exhausted account. Google, Azure and several gateways word per-minute throttling as an exceeded quota, so those requests were reported as &quot;usage limit reached&quot;, given upgrade advice, and never retried. A 429 now counts as a cap only when it names one (<code>insufficient_quota</code>, &quot;usage limit&quot;, a weekly or monthly limit, a credit balance, or an allowance); otherwise it is a rate limit that backs off and retries. Command Code's <code>upgrade_required</code> keeps its own &quot;no API access&quot; notice instead of being read as a usage cap.</li>
+</ul>
+<h3>Install or upgrade</h3>
+<ul>
+<li>Close NovaCode before upgrading from your shell. <code>`</code>text uv tool upgrade novacode-cli <code>`</code> For a fresh installation, run <code>uv tool install --python 3.11 novacode-cli</code>. Include any optional extras you use. <code>`</code>text uv tool install --python 3.11 &quot;novacode-cli[browser,voice]&quot; <code>`</code></li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-2-51" data-version="1.2.51" data-sha="6c42e586af0d94b86181dfcc898add6896c0263b">
+<summary class="entry-toggle"><h2 class="version">v1.2.51</h2><span class="release-summary">When Nova blocks a repeated todo update, it temporarily removes write_todos from the model's tools. The tool becomes available again after a successful work call or at the start of a new user turn.</span></summary>
+<div class="release-content"><h3>Code Mode</h3>
+<ul>
+<li>When Nova blocks a repeated todo update, it temporarily removes <code>write_todos</code> from the model's tools. The tool becomes available again after a successful work call or at the start of a new user turn.</li>
+</ul>
+<h3>Install or upgrade</h3>
+<ul>
+<li>Close NovaCode before upgrading from your shell. <code>`</code>text uv tool upgrade novacode-cli <code>`</code> For a fresh installation, run <code>uv tool install --python 3.11 novacode-cli</code>. Include any optional extras you use. <code>`</code>text uv tool install --python 3.11 &quot;novacode-cli[browser,voice]&quot; <code>`</code></li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-2-50" data-version="1.2.50" data-sha="92305b8f4078da846257981a63d7b1eaa84abe75">
+<summary class="entry-toggle"><h2 class="version">v1.2.50</h2><span class="release-summary">The /context dashboard and ctx meter use the same model request count. A checkpoint refresh uses the provider count when available and the request estimate otherwise.</span></summary>
+<div class="release-content"><h3>Context usage</h3>
+<ul>
+<li>The <code>/context</code> dashboard and <code>ctx</code> meter use the same model request count. A checkpoint refresh uses the provider count when available and the request estimate otherwise.</li>
+<li>A live count received during a checkpoint read takes precedence. Turn-end usage totals preserve the latest context count.</li>
+</ul>
+<h3>Install or upgrade</h3>
+<ul>
+<li>Close NovaCode before upgrading from your shell. <code>`</code>text uv tool upgrade novacode-cli <code>`</code> For a fresh installation, run <code>uv tool install --python 3.11 novacode-cli</code>. Include any optional extras you use. <code>`</code>text uv tool install --python 3.11 &quot;novacode-cli[browser,voice]&quot; <code>`</code></li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-2-49" data-version="1.2.49" data-sha="627314de931d253e8b9362de86f4c733fd8f09ba">
+<summary class="entry-toggle"><h2 class="version">v1.2.49</h2><span class="release-summary">Nova now checks the installed version before reporting a package update as successful. On Windows, a locked launcher is reported as an error when the installed package did not advance.</span></summary>
+<div class="release-content"><h3>Updates and conversation history</h3>
+<ul>
+<li>Nova now checks the installed version before reporting a package update as successful. On Windows, a locked launcher is reported as an error when the installed package did not advance.</li>
+<li>Resumed tabs and older scrollback hide system prompts and internal setup messages.</li>
+</ul>
+<h3>Install or upgrade</h3>
+<ul>
+<li>Close NovaCode before upgrading from your shell. <code>`</code>text uv tool upgrade novacode-cli <code>`</code> For a fresh installation, use <code>uv tool install --python 3.11 novacode-cli</code>. Include any optional extras you use. <code>`</code>text uv tool install --python 3.11 &quot;novacode-cli[browser,voice]&quot; <code>`</code></li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-2-48" data-version="1.2.48" data-sha="9da14b1d0ffc6c94c08534001a0a39e340d96e7e">
+<summary class="entry-toggle"><h2 class="version">v1.2.48</h2><span class="release-summary">Restored shell calls start collapsed in Normal and Code Mode, with compact spacing between cards. Expanded shell output fits its content and scrolls when it reaches the height limit.</span></summary>
+<div class="release-content"><h3>Conversation layout</h3>
+<ul>
+<li>Restored shell calls start collapsed in Normal and Code Mode, with compact spacing between cards. Expanded shell output fits its content and scrolls when it reaches the height limit.</li>
+<li><strong>Jump to latest</strong> is centered above the composer and resizes as the line count changes.</li>
+</ul>
+<h3>Install or upgrade</h3>
+<ul>
+<li><code>`</code>text uv tool install --python 3.11 novacode-cli==1.2.48 uv tool upgrade novacode-cli <code>`</code> Restart NovaCode after upgrading. Include any optional extras you use. <code>`</code>text uv tool install --python 3.11 --force &quot;novacode-cli[browser,voice]==1.2.48&quot; <code>`</code></li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-2-47" data-version="1.2.47" data-sha="5c8cbf08c3f5b833d2fb20dc673861c0a311d039">
+<summary class="entry-toggle"><h2 class="version">v1.2.47</h2><span class="release-summary">Older messages load as you scroll up. Scroll back down to continue toward the latest messages. Nova keeps your place as it loads each page.</span></summary>
+<div class="release-content"><h3>Conversation history</h3>
+<ul>
+<li>Older messages load as you scroll up. Scroll back down to continue toward the latest messages. Nova keeps your place as it loads each page.</li>
+<li>Past calls in Normal and Code Mode use the same tool cards as live calls. Expand a card to inspect its arguments or JavaScript and recorded output. File edit cards retain their colored diff when the preview was captured.</li>
+</ul>
+<h3>Install or upgrade</h3>
+<ul>
+<li><code>`</code>text uv tool install --python 3.11 novacode-cli==1.2.47 uv tool upgrade novacode-cli <code>`</code> Restart NovaCode after upgrading. Include any optional extras you use. <code>`</code>text uv tool install --python 3.11 --force &quot;novacode-cli[browser,voice]==1.2.47&quot; <code>`</code></li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-2-46" data-version="1.2.46" data-sha="c13a8ffe04406b63c9c6c67a97243c341971755a">
+<summary class="entry-toggle"><h2 class="version">v1.2.46</h2><span class="release-summary">Use Page Up, scroll up at the top, or choose Load older messages to browse earlier conversation history in live and resumed terminal tabs.</span></summary>
+<div class="release-content"><h3>Conversation history</h3>
+<ul>
+<li>Use Page Up, scroll up at the top, or choose <strong>Load older messages</strong> to browse earlier conversation history in live and resumed terminal tabs.</li>
+<li>Nova keeps a small window of older messages on screen and preserves your scroll position as you load a page. Historical tool output appears as read-only text.</li>
+</ul>
+<h3>Install or upgrade</h3>
+<ul>
+<li><code>`</code>text uv tool install --python 3.11 novacode-cli==1.2.46 uv tool upgrade novacode-cli <code>`</code> Restart NovaCode after upgrading. Include any optional extras you use. <code>`</code>text uv tool install --python 3.11 --force &quot;novacode-cli[browser,voice]==1.2.46&quot; <code>`</code></li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-2-45" data-version="1.2.45" data-sha="6ee20d23fd04619a0e3b891afb722125aa24be53">
+<summary class="entry-toggle"><h2 class="version">v1.2.45</h2><span class="release-summary">Fixed an agent startup crash during image_gen registration. Nova now recognizes both plain Python functions and named LangChain tools when checking whether image_gen is already registered.</span></summary>
+<div class="release-content"><h3>Startup fix</h3>
+<ul>
+<li>Fixed an agent startup crash during <code>image_gen</code> registration. Nova now recognizes both plain Python functions and named LangChain tools when checking whether <code>image_gen</code> is already registered.</li>
+</ul>
+<h3>Install or upgrade</h3>
+<ul>
+<li><code>`</code>text uv tool install --python 3.11 novacode-cli==1.2.45 uv tool upgrade novacode-cli <code>`</code> Restart NovaCode after upgrading. Include any optional extras you use. <code>`</code>text uv tool install --python 3.11 --force &quot;novacode-cli[browser,voice]==1.2.45&quot; <code>`</code></li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-2-44" data-version="1.2.44" data-sha="07d65acd0c06561edcaaacf81999fb158b465a1d">
+<summary class="entry-toggle"><h2 class="version">v1.2.44</h2><span class="release-summary">Ask Nova to make an image and optionally specify a new project-relative .png path. Generated files default to generated-images/.</span></summary>
+<div class="release-content"><h3>Image generation</h3>
+<ul>
+<li>Ask Nova to make an image and optionally specify a new project-relative <code>.png</code> path. Generated files default to <code>generated-images/</code>.</li>
+<li>The local <code>image_gen</code> tool invokes <code>codex exec</code> with the built-in <code>$imagegen</code> skill. Nova verifies the PNG and preserves existing files.</li>
+<li>Install or update Codex with <code>npm install -g @openai/codex</code>, then run <code>codex login</code> with an active ChatGPT subscription that includes image generation. Nova provides these steps when the CLI or sign-in is missing.</li>
+</ul>
+<h3>Install or upgrade</h3>
+<ul>
+<li><code>`</code>text uv tool install --python 3.11 novacode-cli==1.2.44 uv tool upgrade novacode-cli <code>`</code> Restart NovaCode after upgrading. Include any optional extras you use. <code>`</code>text uv tool install --python 3.11 --force &quot;novacode-cli[browser,voice]==1.2.44&quot; <code>`</code></li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-2-43" data-version="1.2.43" data-sha="bb0b199fa3d4a0ae9085ae38ee1e4b94cbbf17b6">
+<summary class="entry-toggle"><h2 class="version">v1.2.43</h2><span class="release-summary">eval resolves final tool promises and async function calls. A race still cancels outstanding calls after selecting its winner.</span></summary>
+<div class="release-content"><h3>Code Mode</h3>
+<ul>
+<li><code>eval</code> resolves final tool promises and async function calls. A race still cancels outstanding calls after selecting its winner.</li>
+<li>Stop saves completed operations and named checkpoints from the interrupted snippet in the conversation and shows the receipt on its tool card. Already started external operations may still finish.</li>
+<li>A stopped interpreter is removed from reuse immediately and closes after its worker has finished unwinding.</li>
+<li>Calls to unknown subagents produce a failed operation. Successful races keep their success status and show cancelled operations in the card.</li>
+</ul>
+<h3>Install or upgrade</h3>
+<ul>
+<li><code>`</code>text uv tool install --python 3.11 novacode-cli==1.2.43 uv tool upgrade novacode-cli <code>`</code> Restart NovaCode after upgrading. Include any optional extras you use. <code>`</code>text uv tool install --python 3.11 --force &quot;novacode-cli[browser,voice]==1.2.43&quot; <code>`</code></li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-2-42" data-version="1.2.42" data-sha="7d02ff60bea3ade47a52552154c1e1dc276f725c">
+<summary class="entry-toggle"><h2 class="version">v1.2.42</h2><span class="release-summary">Stop releases the turn during interpreter startup. Nova discards a worker that finishes starting after cancellation.</span></summary>
+<div class="release-content"><h3>Code Mode</h3>
+<ul>
+<li>Stop releases the turn during interpreter startup. Nova discards a worker that finishes starting after cancellation.</li>
+<li>Nested tools recheck that the conversation is active just before dispatch.</li>
+<li>Settled JavaScript races return the winning result and cancel pending sibling tool calls. The next snippet restores the tool bridge if JavaScript reassigned it.</li>
+<li>Timeout reports identify the interpreter, script, or nested tool deadline. Transport errors during cancellation appear alongside the nested tool timeout.</li>
+<li>Named checkpoints preserve small selected results after a script failure or timeout. Background shell task IDs stay in the receipt so Nova can recover test results and logs from the original job.</li>
+</ul>
+<h3>Install or upgrade</h3>
+<ul>
+<li><code>`</code>text uv tool install --python 3.11 novacode-cli==1.2.42 uv tool upgrade novacode-cli <code>`</code> Restart NovaCode after upgrading. Include any optional extras you use. <code>`</code>text uv tool install --python 3.11 --force &quot;novacode-cli[browser,voice]==1.2.42&quot; <code>`</code></li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-2-41" data-version="1.2.41" data-sha="6536d7526ac9ccefae3f6646bc0c6b05f3185fcf">
+<summary class="entry-toggle"><h2 class="version">v1.2.41</h2><span class="release-summary">Stopping a Code Mode turn cancels its nested tools and gives them a short cleanup window. Slow tool cleanup can continue in the background while Nova releases the turn. External operations already underway may still finish.</span></summary>
+<div class="release-content"><h3>Code Mode cancellation</h3>
+<ul>
+<li>Stopping a Code Mode turn cancels its nested tools and gives them a short cleanup window. Slow tool cleanup can continue in the background while Nova releases the turn. External operations already underway may still finish.</li>
+<li>MCP tool adapters propagate cancellation back to Nova.</li>
+</ul>
+<h3>Oracle reviews</h3>
+<ul>
+<li>Reviewer model calls can run for up to ten minutes. Paged reviews get a total budget of ten minutes plus one minute per evidence page. The Oracle panel displays the applicable deadline.</li>
+</ul>
+<h3>Install or upgrade</h3>
+<ul>
+<li><code>`</code>text uv tool install --python 3.11 novacode-cli==1.2.41 uv tool upgrade novacode-cli <code>`</code> Restart NovaCode after upgrading. Include any optional extras you use. <code>`</code>text uv tool install --python 3.11 --force &quot;novacode-cli[browser,voice]==1.2.41&quot; <code>`</code></li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-2-40" data-version="1.2.40" data-sha="78d2bef4a1ebf76733dab935433d650b1f65aba4">
+<summary class="entry-toggle"><h2 class="version">v1.2.40</h2><span class="release-summary">Reviewer threads show scores, summaries, and findings as Markdown reports. The original evidence remains visible as plain text.</span></summary>
+<div class="release-content"><h3>Oracle reviews</h3>
+<ul>
+<li>Reviewer threads show scores, summaries, and findings as Markdown reports. The original evidence remains visible as plain text.</li>
+<li>Reviewer model calls can run for up to four minutes. Oracle logs the round, reviewer, elapsed time, and evidence pages read when a call times out. The ten-minute limit for a paged review still applies.</li>
+</ul>
+<h3>Install or upgrade</h3>
+<ul>
+<li><code>`</code>text uv tool install --python 3.11 novacode-cli==1.2.40 uv tool upgrade novacode-cli <code>`</code> Restart NovaCode after upgrading. Include any optional extras you use. <code>`</code>text uv tool install --python 3.11 --force &quot;novacode-cli[browser,voice]==1.2.40&quot; <code>`</code></li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-2-39" data-version="1.2.39" data-sha="e80010b3e88abcc82b6e215c3e440fc2e6898255">
+<summary class="entry-toggle"><h2 class="version">v1.2.39</h2><span class="release-summary">QuickJS starts and restores its state off the terminal event loop. This keeps the composer responsive while Code Mode starts, including during Playwright runs.</span></summary>
+<div class="release-content"><h3>A more responsive terminal</h3>
+<ul>
+<li>QuickJS starts and restores its state off the terminal event loop. This keeps the composer responsive while Code Mode starts, including during Playwright runs.</li>
+<li>Tool cards load their exact source and full output when expanded. Code Mode also avoids duplicate tool discovery work and reuses its saved preference until the profile changes.</li>
+<li>Oracle refreshes displayed scores when relevant workspace files change. Approval still requires a full workspace fingerprint check.</li>
+</ul>
+<h3>Ralph, Proactive agents, and Telegram</h3>
+<ul>
+<li><code>/ralph</code> shows progress, elapsed time, Pause, and Stop in the transcript. Runs have separate checklists and logs, use the session’s approval settings, and can resume in their original workspace with <code>/ralph --resume</code>. Pass <code>--verify</code> to run the command in <code>.nova/ralph/verify.txt</code>.</li>
+<li><code>/proactive</code> separates configuration from run activity. Both panes appear on wide terminals, with tabs on compact layouts.</li>
+<li>Plan approval in Telegram renders headings, lists, and code. Approve and Reject appear after the full plan has been delivered.</li>
+</ul>
+<h3>Install or upgrade</h3>
+<ul>
+<li><code>`</code>text uv tool install --python 3.11 novacode-cli==1.2.39 uv tool upgrade novacode-cli <code>`</code> Restart NovaCode after upgrading. Include any optional extras you use. <code>`</code>text uv tool install --python 3.11 --force &quot;novacode-cli[browser,voice]==1.2.39&quot; <code>`</code></li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-2-38" data-version="1.2.38" data-sha="4cb518db4d28132d3b38185445d594b084abe3e0">
+<summary class="entry-toggle"><h2 class="version">v1.2.38</h2><span class="release-summary">This task compares the workspace at the start of the turn with the changes made during the turn. It includes edits to already-dirty files and changes committed during the task, even when a large unrelated diff is pending.</span></summary>
+<div class="release-content"><h3>Oracle reviews the current task by default</h3>
+<ul>
+<li><strong>This task</strong> compares the workspace at the start of the turn with the changes made during the turn. It includes edits to already-dirty files and changes committed during the task, even when a large unrelated diff is pending.</li>
+<li>Choose <strong>Workspace changes</strong> in Oracle Settings to include existing edits and nonignored untracked files. This scope still uses Oracle’s evidence budget.</li>
+<li>Both scopes work in local Git repositories before the first commit. See the [Oracle mode guide](https://github.com/Babitdor/NovaCode/blob/v1.2.38/docs/oracle-mode.md) for scope settings and review limits.</li>
+</ul>
+<h3>Install or upgrade</h3>
+<ul>
+<li><code>`</code>text uv tool install --python 3.11 novacode-cli==1.2.38 uv tool upgrade novacode-cli <code>`</code> Restart NovaCode after upgrading. Include any optional extras you use. <code>`</code>text uv tool install --python 3.11 --force &quot;novacode-cli[browser,voice]==1.2.38&quot; <code>`</code></li>
+</ul></div>
+</details>
 <details class="changelog-entry" id="v1-2-37" data-version="1.2.37" data-sha="12f38aba6a838a5fe1795bad1e56d6c0189948f1">
 <summary class="entry-toggle"><h2 class="version">v1.2.37</h2><span class="release-summary">Create named agents with standing instructions, a workspace, and optional read access to committed Git files, GitHub Actions, and PyPI.</span></summary>
 <div class="release-content"><h3>Create reusable agents with /proactive</h3>

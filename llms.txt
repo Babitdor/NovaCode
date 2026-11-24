@@ -12,7 +12,7 @@ This site is the NovaCode marketing and documentation site (GitHub Pages, served
 
 ## Quick facts (verify against docs/changelog for current details)
 
-- Install on Windows CMD, macOS or Linux: `uv tool install --python 3.11 novacode-cli`, then run `nova` from your project. Published release: 1.2.20, https://pypi.org/project/novacode-cli/1.2.20/ .
+- Install on Windows CMD, macOS or Linux: `uv tool install --python 3.11 novacode-cli`, then run `nova` from your project. Published release: 1.2.67, https://pypi.org/project/novacode-cli/1.2.67/ .
 - Upgrade: `uv tool upgrade novacode-cli`. Replace a Git-based tool install with `uv tool install --python 3.11 --force novacode-cli`.
 - Common extras: `uv tool install --python 3.11 --force "novacode-cli[browser,voice,agents-server,server,bedrock,computer]"`. Keep every wanted extra when reinstalling. Other voice extras: voice-orpheus, voice-parakeet, voice-pocket, voice-whistle, voice-kokoro, voice-sano. Models, browser binaries and external runtimes may require separate setup; the all-extras combination is not verified on Windows.
 - Source development: clone https://github.com/Babitdor/NovaCode , enter the checkout, run `uv sync`, then `uv run nova`. Git tags matching the package version publish releases through GitHub Actions and PyPI Trusted Publishing.

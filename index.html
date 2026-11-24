@@ -23,7 +23,7 @@
 "name":"Nova",
 "alternateName":"NovaCode",
 "applicationCategory":"DeveloperApplication",
-"softwareVersion":"1.2.20",
+"softwareVersion":"1.2.67",
 "operatingSystem":"macOS, Linux, Windows",
 "offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},
 "license":"https://opensource.org/licenses/MIT",
@@ -188,6 +188,8 @@ html.js #boot{display:grid}
 /* the emblem's own disc is transparent, so it needs the night ground behind it in
    both themes; otherwise the light bar shows through and it reads as a negative */
 .bar-mark .iso{display:block;width:22px;height:22px;border-radius:50%;background:#030E3E}
+/* the emblem stays 22px, but the control it sits in needs a 44px target */
+.bar-mark > a{display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;margin:-11px}
 .bar-name{font-family:var(--f-disp);font-size:1.3rem;letter-spacing:.01em}
 .bar-side{display:flex;align-items:center;gap:clamp(14px,2.4vw,28px)}
 .bar-end{display:flex;align-items:center;gap:clamp(10px,1.6vw,18px);margin-left:auto}
@@ -338,7 +340,7 @@ code{
 .crew-name{margin-top:clamp(9px,1.2vw,14px);font-family:'Archivo',ui-sans-serif,system-ui,sans-serif;font-weight:700;font-size:clamp(1.35rem,1.9vw,1.8rem);line-height:1.02;letter-spacing:-.02em;color:var(--ink)}
 .crew-body{margin-top:9px;color:var(--muted);font-size:clamp(.76rem,.86vw,.86rem);line-height:1.5}
 .crew-line{margin-top:auto;padding-left:10px;border-left:2px solid var(--accent);color:var(--ink);font-family:'Archivo',ui-sans-serif,system-ui,sans-serif;font-weight:700;font-size:clamp(.78rem,.95vw,.95rem);line-height:1.35;letter-spacing:-.01em}
-.crew-tools{margin-top:8px;color:var(--muted);font:400 .62rem/1.4 var(--f-mono);letter-spacing:.12em;text-transform:uppercase}
+.crew-tools{margin-top:8px;color:var(--muted);font:400 .7rem/1.4 var(--f-mono);letter-spacing:.12em;text-transform:uppercase}
 .crew-stage{position:relative;overflow:hidden}
 .crew-stage picture{display:contents}
 .crew-dots{position:absolute;inset:auto 0 0 0;width:78%;height:60%;margin-left:auto;background-image:radial-gradient(circle,var(--accent) 1.1px,transparent 1.4px);background-size:10px 10px;opacity:.45;-webkit-mask-image:linear-gradient(205deg,#000 8%,transparent 76%);mask-image:linear-gradient(205deg,#000 8%,transparent 76%)}
@@ -1142,7 +1144,7 @@ html[data-view="agent"] .page-progress{display:none !important}
 
   <section class="hero" aria-labelledby="what">
     <div class="wrap">
-    <p class="zones" aria-hidden="true" data-par="zones"><span>phosphor &middot; novacode</span><span>rev 1.2.20</span></p>
+    <p class="zones" aria-hidden="true" data-par="zones"><span>phosphor &middot; novacode</span><span>rev 1.2.67</span></p>
     <div class="hero-grid">
       <div>
         <section class="agent-only agent-doc" aria-label="Agent-readable hero and page summary">
@@ -1952,7 +1954,7 @@ e55c392 tui: context compression</div>
       </div>
     </div>
     <div class="split" style="margin-top:clamp(24px,4vw,34px)">
-      <p class="body">Release <a href="https://pypi.org/project/novacode-cli/1.2.20/">1.2.20 is on PyPI</a>. Upgrade with <code>uv tool upgrade novacode-cli</code>. Choose one of 18 hosted provider IDs or configure a local Ollama model.</p>
+      <p class="body">Release <a href="https://pypi.org/project/novacode-cli/1.2.67/">1.2.67 is on PyPI</a>. Upgrade with <code>uv tool upgrade novacode-cli</code>. Choose one of 18 hosted provider IDs or configure a local Ollama model.</p>
       <p class="tol">&plusmn; Extras install Python dependencies; voice models, browser binaries and computer runtimes may need separate setup. Keep all wanted extras when reinstalling. For changes to Nova itself, follow the <a href="docs/#page-installation">source checkout instructions</a> and use <code>uv run nova</code>.</p>
     </div>
   </section>
@@ -2050,7 +2052,7 @@ e55c392 tui: context compression</div>
       </div>
       <div class="title-block">
         <div>project<b>NovaCode</b></div>
-        <div>revision<b>1.2.20</b></div>
+        <div>revision<b>1.2.67</b></div>
         <div>licence<b>MIT</b></div>
         <div>stock<b>Python 3.11+</b></div>
       </div>
