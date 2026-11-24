@@ -1504,7 +1504,9 @@ class ComposerActions(Horizontal):
     """Wrap composer controls using their actual width, including centered layouts."""
 
     def on_resize(self, event: events.Resize) -> None:
-        self.set_class(event.size.width < 116, "wrapped")
+        # Unwrapped, the six toggle cells need 117 columns (54 of them for the
+        # Serena/Code-Mode/Oracle cluster); below that the grid wraps to 3x3.
+        self.set_class(event.size.width < 118, "wrapped")
 
 
 class PromptInput(TextArea):

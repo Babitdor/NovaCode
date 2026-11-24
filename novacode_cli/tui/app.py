@@ -1743,7 +1743,7 @@ class NovaApp(App):
     #composer-actions {
         layout: grid;
         grid-size: 6 1;
-        grid-columns: 14 16 12 14 16 42;
+        grid-columns: 12 14 10 13 14 54;
         grid-rows: 1;
         height: 1;
         padding: 0 1;
@@ -1755,8 +1755,11 @@ class NovaApp(App):
     #composer-actions.wrapped > Button { width: 1fr; min-width: 0; }
     #composer-actions-spacer { display: none; height: 1; }
     #composer-actions.wrapped #composer-actions-spacer { display: block; }
-    #code-oracle-actions { width: 42; height: 1; }
+    #code-oracle-actions { width: 54; height: 1; }
     #composer-actions.wrapped #code-oracle-actions { column-span: 3; }
+    /* Wrapped (narrow) rows are exact-fit for the original cluster; the Serena
+       button yields there — narrow terminals use /serena. */
+    #composer-actions.wrapped #serena-toggle { display: none; }
     #oracle-toggle {
         width: 14; min-width: 14; height: 1; min-height: 1; border: none;
         padding: 0 1; background: $surface; color: $text-muted;
@@ -1778,11 +1781,13 @@ class NovaApp(App):
         background: $surface;
         color: $text-muted;
     }
-    #prime-toggle { width: 14; min-width: 14; }
-    #plan-toggle { width: 12; min-width: 12; }
-    #browser-toggle { width: 14; min-width: 14; }
+    #prime-toggle { width: 12; min-width: 12; }
+    #passing-toggle { width: 14; min-width: 14; }
+    #plan-toggle { width: 10; min-width: 10; }
+    #browser-toggle { width: 13; min-width: 13; }
+    #caveman-toggle { width: 14; min-width: 14; }
     #code-mode-toggle { width: 18; min-width: 18; }
-    #serena-toggle { width: 14; min-width: 14; }
+    #serena-toggle { width: 12; min-width: 12; }
     #prime-toggle.enabled, #passing-toggle.enabled, #plan-toggle.enabled, #browser-toggle.enabled,
     #caveman-toggle.enabled, #code-mode-toggle.enabled, #serena-toggle.enabled {
         color: $accent;
@@ -2777,7 +2782,7 @@ class NovaApp(App):
                 yield Static("", id="composer-actions-spacer")
                 with Horizontal(id="code-oracle-actions"):
                     yield Button(
-                        "Serena: off",
+                        "serena:off",
                         id="serena-toggle",
                         tooltip=(
                             "Toggle Serena mode: MCP-only semantic toolset with a "
@@ -13061,7 +13066,7 @@ class NovaApp(App):
         with contextlib.suppress(NoMatches):
             toggle = self._w("#serena-toggle", Button)
             enabled = getattr(self.session_state, "serena_mode_enabled", False)
-            toggle.label = f"Serena: {'on' if enabled else 'off'}"
+            toggle.label = f"serena:{'on' if enabled else 'off'}"
             toggle.set_class(enabled, "enabled")
 
     @on(Button.Pressed, "#serena-toggle")
