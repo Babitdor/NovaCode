@@ -1768,7 +1768,7 @@ class NovaApp(App):
         border: none; background: $surface; color: $text-muted;
     }
     #oracle-settings:focus, #oracle-settings:hover { background: $accent 15%; color: $accent; }
-    #prime-toggle, #passing-toggle, #plan-toggle, #browser-toggle, #caveman-toggle, #code-mode-toggle {
+    #prime-toggle, #passing-toggle, #plan-toggle, #browser-toggle, #caveman-toggle, #code-mode-toggle, #serena-toggle {
         width: 16;
         min-width: 16;
         height: 1;
@@ -1782,15 +1782,16 @@ class NovaApp(App):
     #plan-toggle { width: 12; min-width: 12; }
     #browser-toggle { width: 14; min-width: 14; }
     #code-mode-toggle { width: 18; min-width: 18; }
+    #serena-toggle { width: 14; min-width: 14; }
     #prime-toggle.enabled, #passing-toggle.enabled, #plan-toggle.enabled, #browser-toggle.enabled,
-    #caveman-toggle.enabled, #code-mode-toggle.enabled {
+    #caveman-toggle.enabled, #code-mode-toggle.enabled, #serena-toggle.enabled {
         color: $accent;
         text-style: bold;
     }
     #prime-toggle:focus, #prime-toggle:hover, #passing-toggle:focus, #passing-toggle:hover,
     #plan-toggle:focus, #plan-toggle:hover, #browser-toggle:focus, #browser-toggle:hover,
     #caveman-toggle:focus, #caveman-toggle:hover,
-    #code-mode-toggle:focus, #code-mode-toggle:hover {
+    #code-mode-toggle:focus, #code-mode-toggle:hover, #serena-toggle:focus, #serena-toggle:hover {
         background: $accent 15%;
         color: $accent;
         text-style: bold;
@@ -2775,6 +2776,15 @@ class NovaApp(App):
                 )
                 yield Static("", id="composer-actions-spacer")
                 with Horizontal(id="code-oracle-actions"):
+                    yield Button(
+                        "Serena: off",
+                        id="serena-toggle",
+                        tooltip=(
+                            "Toggle Serena mode: MCP-only semantic toolset with a "
+                            "Serena workflow. Needs the Serena MCP server connected "
+                            "(/mcp has a preset); same as /serena."
+                        ),
+                    )
                     yield Button(
                         "Code Mode: on",
                         id="code-mode-toggle",
@@ -8689,6 +8699,7 @@ class NovaApp(App):
         browser_toggle = self._w("#browser-toggle", Button)
         browser_toggle.label = "browser:on" if browser else "browser:off"
         browser_toggle.set_class(bool(browser), "enabled")
+        self._refresh_serena_toggle()
         toggle = self._w("#prime-toggle", Button)
         toggle.label = "Prime: on" if prime else "Prime: off"
         toggle.set_class(bool(prime), "enabled")
@@ -13044,6 +13055,33 @@ class NovaApp(App):
         toggle = self.query_one("#code-mode-toggle", Button)
         toggle.label = f"Code Mode: {'on' if self._code_mode_enabled else 'off'}"
         toggle.set_class(self._code_mode_enabled, "enabled")
+
+    def _refresh_serena_toggle(self) -> None:
+        """Mirror the live flag onto the composer button (all toggle paths)."""
+        with contextlib.suppress(NoMatches):
+            toggle = self._w("#serena-toggle", Button)
+            enabled = getattr(self.session_state, "serena_mode_enabled", False)
+            toggle.label = f"Serena: {'on' if enabled else 'off'}"
+            toggle.set_class(enabled, "enabled")
+
+    @on(Button.Pressed, "#serena-toggle")
+    async def _serena_toggle_pressed(self, event: Button.Pressed) -> None:
+        from novacode_cli.agents.serena_mode import serena_mcp_ready
+
+        event.stop()
+        if self._turn_running():
+            self.notify("Wait for the active request to finish before changing Serena Mode.")
+            return
+        enabled = not getattr(self.session_state, "serena_mode_enabled", False)
+        if enabled:
+            ready, detail = await asyncio.to_thread(serena_mcp_ready)
+            if not ready:
+                self.notify(detail, severity="warning", timeout=10)
+                return
+        self.session_state.serena_mode_enabled = enabled
+        self._update_mode_badge()
+        self._refresh_status()
+        self.query_one("#prompt", PromptInput).focus()
 
     @on(Button.Pressed, "#code-mode-toggle")
     async def _code_mode_toggle_pressed(self, event: Button.Pressed) -> None:
