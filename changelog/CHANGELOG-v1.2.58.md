@@ -53,10 +53,12 @@
   gesture. Ctrl+B (empty prompt), a click on the bar, and `/tasks` open the same
   panel; the composer modes line shows `· ↓ tasks` while background work is
   active.
-- Root-cause fix found on the way: every sync entry point into the panel (click,
-  two Ctrl+B branches, `/tasks`) called the async `_open_tasks_panel` without
-  awaiting it — dangling coroutines, so the Tasks panel silently never opened
-  from those paths. They all go through a worker launcher now.
+- All sync entry points into the panel (click, two Ctrl+B branches, `/tasks`,
+  down arrow) route through a single `open_background_tasks` helper. (Correction:
+  the "dangling coroutines" root-cause claim originally in this section was
+  wrong — the pre-1.2.58 call sites worked via `@work`. v1.2.59 fixes the
+  double-worker wrap this refactor introduced and adds a real-path regression
+  test.)
 
 ## Shell tool description accuracy
 
