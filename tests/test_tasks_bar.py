@@ -23,6 +23,8 @@ except ImportError:  # pragma: no cover
 
 pytestmark = pytest.mark.skipif(not _HAS_TEXTUAL, reason="textual not installed")
 
+from novacode_cli.tui.screens import BackgroundTasksScreen  # noqa: E402
+
 
 @pytest.fixture(autouse=True)
 def _offline_app(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
@@ -133,11 +135,17 @@ async def test_down_arrow_opens_the_background_tasks_panel(monkeypatch) -> None:
         app._refresh_tasks_bar()
         await pilot.pause()
 
-        monkeypatch.setattr(app, "_open_tasks_panel", fake_panel)
+        # Mimic the real @work contract: calling _open_tasks_panel spawns the
+        # work; the caller never awaits it.
+        monkeypatch.setattr(
+            app,
+            "_open_tasks_panel",
+            lambda: app.run_worker(fake_panel(), exclusive=False),
+        )
         # First down: input history is empty so the recall misses → the
         # gesture falls through to the tasks panel.
         await pilot.press("down")
-        await pilot.pause(0.2)
+        await pilot.pause(0.3)
         assert opened, "down on the last line must open the background tasks"
 
 
@@ -155,11 +163,38 @@ async def test_down_without_active_tasks_keeps_history_behavior(monkeypatch) -> 
         monkeypatch.setattr(app._tasks_registry(), "active", lambda: [])
         app._refresh_tasks_bar()
         await pilot.pause()
-        monkeypatch.setattr(app, "_open_tasks_panel", fake_panel)
+        monkeypatch.setattr(
+            app,
+            "_open_tasks_panel",
+            lambda: app.run_worker(fake_panel(), exclusive=False),
+        )
 
         prompt = app.query_one("#prompt")
         prompt.text = "typed text"
         prompt.move_cursor(prompt.document.end)
         await pilot.press("down")
-        await pilot.pause(0.2)
+        await pilot.pause(0.3)
         assert not opened, "no active tasks: down must not open the panel"
+
+
+async def test_open_background_tasks_runs_the_real_at_work_panel(monkeypatch) -> None:
+    """open_background_tasks → _open_tasks_panel with its @work decorator intact.
+
+    v1.2.58 wrapped the call in a second run_worker; since @work already
+    returns a Worker (not a coroutine), that raised
+    "Unsupported attempt to run an async worker" on first real use.
+    """
+    app = _app()
+    async with app.run_test(size=(120, 40)) as pilot:
+        app._home_style = "minimal"
+        app._refresh_info_bar()
+        monkeypatch.setattr(app._tasks_registry(), "active", lambda: [_fake_job()])
+        app._refresh_tasks_bar()
+        await pilot.pause()
+
+        app.open_background_tasks()
+        await pilot.pause(0.3)
+        assert any(
+            isinstance(screen, BackgroundTasksScreen) for screen in app.screen_stack
+        ), "the real @work panel must open without a WorkerError"
+        app.exit(None)

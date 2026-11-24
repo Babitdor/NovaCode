@@ -10012,12 +10012,12 @@ class NovaApp(App):
     def open_background_tasks(self) -> None:
         """Open the Background Tasks panel from a sync context.
 
-        `_open_tasks_panel` is async (it waits on the panel screen), so every
-        sync entry point — click, Ctrl+B branches, `/tasks`, down arrow — goes
-        through this worker launcher. The previous direct `self._open_tasks_panel()`
-        calls created dangling coroutines: the panel silently never opened.
+        `_open_tasks_panel` is decorated with ``@work``: calling it spawns its
+        own worker and returns the Worker object. It must not be wrapped in
+        ``run_worker`` again — passing a Worker as work raises
+        "Unsupported attempt to run an async worker".
         """
-        self.run_worker(self._open_tasks_panel(), exclusive=False)
+        self._open_tasks_panel()
 
     def _refresh_tasks_bar(self) -> None:
         """Show running jobs, subagents, and the targets of active waiters."""
