@@ -185,7 +185,6 @@ async def test_worker_runs_concurrently_and_reports_its_context(monkeypatch):
     session.token_tracker = SimpleNamespace(context_window_size=1_000_000)
     released = asyncio.Event()
     started = asyncio.Event()
-    events = []
 
     async def stream(prompt, _agent, _assistant, child, **_kwargs):
         assert prompt == "Read the docs"
@@ -205,11 +204,17 @@ async def test_worker_runs_concurrently_and_reports_its_context(monkeypatch):
     worker_token = current_workers.set(workers)
     plan_token = active_plan_session.set(session)
     try:
-        runtime = SimpleNamespace(stream_writer=lambda frame: events.append(frame["event"]))
-        result = await summon_agent.coroutine(runtime, agent="nora", task="Read the docs")
+        for profile in (None, "nora", "serena"):
+            session.agent_profile = profile
+            rejected = await summon_agent.coroutine(agent=profile or "nova", task="Duplicate")
+            assert "cannot summon itself" in rejected["error"]
+        assert not workers.tasks and workers.events.empty() and workers.budget == [4]
+        session.agent_profile = None
+        result = await summon_agent.coroutine(agent="nora", task="Read the docs")
         await asyncio.wait_for(started.wait(), 2)
         assert result["status"] == "running"
         assert not workers.tasks[result["worker_id"]].done()
+        events = [workers.events.get_nowait() for _ in range(workers.events.qsize())]
         previews = [event for event in events if isinstance(event, ev.SubagentPreview)]
         assert [(p.task_id, p.kind, p.call_id) for p in previews] == [
             (result["worker_id"], "status", ""),
@@ -217,9 +222,9 @@ async def test_worker_runs_concurrently_and_reports_its_context(monkeypatch):
             (result["worker_id"], "result", "fetch"),
         ]
         released.set()
-        result = await summon_agent.coroutine(runtime, worker_id=result["worker_id"])
+        result = await summon_agent.coroutine(worker_id=result["worker_id"])
         assert result == {"agent": "Nora", "status": "done", "result": "Evidence"}
-        row = events[-1]
+        row = [workers.events.get_nowait() for _ in range(workers.events.qsize())][-1]
         assert row.status == "done"
         expected = "ctx 129k/1.0M · 13% · 87% left"
         assert format_context(row.context_used, row.context_window) == expected
@@ -239,7 +244,7 @@ async def test_worker_runs_concurrently_and_reports_its_context(monkeypatch):
         current_workers.reset(worker_token)
 
 
-async def test_summon_tool_and_profile_persist_through_graph():
+async def test_summon_tool_and_profile_persist_through_graph(monkeypatch):
     import json
 
     from langchain.agents import create_agent
@@ -251,6 +256,8 @@ async def test_summon_tool_and_profile_persist_through_graph():
     from novacode_cli.states.Session import SessionState
     from tests.test_prime import Model
 
+    monkeypatch.setattr("novacode_cli.agents.profiles.profile_readiness", lambda _: None)
+    monkeypatch.setattr("novacode_cli.core.profile_workers.profile_readiness", lambda _: None)
     worker_reply = "Start of evidence\n" + ("x" * _RESULT_PAGE_CHARS) + "\nEnd of evidence"
 
     class AgentModel(Model):
@@ -303,7 +310,7 @@ async def test_summon_tool_and_profile_persist_through_graph():
                         {
                             "id": "start",
                             "name": "summon_agent",
-                            "args": {"agent": "nova", "task": "Check the documentation"},
+                            "args": {"agent": "nora", "task": "Check the documentation"},
                         }
                     ],
                 )
@@ -319,8 +326,8 @@ async def test_summon_tool_and_profile_persist_through_graph():
     session.agent_profile = "nova"
     events = [event async for event in iterate_agent_events("Delegate", graph, None, session)]
     assert [(e.status, e.subagent_type) for e in events if isinstance(e, ev.SubagentTask)] == [
-        ("running", "Nova"),
-        ("done", "Nova"),
+        ("running", "Nora"),
+        ("done", "Nora"),
     ]
     assert any(
         e.text == "Collected evidence" and e.agent_name == "Nova"
@@ -329,6 +336,100 @@ async def test_summon_tool_and_profile_persist_through_graph():
     )
     saved = await graph.aget_state({"configurable": {"thread_id": session.thread_id}})
     assert saved.values["messages"][-1].additional_kwargs["nova_agent_profile"] == "nova"
+
+
+async def test_worker_approval_survives_parent_graph_resume(monkeypatch):
+    import json
+
+    from langchain.agents import create_agent
+    from langchain.agents.middleware import HumanInTheLoopMiddleware
+    from langchain.tools import tool
+    from langchain_core.messages import AIMessage, ToolMessage
+    from langchain_core.outputs import ChatGeneration, ChatResult
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    from novacode_cli.core.agent_loop import iterate_agent_events
+    from novacode_cli.states.Session import SessionState
+    from tests.test_prime import Model
+
+    monkeypatch.setattr("novacode_cli.agents.profiles.profile_readiness", lambda _: None)
+    released = asyncio.Event()
+    actions = []
+
+    @tool("write_todos")
+    async def parent_step() -> str:
+        """Release the worker after the parent approval."""
+        released.set()
+        return "Released"
+
+    @tool
+    async def wait_for_parent() -> str:
+        """Wait for the parent graph to resume."""
+        await released.wait()
+        return "Parent resumed"
+
+    @tool
+    async def checked_action() -> str:
+        """Perform the worker action once after approval."""
+        actions.append("ran")
+        return "Worker approved"
+
+    def call(name, args=None):
+        return AIMessage("", tool_calls=[{"id": name, "name": name, "args": args or {}}])
+
+    class AgentModel(Model):
+        def _generate(self, messages, stop=None, run_manager=None, **_kwargs):
+            last = messages[-1]
+            if last.text == "Delegated task":
+                reply = call("wait_for_parent")
+            elif isinstance(last, ToolMessage):
+                if last.name == "wait_for_parent":
+                    reply = call("checked_action")
+                elif last.name == "checked_action":
+                    reply = AIMessage(last.text)
+                elif last.name == "write_todos":
+                    launch = next(
+                        m for m in messages
+                        if isinstance(m, ToolMessage) and m.name == "summon_agent"
+                    )
+                    worker_id = json.loads(launch.text)["worker_id"]
+                    reply = call("summon_agent", {"worker_id": worker_id})
+                    reply.tool_calls[0]["id"] = "collect"
+                elif last.tool_call_id == "summon_agent":
+                    reply = call("write_todos")
+                else:
+                    assert json.loads(last.text)["result"] == "Worker approved"
+                    reply = AIMessage("Collected the approved result")
+            else:
+                reply = call("summon_agent", {"agent": "nova", "task": "Delegated task"})
+            return ChatResult(generations=[ChatGeneration(message=reply)])
+
+    agent = create_agent(
+        AgentModel(responses=[]),
+        [summon_agent, parent_step, wait_for_parent, checked_action],
+        middleware=[
+            AgentProfileMiddleware(),
+            HumanInTheLoopMiddleware(interrupt_on={"write_todos": True, "checked_action": True}),
+        ],
+        checkpointer=InMemorySaver(),
+    )
+    session = SessionState()
+    session.agent_profile = "serena"
+    approvals = []
+    events = []
+    async with asyncio.timeout(30):
+        async for event in iterate_agent_events("Delegate", agent, None, session):
+            events.append(event)
+            if isinstance(event, ev.InterruptRequest):
+                approvals.extend(ar["name"] for ar in event.payload["action_requests"])
+                assert not actions
+                event.future.set_result({"decisions": [{"type": "approve"}]})
+    assert approvals == ["write_todos", "checked_action"]
+    assert actions == ["ran"]
+    assert any(
+        isinstance(event, ev.AssistantMessage) and event.text == "Collected the approved result"
+        for event in events
+    )
 
 
 async def test_composer_agent_picker_keeps_draft_and_rejects_locked_profile(monkeypatch):

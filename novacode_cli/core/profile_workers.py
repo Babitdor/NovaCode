@@ -10,7 +10,7 @@ from dataclasses import replace
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from langchain.tools import ToolRuntime, tool
+from langchain.tools import tool
 from pydantic import Field
 from typing_extensions import Annotated
 
@@ -20,7 +20,8 @@ from novacode_cli.config.plan_mode import active_plan_session
 from novacode_cli.core.subagent_tasks import PROFILE_PHASE
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import AsyncGenerator, AsyncIterator
+    from typing import Any
 
 current_workers: ContextVar[ProfileWorkers | None] = ContextVar(
     "nova_profile_workers", default=None
@@ -31,7 +32,6 @@ _MAX_RESULT_CHARS = 8 * _RESULT_PAGE_CHARS
 
 @tool
 async def summon_agent(
-    runtime: ToolRuntime,
     agent: AgentProfile | None = None,
     task: Annotated[str, Field(max_length=16000)] = "",
     worker_id: str = "",
@@ -39,7 +39,8 @@ async def summon_agent(
 ) -> dict:
     """Start an agent in a separate background conversation, or collect its result.
 
-    Set agent (nova, serena, nora, or ralph) and task to start. Give a self-contained
+    Set agent (nova, serena, nora, or ralph) and task to start. Choose a different
+    agent from your current profile. Give a self-contained
     brief with the objective, relevant files or sources, constraints, and the
     deliverable or acceptance check. Specify whether edits are allowed. For Ralph,
     include the success measure and when to stop. For Nora, request sources and
@@ -74,6 +75,8 @@ async def summon_agent(
         return {"error": "Provide worker_id to read a result page."}
     if agent is None or not task.strip():
         return {"error": "Choose an agent and provide a task."}
+    if agent == (active_profile() or "nova"):
+        return {"error": f"{agent.title()} cannot summon itself. Choose another agent."}
     if reason := profile_readiness(agent):
         return {"error": reason}
     if workers.budget[0] <= 0 or workers.depth >= 2:
@@ -88,9 +91,9 @@ async def summon_agent(
         description=task,
         started_at=time.time(),
     )
-    runtime.stream_writer({"type": "nova_profile_worker", "event": row})
+    workers.events.put_nowait(row)
     workers.tasks[worker_id] = asyncio.create_task(
-        workers.run(agent, task, row, runtime.stream_writer), name=f"nova-{agent}-{worker_id}"
+        workers.run(agent, task, row), name=f"nova-{agent}-{worker_id}"
     )
     return {"worker_id": worker_id, "agent": agent.title(), "status": "running"}
 
@@ -102,6 +105,7 @@ class ProfileWorkers:
         self.assistant_id = assistant_id
         self.session = session
         self.tasks: dict[str, asyncio.Task[dict]] = {}
+        self.events: asyncio.Queue[Any] = asyncio.Queue()
         self.depth = parent.depth + 1 if parent is not None else 0
         self.budget = parent.budget if parent is not None else [4]
 
@@ -111,18 +115,48 @@ class ProfileWorkers:
                 task.cancel()
         await asyncio.gather(*self.tasks.values(), return_exceptions=True)
 
+    async def merge_stream(self, stream: AsyncGenerator[Any, None]) -> AsyncIterator[Any]:
+        """Deliver worker events across graph streams restarted by parent approvals."""
+        end = object()
+        consumed = asyncio.Event()
+
+        async def pump() -> None:
+            try:
+                async with aclosing(stream):
+                    async for chunk in stream:
+                        self.events.put_nowait((end, chunk))
+                        await consumed.wait()
+                        consumed.clear()
+            finally:
+                self.events.put_nowait(end)
+
+        graph = asyncio.create_task(pump())
+        try:
+            while True:
+                event = await self.events.get()
+                if event is end:
+                    await graph
+                    return
+                if isinstance(event, tuple) and event[0] is end:
+                    yield event[1]
+                    consumed.set()
+                else:
+                    yield event
+        finally:
+            if not graph.done():
+                graph.cancel()
+            await asyncio.gather(graph, return_exceptions=True)
+
     async def run(
         self,
         profile: AgentProfile,
         prompt: str,
         row: ev.SubagentTask,
-        writer: Callable,
     ) -> dict:
         from novacode_cli.core.agent_loop import iterate_agent_events
         from novacode_cli.states.Session import SessionState
 
-        def emit(event) -> None:
-            writer({"type": "nova_profile_worker", "event": event})
+        emit = self.events.put_nowait
 
         status, error = "failed", ""
         replies: list[str] = []

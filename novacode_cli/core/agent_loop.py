@@ -22,6 +22,7 @@ import inspect
 import json
 import time
 from collections.abc import AsyncIterator
+from contextlib import aclosing
 from typing import TYPE_CHECKING, Any
 
 from langchain.agents.middleware.human_in_the_loop import HITLRequest
@@ -230,7 +231,7 @@ async def _record_cancellation(
     await agent.aupdate_state(config=config, values={"messages": messages}, as_node=node)
 
 
-async def _safe_stream(stream_gen: AsyncIterator[Any]) -> AsyncIterator[Any]:
+async def _safe_stream(stream_gen: AsyncGenerator[Any, None]) -> AsyncGenerator[Any, None]:
     """Wraps an async generator and swallows GraphInterrupt.
 
     This ensures that when the graph execution is suspended due to an interrupt,
@@ -238,8 +239,9 @@ async def _safe_stream(stream_gen: AsyncIterator[Any]) -> AsyncIterator[Any]:
     normally instead of crashing the iteration loop.
     """
     try:
-        async for chunk in stream_gen:
-            yield chunk
+        async with aclosing(stream_gen):
+            async for chunk in stream_gen:
+                yield chunk
     except GraphInterrupt:
         pass
 
@@ -806,7 +808,7 @@ async def _iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
             # whole message that follows is not previewed a second time.
             preview_streamed: set = set()
 
-            _current_stream_gen = scoped_stream(
+            graph_stream = scoped_stream(
                 traced_stream(
                     agent.astream(
                         stream_input,
@@ -822,23 +824,23 @@ async def _iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
                 "main",
             )
 
-            async for chunk in _safe_stream(_current_stream_gen):
+            _current_stream_gen = workers.merge_stream(_safe_stream(graph_stream))
+            async for chunk in _current_stream_gen:
                 # Surface any Nova learning events (review cycles) as they happen
                 # so the UI's live indicator updates mid-turn rather than only at
                 # turn boundaries.
                 for _ctx in _drain_nova_events():
                     yield _ctx
 
+                if isinstance(chunk, (ev.SubagentTask, ev.SubagentPreview, ev.InterruptRequest)):
+                    if not isinstance(chunk, ev.InterruptRequest) or not chunk.future.done():
+                        yield chunk
+                    continue
                 if not isinstance(chunk, tuple) or len(chunk) != 3:
                     continue
                 _namespace, current_stream_mode, data = chunk
 
                 if current_stream_mode == "custom":
-                    if isinstance(data, dict) and data.get("type") == "nova_profile_worker":
-                        worker_event = data.get("event")
-                        if isinstance(worker_event, (ev.SubagentTask, ev.SubagentPreview, ev.InterruptRequest)):
-                            yield worker_event
-                        continue
                     if isinstance(data, dict) and data.get("type") == "nova_memory_read":
                         name = " ".join(str(data.get("name") or "").split())[:200]
                         path = " ".join(str(data.get("path") or "").split())[:2000]
@@ -1728,6 +1730,8 @@ async def _iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
         return
     finally:
         code_approvals.close()
+        if _current_stream_gen is not None:
+            await _current_stream_gen.aclose()
         await workers.close()
         current_workers.reset(workers_token)
         current_profile.reset(profile_token)

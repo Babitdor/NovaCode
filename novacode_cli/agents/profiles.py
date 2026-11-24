@@ -230,6 +230,7 @@ class AgentProfileMiddleware(AgentMiddleware):
                 "source verification, Serena for precise repository navigation and "
                 "symbol-level coding, and Nova for broader implementation, integration, "
                 "or cross-cutting verification. Handle work in your own specialty directly. "
+                "You cannot summon your own profile. "
                 "Keep ownership of the user's request and verify and integrate the worker's "
                 "result. Collect all result pages from the same worker before deciding "
                 "whether any follow-up work is needed. If a specialist is unavailable, "
