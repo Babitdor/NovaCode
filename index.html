@@ -785,6 +785,15 @@ html.js .art.art-ready{opacity:1}
   .art{position:relative;inset:auto;aspect-ratio:4/3}
   .plate figcaption{position:static;inset:auto;left:auto;margin-top:9px;padding-inline:0}
 }
+/* The field is a night field: its violet and warm blobs land on the plate's bottom
+   edge, right beside the buttons, and on cream stock they read as a glow behind
+   them. Day gets the flat stock; the picture above already carries the scene. */
+@media (max-width:900px) and (prefers-color-scheme:light){
+  :root:not([data-theme="dark"]) .hero{background-image:none}
+}
+@media (max-width:900px){
+  :root[data-theme="light"] .hero{background-image:none}
+}
 @media (min-width:561px) and (max-width:900px){.art{aspect-ratio:16/9}}
 .zones{
   display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;

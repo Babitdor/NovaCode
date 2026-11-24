@@ -45,6 +45,18 @@ PROBE = """(() => {
 def hero(page, label):
     page.wait_for_function("document.fonts.status === 'loaded'")
     page.wait_for_timeout(900)
+    # The claim rule is a 0.9s strike, and the load-time ScrollTrigger refresh can
+    # re-enter it after the fonts settle, so a single reading at a fixed instant
+    # sometimes lands mid-draw. Wait for the drawn end state (bounded); if it never
+    # arrives, the assertion below still reports the measured scale.
+    try:
+        page.wait_for_function(
+            "() => { const r = document.querySelector('.claim-line');"
+            " return !!r && new DOMMatrix(getComputedStyle(r).transform).a >= .99; }",
+            timeout=4000)
+    except Exception:
+        pass
+    page.wait_for_timeout(120)
     m = page.evaluate(PROBE)
     assert not m['boot'], f'{label}: boot overlay still covering the page'
     assert 'Instrument Serif' in m['family'], f'{label}: engraved face not loaded, {m["family"]}'
