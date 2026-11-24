@@ -716,14 +716,15 @@ html[data-view="agent"] .tutorial-layout{display:block}
    the no-script fallback. */
 .starfield{
   position:fixed;inset:0;z-index:0;overflow:hidden;pointer-events:none;
+  /* points only. The two washes this layer used to carry sat at 104%/108% of the
+     viewport, so they were pinned to the bottom edge of the screen and followed the
+     scroll on a phone: a glow under the content rather than sky behind it. */
   background-image:
     radial-gradient(1.2px 1.2px at 18% 26%, rgba(250,217,182,.5), transparent 55%),
     radial-gradient(1px 1px at 74% 18%, rgba(247,185,138,.4), transparent 55%),
-    radial-gradient(1.3px 1.3px at 46% 62%, rgba(179,167,172,.38), transparent 55%),
-    radial-gradient(70% 60% at 6% 104%, rgba(129,116,148,.26), transparent 70%),
-    radial-gradient(80% 55% at 60% 108%, rgba(185,111,110,.2), transparent 72%);
-  background-size:300px 300px,240px 240px,380px 380px,auto,auto;
-  background-repeat:repeat,repeat,repeat,no-repeat,no-repeat;
+    radial-gradient(1.3px 1.3px at 46% 62%, rgba(179,167,172,.38), transparent 55%);
+  background-size:300px 300px,240px 240px,380px 380px;
+  background-repeat:repeat,repeat,repeat;
 }
 main{position:relative;z-index:1}
 .star{
@@ -809,9 +810,11 @@ html.js .art.art-ready{opacity:1}
      each other (the zones line drifts 0.11 x scroll into the headline), so the words
      stop lagging here. The picture planes keep their own drift; they are clipped. */
   .hero [data-par]{transform:none}
-  /* the night field: repeating star points, a violet cool above and a warm
-   horizon low on the panel. Pure gradients — no images, no JS, nothing to load,
-   and it sits under the text because it is the section's own background. */
+  /* the night field: star points only. The two soft washes it used to carry (a
+     violet at 8% 108% and a warm one at 62% 112%) landed on the plate's bottom edge,
+     right behind the buttons, where they read as a glow rather than as sky; the
+     picture above already carries the scene, so the panel keeps the points and
+     nothing else. Pure gradients: no images, no JS, nothing to load. */
 .hero{
   display:flex;flex-direction:column;padding-bottom:clamp(20px,4vw,36px);min-height:0;
   background-color:var(--ground);
@@ -820,12 +823,10 @@ html.js .art.art-ready{opacity:1}
     radial-gradient(1px 1px at 74% 16%, rgba(247,185,138,.75), transparent 55%),
     radial-gradient(1.6px 1.6px at 46% 58%, rgba(179,167,172,.65), transparent 55%),
     radial-gradient(1px 1px at 88% 72%, rgba(247,185,138,.6), transparent 55%),
-    radial-gradient(1.1px 1.1px at 32% 84%, rgba(250,217,182,.55), transparent 55%),
-    radial-gradient(70% 60% at 8% 108%, rgba(129,116,148,.34), transparent 70%),
-    radial-gradient(80% 55% at 62% 112%, rgba(185,111,110,.28), transparent 72%);
-  background-size:410px 410px,290px 290px,560px 560px,240px 240px,350px 350px,auto,auto;
-  background-position:0 0,140px 60px,30px 200px,80px 40px,190px 120px,0 0,0 0;
-  background-repeat:repeat,repeat,repeat,repeat,repeat,no-repeat,no-repeat;
+    radial-gradient(1.1px 1.1px at 32% 84%, rgba(250,217,182,.55), transparent 55%);
+  background-size:410px 410px,290px 290px,560px 560px,240px 240px,350px 350px;
+  background-position:0 0,140px 60px,30px 200px,80px 40px,190px 120px;
+  background-repeat:repeat,repeat,repeat,repeat,repeat;
 }
   .hero > .wrap{width:auto;border-right:0;background:none;padding-bottom:clamp(26px,4vw,40px)}
   .hero::after{display:none}
@@ -834,15 +835,6 @@ html.js .art.art-ready{opacity:1}
   .plate{position:static;order:-1;width:100%;max-width:1120px;margin-inline:auto;margin-bottom:clamp(18px,3vw,26px);padding-inline:var(--pad)}
   .art{position:relative;inset:auto;aspect-ratio:4/3}
   .plate figcaption{position:static;inset:auto;left:auto;margin-top:9px;padding-inline:0}
-}
-/* The field is a night field: its violet and warm blobs land on the plate's bottom
-   edge, right beside the buttons, and on cream stock they read as a glow behind
-   them. Day gets the flat stock; the picture above already carries the scene. */
-@media (max-width:900px) and (prefers-color-scheme:light){
-  :root:not([data-theme="dark"]) .hero{background-image:none}
-}
-@media (max-width:900px){
-  :root[data-theme="light"] .hero{background-image:none}
 }
 @media (min-width:561px) and (max-width:900px){.art{aspect-ratio:16/9}}
 .zones{
