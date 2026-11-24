@@ -95,9 +95,8 @@ class RalphProgress(Vertical):
             self.request = "Pausing after this iteration…"
         else:
             self.session._ralph_stop_requested = True
-            self.request = "Stopping after this iteration…" if self.run.background else "Stopping…"
-            if not self.run.background:
-                self.cancel()
+            self.request = "Stopping…"
+            self.cancel()
         for button in self.query(Button):
             button.disabled = True
         self._refresh_status()

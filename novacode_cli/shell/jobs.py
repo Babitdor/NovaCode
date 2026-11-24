@@ -25,6 +25,7 @@ import threading
 import time
 from collections import deque
 from collections.abc import Callable, Iterable
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 
 from novacode_cli.shell.output import strip_ansi
@@ -49,6 +50,9 @@ class ForegroundControl:
 # (an older command then ran to its full timeout: the original freeze).
 _live: list[ForegroundControl] = []
 _lock = threading.Lock()
+ralph_stop_signal: ContextVar[threading.Event | None] = ContextVar(
+    "ralph_stop_signal", default=None
+)
 
 
 def set_current(command: str) -> ForegroundControl:

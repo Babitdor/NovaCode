@@ -426,3 +426,47 @@ async def test_background_ralph_requires_permission_and_uses_the_same_completion
     assert sum(type(event).__name__ == "RalphStarted" for event in events) == 1
     assert session.auto_approve
 
+
+async def test_background_stop_cancels_the_active_iteration_and_keeps_checkpoint(
+    tmp_path, monkeypatch
+):
+    import asyncio
+    import threading
+
+    from novacode_cli.commands.ralph_events import RalphFinished
+    from novacode_cli.shell.jobs import ralph_stop_signal
+    from novacode_cli.ui import execution
+
+    session = types.SimpleNamespace(
+        auto_approve=True, thread_id="t", workspace_root=str(tmp_path), background_ralph_tasks={}
+    )
+    started = threading.Event()
+    finished = threading.Event()
+    events = []
+    signals = []
+
+    async def execute(*_args, **_kwargs):
+        signal = ralph_stop_signal.get()
+        signals.append(signal)
+        started.set()
+        await asyncio.Future()
+
+    def report(event):
+        events.append(event)
+        if isinstance(event, RalphFinished):
+            finished.set()
+
+    monkeypatch.setattr(execution, "execute_task", execute)
+    await rh.handle_ralph_command(
+        object(), session, "ralph", None, "do it --background",
+        emit=lambda _message: None, on_event=report,
+    )
+    assert await asyncio.to_thread(started.wait, 5)
+    assert rh.request_ralph_stop(session)
+    assert await asyncio.to_thread(finished.wait, 5)
+    assert signals[0].is_set()
+    assert len(signals) == 1
+    assert events[-1].reason == "stopped"
+    assert events[-1].completed == 0
+    assert rh._load_ralph_checkpoint(str(tmp_path))["completed_iterations"] == 0
+

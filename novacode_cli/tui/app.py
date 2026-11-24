@@ -18994,7 +18994,7 @@ class NovaApp(App):
         import threading
 
         from novacode_cli.commands import ralph_events as rev
-        from novacode_cli.commands.ralph_handler import handle_ralph_command
+        from novacode_cli.commands.ralph_handler import handle_ralph_command, request_ralph_stop
         from novacode_cli.tui.ralph import RalphProgress
 
         args = [composer_task] if composer_task is not None else text.partition(" ")[2].strip()
@@ -19004,6 +19004,8 @@ class NovaApp(App):
         card = None
 
         def stop() -> None:
+            if request_ralph_stop(session) or (card is not None and card.run.background):
+                return
             if self._turn_active and self.session_state is session:
                 from novacode_cli.shell.jobs import request_kill
 

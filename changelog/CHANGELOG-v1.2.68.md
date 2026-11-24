@@ -4,6 +4,7 @@
 
 - Worker previews show startup, live tool calls and results, errors, and requests for input. The Textual preview shows a short worker ID so workers with the same agent name are easy to distinguish.
 - `summon_agent` returns long results from the beginning in pages. The requesting agent can retrieve subsequent pages from the same worker via `next_offset` and sees a truncation flag if the result exceeds the retention limit.
+- Ralph's Stop button cancels the active iteration, including background runs, and keeps the saved checkpoint available for resume.
 
 ## Install or upgrade
 

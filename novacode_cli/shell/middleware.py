@@ -1307,6 +1307,7 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
         from novacode_cli.shell import jobs as _jobs
 
         _ctl = _jobs.set_current(command)
+        ralph_stop = _jobs.ralph_stop_signal.get()
 
         window = OutputWindow(self._max_output_bytes)
         decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
@@ -1323,7 +1324,7 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
 
         try:
             while True:
-                if _ctl.kill.is_set():
+                if _ctl.kill.is_set() or (ralph_stop is not None and ralph_stop.is_set()):
                     await self._terminate_tree(proc, grace=0)
                     status = "error"
                     note = "\n\n[Command killed by user (Esc).]"

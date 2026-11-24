@@ -25,6 +25,7 @@ import threading
 import time
 import uuid
 from collections.abc import Callable
+from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from functools import partial
@@ -38,6 +39,7 @@ from novacode_cli.config.config import COLORS, console
 from novacode_cli.prime_memory import session_directory
 from novacode_cli.prompts import render_template
 from novacode_cli.session.session_persistence import atomic_write
+from novacode_cli.shell.jobs import ralph_stop_signal
 from novacode_cli.shell.processes import kill_process_tree, process_group_options
 from novacode_cli.states.Session import BackgroundRalphTask, RalphTaskStatus
 from novacode_cli.ui.ui_elements import TokenTracker
@@ -400,6 +402,24 @@ def _save_ralph_checkpoint(working_directory: str, record: dict[str, Any]) -> No
     atomic_write(path, json.dumps(record, indent=2))
 
 
+def request_ralph_stop(session_state) -> bool:
+    """Stop the run on its owning event loop, even when it runs in a thread."""
+    session_state._ralph_stop_requested = True
+    run = getattr(session_state, "_ralph_run_control", None)
+    if run is None:
+        return False
+    task, shell_stop = run
+    shell_stop.set()
+
+    def cancel_active_run() -> None:
+        if getattr(session_state, "_ralph_run_control", None) is run:
+            task.cancel()
+
+    with suppress(RuntimeError):
+        task.get_loop().call_soon_threadsafe(cancel_active_run)
+    return True
+
+
 def _stop_and_save_all_ralph_tasks(session_state, emit: EmitFn = _console_emit) -> bool:
     """Request a stop. The current iteration already has a durable checkpoint."""
     if not any(
@@ -407,7 +427,7 @@ def _stop_and_save_all_ralph_tasks(session_state, emit: EmitFn = _console_emit) 
         for task in session_state.background_ralph_tasks.values()
     ):
         return False
-    session_state._ralph_stop_requested = True
+    request_ralph_stop(session_state)
     emit("[dim]Resume the saved Ralph run with /ralph --resume.[/dim]")
     return True
 
@@ -547,6 +567,9 @@ async def _run_ralph_loop(
     reason, detail = "limit", "Iteration limit reached"
     streak = 0
     last_verify = None
+    shell_stop = threading.Event()
+    stop_token = ralph_stop_signal.set(shell_stop)
+    session_state._ralph_run_control = asyncio.current_task(), shell_stop
 
     async def checkpoint() -> None:
         record["completed_iterations"] = completed
@@ -566,6 +589,8 @@ async def _run_ralph_loop(
         validate_progress_paths()
         await asyncio.to_thread((workspace / directory).mkdir, parents=True, exist_ok=True)
         await checkpoint()
+        if getattr(session_state, "_ralph_stop_requested", False):
+            raise asyncio.CancelledError
         conversation = ""
         try:
             from novacode_cli.context import ContextManager
@@ -679,6 +704,8 @@ async def _run_ralph_loop(
             active.status = RalphTaskStatus.CANCELLED if reason == "stopped" else RalphTaskStatus.FAILED
             active.error_message = detail
             active.completed_at = datetime.now(UTC)
+        session_state._ralph_run_control = None
+        ralph_stop_signal.reset(stop_token)
         session_state._ralph_stop_requested = False
         session_state._ralph_checkpoint_requested = False
         if reason != "complete" and not record.get("complete"):
