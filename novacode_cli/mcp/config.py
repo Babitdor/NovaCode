@@ -25,7 +25,7 @@ import time
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
 
 logger = logging.getLogger(__name__)
 
@@ -132,7 +132,7 @@ class MCPServerConfig(BaseModel):
 
     @field_validator("command")
     @classmethod
-    def validate_command(cls, v: str | None) -> str | None:
+    def validate_command(cls, v: str | None, info: ValidationInfo) -> str | None:
         """Reject commands containing shell metacharacters, path traversal, or missing binaries."""
         if v is not None:
             if any(c in v for c in _SHELL_METACHARACTERS):
@@ -141,6 +141,9 @@ class MCPServerConfig(BaseModel):
             if ".." in v:
                 msg = "Path traversal not allowed in command"
                 raise ValueError(msg)
+            if info.context and info.context.get("saved_config"):
+                # Missing executables are connection failures for individual servers.
+                return v
             # Validate binary exists: absolute/relative path must be a file;
             # simple name must be found on PATH.
             if "/" in v or "\\" in v:
@@ -234,6 +237,43 @@ class MCPConfig:
         """Ensure the config directory exists."""
         self.config_path.parent.mkdir(parents=True, exist_ok=True)
 
+    def provision_startup_servers(self) -> None:
+        """Add missing built-in servers without replacing saved definitions."""
+        from novacode_cli.mcp.presets import STARTUP_MCP_SERVERS, create_config_from_preset
+
+        if not shutil.which("uvx"):
+            return
+        lock_path = self.config_path.with_suffix(".lock")
+        try:
+            acquired = _acquire_lock(lock_path)
+        except OSError:
+            logger.warning("Could not lock MCP configuration at %s", self.config_path)
+            return
+        if not acquired:
+            logger.warning("Could not acquire lock for %s", self.config_path)
+            return
+        try:
+            try:
+                data = json.loads(self.config_path.read_text(encoding="utf-8"))
+            except FileNotFoundError:
+                data = {}
+            if not isinstance(data, dict) or not isinstance(data.setdefault("mcpServers", {}), dict):
+                logger.warning("Invalid MCP configuration at %s", self.config_path)
+                return
+            servers = data["mcpServers"]
+            defaults = {
+                name: config.model_dump(exclude_none=True)
+                for name in STARTUP_MCP_SERVERS
+                if name not in servers and (config := create_config_from_preset(name)) is not None
+            }
+            if defaults:
+                servers.update(defaults)
+                _atomic_write_json(self.config_path, data)
+        except (OSError, ValueError):
+            logger.warning("Could not provision MCP defaults in %s", self.config_path)
+        finally:
+            _release_lock(lock_path)
+
     def load(self) -> dict[str, MCPServerConfig]:
         """Load MCP server configurations from disk.
 
@@ -245,12 +285,15 @@ class MCPConfig:
             return {}
 
         try:
-            with self.config_path.open() as f:
+            with self.config_path.open(encoding="utf-8") as f:
                 data = json.load(f)
 
             servers = data.get("mcpServers", {})
-            return {name: MCPServerConfig(**config) for name, config in servers.items()}
-        except (json.JSONDecodeError, ValueError) as e:
+            return {
+                name: MCPServerConfig.model_validate(config, context={"saved_config": True})
+                for name, config in servers.items()
+            }
+        except (OSError, ValueError, TypeError, AttributeError) as e:
             logger.warning(
                 "Failed to load MCP config from %s: %s",
                 self.config_path,

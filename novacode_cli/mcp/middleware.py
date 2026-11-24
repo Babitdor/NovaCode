@@ -12,6 +12,7 @@ import contextlib
 import hashlib
 import json
 import logging
+import os
 import time
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -25,11 +26,14 @@ from langchain.agents.middleware.types import (
 )
 from langchain_core.tools import BaseTool
 from langgraph.runtime import Runtime
+from mcp import StdioServerParameters
 from mcp.client.session import ClientSession
+from mcp.client.stdio import stdio_client
 from mcp.types import Tool as MCPTool
 
 from novacode_cli.mcp.client import MultiServerMCPClient
 from novacode_cli.mcp.config import MCPConfig
+from novacode_cli.mcp.presets import MCP_PRESETS, STARTUP_MCP_SERVERS
 from novacode_cli.prompts import render_template
 
 logger = logging.getLogger(__name__)
@@ -79,7 +83,22 @@ class _PersistentSessionPool:
         from langchain_mcp_adapters.sessions import create_session
 
         try:
-            async with create_session(connection) as session:  # type: ignore[arg-type]
+            async with contextlib.AsyncExitStack() as stack:
+                preset = MCP_PRESETS[server]["config"] if server in STARTUP_MCP_SERVERS else {}
+                if (
+                    preset
+                    and not connection.get("env")
+                    and all(connection.get(key) == preset[key] for key in ("command", "args", "transport"))
+                ):
+                    # Child stderr must not draw over either TUI during background startup.
+                    errlog = stack.enter_context(open(os.devnull, "w", encoding="utf-8"))
+                    params = StdioServerParameters(
+                        command=connection["command"], args=connection["args"]
+                    )
+                    streams = await stack.enter_async_context(stdio_client(params, errlog=errlog))
+                    session = await stack.enter_async_context(ClientSession(*streams))
+                else:
+                    session = await stack.enter_async_context(create_session(connection))
                 await session.initialize()
                 if not ready.done():
                     ready.set_result(session)
@@ -133,8 +152,9 @@ class _PersistentSessionPool:
         if closing is not None:
             closing.set()
         task = self._owners.pop(server, None)
-        if task is not None and not task.done():
-            task.cancel()
+        if task is not None:
+            if not task.done():
+                task.cancel()
             with contextlib.suppress(BaseException):
                 await task
 
@@ -535,6 +555,20 @@ class MCPMiddleware(AgentMiddleware):
             self._discovery_task = asyncio.create_task(self._ensure_tools_discovered())
         return self._discovery_task
 
+    async def _discover_server(
+        self, name: str, connection: dict[str, Any], *, keep_session: bool
+    ) -> list[MCPTool]:
+        if not keep_session or name not in STARTUP_MCP_SERVERS or connection.get("transport") != "stdio":
+            return await _fetch_raw_tools(connection)
+        from langchain_mcp_adapters.tools import _list_all_tools
+
+        session = await self._session_pool.get(name, connection)
+        try:
+            return await _list_all_tools(session)
+        except BaseException:
+            await self._session_pool.drop(name)
+            raise
+
     async def retry_server(self, name: str) -> bool:
         """Reconnect one server, bypassing cached schemas; keep peers untouched."""
         from novacode_cli.mcp.client import build_mcp_config_dict
@@ -548,7 +582,7 @@ class MCPMiddleware(AgentMiddleware):
             try:
                 await self._session_pool.drop(name)
                 async with asyncio.timeout(_DISCOVERY_TIMEOUT):
-                    raw = await _fetch_raw_tools(connection)
+                    raw = await self._discover_server(name, connection, keep_session=True)
                 self._tools_cache[:] = [t for t in self._tools_cache if t["server"] != name]
                 tools = self._convert_raw_tools(name, connection, raw)
                 self.tools[:] = [t for t in self.tools if (t.metadata or {}).get("nova_mcp_server") != name]
@@ -588,7 +622,7 @@ class MCPMiddleware(AgentMiddleware):
             if self._tools_discovered:
                 return
             try:
-                await self._discover_tools_async()
+                await self._discover_tools_async(keep_startup_sessions=True)
             except Exception as exc:
                 self.connection_errors["setup"] = type(exc).__name__
             self._tools_discovered = True
@@ -645,6 +679,16 @@ class MCPMiddleware(AgentMiddleware):
         # discovery agree and a filtered tool is never registered at all.
         server_config = self.mcp_config.get_server(server_name)
         allowed = server_config.tools if server_config is not None else None
+        builtin_browser_use = (
+            server_name == "browser-use"
+            and server_config is not None
+            and not server_config.disabled
+            and all(
+                getattr(server_config, key) == value
+                for key, value in MCP_PRESETS["browser-use"]["config"].items()
+            )
+            and not server_config.env
+        )
         if allowed is not None:
             raw_tools = [t for t in raw_tools if any(fnmatchcase(t.name, p) for p in allowed)]
 
@@ -681,6 +725,7 @@ class MCPMiddleware(AgentMiddleware):
                 **(tool.metadata or {}), "nova_mcp_server": server_name,
                 "nova_mcp_tool": raw.name,
                 "nova_mcp_output_schema": raw.outputSchema,
+                "nova_builtin_browser_use": builtin_browser_use,
             }
 
         # Build metadata cache with correct server attribution
@@ -708,15 +753,13 @@ class MCPMiddleware(AgentMiddleware):
 
         return server_tools
 
-    async def _discover_tools_async(self) -> None:
+    async def _discover_tools_async(self, *, keep_startup_sessions: bool = False) -> None:
         """Async implementation of tool discovery.
 
         Servers whose tool schemas are in the disk cache (and whose connection
-        config hasn't changed) are rebuilt WITHOUT connecting — this removes
-        several seconds of stdio-server cold starts from every boot. Only
-        cache misses do live discovery, parallelised with a concurrency cap.
-        Cached servers are re-discovered in a background thread afterwards so
-        the cache is at most one boot stale.
+        config hasn't changed) are rebuilt without connecting. The startup
+        servers and cache misses connect immediately in parallel. Stale
+        cache entries refresh in the background.
         """
         from novacode_cli.mcp.client import build_mcp_config_dict
 
@@ -742,7 +785,11 @@ class MCPMiddleware(AgentMiddleware):
         to_discover: dict[str, dict[str, Any]] = {}
         for name, conn in config_dict.items():
             entry = schema_cache.get(name)
-            if isinstance(entry, dict) and entry.get("fingerprint") == _connection_fingerprint(conn):
+            if (
+                name not in STARTUP_MCP_SERVERS
+                and isinstance(entry, dict)
+                and entry.get("fingerprint") == _connection_fingerprint(conn)
+            ):
                 try:
                     cached_raw[name] = [MCPTool.model_validate(t) for t in entry["tools"]]
                     continue
@@ -750,9 +797,9 @@ class MCPMiddleware(AgentMiddleware):
                     pass
             to_discover[name] = conn
 
-        all_tools: list[BaseTool] = []
+        self.tools.clear()
         for name, raw in cached_raw.items():
-            all_tools.extend(self._convert_raw_tools(name, config_dict[name], raw))
+            self.tools.extend(self._convert_raw_tools(name, config_dict[name], raw))
             self.server_status[name] = "cached"
 
         if to_discover:
@@ -767,7 +814,10 @@ class MCPMiddleware(AgentMiddleware):
                     self.server_status[server_name] = "connecting"
                     try:
                         async with asyncio.timeout(_DISCOVERY_TIMEOUT):
-                            raw = await _fetch_raw_tools(connection)
+                            raw = await self._discover_server(
+                                server_name, connection, keep_session=keep_startup_sessions
+                            )
+                        self.tools.extend(self._convert_raw_tools(server_name, connection, raw))
                         self.server_status[server_name] = "ready"
                         self.connection_errors.pop(server_name, None)
                         return server_name, raw
@@ -789,9 +839,6 @@ class MCPMiddleware(AgentMiddleware):
                 server_name, raw = r
                 if raw is None:
                     continue
-                all_tools.extend(
-                    self._convert_raw_tools(server_name, to_discover[server_name], raw)
-                )
                 schema_cache[server_name] = {
                     "fingerprint": _connection_fingerprint(to_discover[server_name]),
                     "tools": [t.model_dump(mode="json") for t in raw],
@@ -800,7 +847,6 @@ class MCPMiddleware(AgentMiddleware):
             _save_schema_cache(schema_cache)
 
         # Store all tools for the agent
-        self.tools[:] = all_tools
         self._mcp_section_cache = None
 
         # Mark discovery as complete to avoid re-discovering on every message

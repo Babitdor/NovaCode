@@ -1,12 +1,12 @@
 ### assistant
 Nova
 Plan
-• Read the failing test
-• Run pytest -q
-• Report the delta between runs
+
+1. Read the failing test
+2. Run pytest -q
+3. Report the delta between runs
+
 Nothing is broken yet — verify first.
-
-
 
 
 
@@ -33,24 +33,24 @@ Nothing is broken yet — verify first.
 ╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ ❯ Ask Nova anything…                                                                             │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
-● recording-model  nova  working
+● recording-model  ⠋ Working  nova
 ### tool
 Nova
 Plan
-• Read the failing test
-• Run pytest -q
-• Report the delta between runs
+
+1. Read the failing test
+2. Run pytest -q
+3. Report the delta between runs
+
 Nothing is broken yet — verify first.
 
-✓ ⚡  shell: pytest -q
-   28 passed
-   collected 28 items
-   tests/test_alpha.py .......  [ 25%]
-   …
-   final line: 28 passed
-   [ctrl+o to expand]
-
-
+Tools
+  ✓ shell: pytest -q  ▸
+    ↳ 28 passed
+    collected 28 items
+    tests/test_alpha.py .......  [ 25%]
+    … 3 hidden lines · Ctrl+O
+    final line: 28 passed
 
 
 
@@ -69,22 +69,24 @@ Nothing is broken yet — verify first.
 ╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ ❯ Ask Nova anything…                                                                             │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
-● recording-model  nova  working  todos 1/2
+● recording-model  ⠋ Working  nova  todos 1/2
 ### modal
 Nova
 Plan
-• Read the failing test
-• Run pytest -q
-• Report the delta between runs
-Nothing is broken yet — verify first.
 
-✓ ⚡  shell: ┌ approval ────────────────────────────────────────────────────────────────┐
-   28 passed│Approve tool call?                                                        │
-   collected│                                                                          │
-   tests/tes│shell: pytest -q in the project root {"command":"pytest -q"}              │
-   …        │                                                                          │
-   final lin│y approve · n reject · Esc rejects remaining                              │
-   [ctrl+o t│                                                                          │
+1. Read the failing test
+2. Run pytest -q
+3. Report the delta between runs
+
+Nothing is b┌ approval ────────────────────────────────────────────────────────────────┐
+            │Approve tool call?                                                        │
+Tools       │                                                                          │
+  ✓ shell: p│shell: pytest -q in the project root {"command":"pytest -q"}              │
+    ↳ 28 pas│                                                                          │
+    collecte│                                                                          │
+    tests/te│                                                                          │
+    … 3 hidd│                                                                          │
+    final li│                                                                          │
             │                                                                          │
             │                                                                          │
             │                                                                          │
@@ -95,9 +97,7 @@ Nothing is broken yet — verify first.
             │                                                                          │
             │                                                                          │
             │                                                                          │
-            │                                                                          │
-            │                                                                          │
-            │                                                                          │
+            │y approve · n reject · ↑↓ scroll · Esc rejects remaining                  │
             └──────────────────────────────────────────────────────────────────────────┘
 
 
@@ -105,22 +105,25 @@ Nothing is broken yet — verify first.
 ╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ ❯ Ask Nova anything…                                                                             │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
-● recording-model  nova  working  todos 1/2
+● recording-model  ⠋ Working  nova  todos 1/2
 ### final
 Nova
 Plan
-• Read the failing test
-• Run pytest -q
-• Report the delta between runs
-Nothing is broken yet — verify first.
 
-✓ ⚡  shell: ┌ approval ────────────────────────────────────────────────────────────────┐
-   28 passed│Approve tool call?                                                        │
-   collected│                                                                          │
-   tests/tes│shell: pytest -q in the project root {"command":"pytest -q"}              │
-   …        │                                                                          │
-   final lin│y approve · n reject · Esc rejects remaining                              │
-   [ctrl+o t│                                                                          │
+1. Read the failing test
+2. Run pytest -q
+3. Report the delta between runs
+
+Nothing is b┌ approval ────────────────────────────────────────────────────────────────┐
+            │Approve tool call?                                                        │
+Tools       │                                                                          │
+  ✓ shell: p│shell: pytest -q in the project root {"command":"pytest -q"}              │
+    ↳ 28 pas│                                                                          │
+    collecte│                                                                          │
+    tests/te│                                                                          │
+    … 3 hidd│                                                                          │
+    final li│                                                                          │
+            │                                                                          │
 Nova        │                                                                          │
 All green: 2│                                                                          │
             │                                                                          │
@@ -130,10 +133,7 @@ Thread    re│                                                                 
 Model     re│                                                                          │
 Cwd       C:│                                                                          │
 Approval  ma│                                                                          │
-Todos     1/│                                                                          │
-            │                                                                          │
-            │                                                                          │
-            │                                                                          │
+Todos     1/│y approve · n reject · ↑↓ scroll · Esc rejects remaining                  │
             └──────────────────────────────────────────────────────────────────────────┘
 
 

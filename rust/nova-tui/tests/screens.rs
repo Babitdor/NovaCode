@@ -1028,19 +1028,19 @@ fn a_collapsed_tool_card_hints_at_ctrl_o_and_expand_all_shows_everything() {
     // Collapsed: head lines and the final line stay visible, the middle does
     // not, and the card advertises the chord.
     let text = screen_text(&mut state);
-    assert!(text.contains("[ctrl+o to expand]"));
+    assert!(text.contains("1 hidden line · Ctrl+O"));
     assert!(text.contains("four"));
     assert!(!text.contains("three"));
 
     // Expansion is global: every line shows and the hint disappears.
-    state.expand_all = true;
+    nova_tui::ui::transcript::toggle_all_tools(&mut state);
     let text = screen_text(&mut state);
     assert!(text.contains("three"));
-    assert!(!text.contains("[ctrl+o to expand]"));
+    assert!(!text.contains("hidden line · Ctrl+O"));
 
     // Pressing the chord again restores the collapsed rendering.
-    state.expand_all = false;
+    nova_tui::ui::transcript::toggle_all_tools(&mut state);
     let text = screen_text(&mut state);
-    assert!(text.contains("[ctrl+o to expand]"));
+    assert!(text.contains("1 hidden line · Ctrl+O"));
     assert!(!text.contains("three"));
 }

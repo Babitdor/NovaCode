@@ -39,6 +39,18 @@ First-run setup guides provider configuration and workspace approval. Use `/auth
 
 If `nova` is not found after installation, run `uv tool update-shell` and restart your shell. Check the installed version with `nova --version`.
 
+### Optional Rust terminal UI
+
+Download the Rust client for your platform from the GitHub release matching your NovaCode version. Set `NOVA_TUI_BIN` to the downloaded file, or place it in `~/.nova/bin` as `nova-tui` (`nova-tui.exe` on Windows). On macOS and Linux, make the file executable with `chmod +x`. [GitHub releases](https://github.com/Babitdor/NovaCode/releases)
+
+```sh
+nova --ratatui
+```
+
+The default `nova` command opens Textual. `nova --ui ratatui` is also supported. If the Rust client is missing, Nova prints setup instructions and opens Textual.
+
+In the Rust UI, click a tool's header to expand its output and file diffs. Use **Ctrl+O** to toggle all tool details and **Page Up** or **Page Down** to scroll the transcript.
+
 ### Updates
 
 Run `/update` inside Nova or upgrade from the shell:

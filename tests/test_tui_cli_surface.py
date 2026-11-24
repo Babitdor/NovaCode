@@ -43,6 +43,18 @@ def test_the_flag_beats_the_environment(monkeypatch: pytest.MonkeyPatch) -> None
     assert _parse(monkeypatch, ["--ui", "textual"]).ui == "textual"
 
 
+def test_ratatui_shorthand_selects_the_rust_frontend(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NOVA_UI", "textual")
+    assert _parse(monkeypatch, ["--ratatui"]).ui == "ratatui"
+    assert _parse(monkeypatch, ["--ui", "ratatui"]).ui == "ratatui"
+
+
+def test_frontend_flags_cannot_conflict(monkeypatch: pytest.MonkeyPatch) -> None:
+    with pytest.raises(SystemExit) as exit_info:
+        _parse(monkeypatch, ["--ui", "textual", "--ratatui"])
+    assert exit_info.value.code == 2
+
+
 def test_serve_defaults_are_taken(monkeypatch: pytest.MonkeyPatch) -> None:
     args = _parse(monkeypatch, ["--serve"])
     assert args.serve is True

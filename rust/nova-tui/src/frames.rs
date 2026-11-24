@@ -124,6 +124,10 @@ pub enum UiEvent {
         operation: String,
         path: Option<String>,
         full_output: String,
+        diff: String,
+        added: u64,
+        removed: u64,
+        failed: bool,
     },
     TodoUpdate(Vec<Todo>),
     StatusUpdate(Option<String>),
@@ -361,13 +365,20 @@ pub fn decode_ui_event(doc: &Value) -> UiEvent {
             call_id: opt_text(&data, "call_id"),
         },
         "FileOp" => {
-            let record = data.get("record").cloned().unwrap_or(Value::Null);
+            let record = &data["record"];
             UiEvent::FileOp {
                 call_id: opt_text(&data, "call_id"),
-                parent_call_id: opt_text(&data, "parent_call_id"),
-                operation: text(&record, "operation"),
-                path: opt_text(&record, "physical_path"),
+                parent_call_id: opt_text(&data, "parent_call_id")
+                    .or_else(|| opt_text(record, "parent_call_id")),
+                operation: opt_text(record, "operation")
+                    .unwrap_or_else(|| text(record, "tool_name")),
+                path: opt_text(record, "display_path")
+                    .or_else(|| opt_text(record, "physical_path")),
                 full_output: text(&data, "full_output"),
+                diff: text(record, "diff"),
+                added: count(&record["metrics"], "lines_added"),
+                removed: count(&record["metrics"], "lines_removed"),
+                failed: text(record, "status") == "error" || opt_text(record, "error").is_some(),
             }
         }
         "TodoUpdate" => {

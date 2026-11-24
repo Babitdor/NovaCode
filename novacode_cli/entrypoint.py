@@ -1,8 +1,40 @@
 """Lightweight console entry point for commands that do not need an agent."""
 
 import sys
+from contextlib import nullcontext
 
 from novacode_cli.skills.upstream import add_arguments, run_skills_cli
+
+
+def _startup_animation():
+    """Animate the slow runtime import on an interactive terminal."""
+    args = sys.argv[1:]
+    if (
+        not all(stream.isatty() for stream in (sys.stdin, sys.stdout, sys.stderr))
+        or {"--headless", "--serve", "--session-worker"}.intersection(args)
+        or any(arg.startswith(("-p", "--print")) for arg in args)
+        or "--mode=pipe" in args
+        or any(arg == "--mode" and args[i + 1 : i + 2] == ["pipe"] for i, arg in enumerate(args))
+    ):
+        return nullcontext()
+
+    from rich.console import Console
+    from rich.live import Live
+    from rich.spinner import Spinner
+    from rich.text import Text
+
+    return Live(
+        Spinner(
+            "dots",
+            Text.assemble(("NOVA", "bold cyan"), ("  Preparing workspace", "dim")),
+            style="bright_magenta",
+        ),
+        console=Console(stderr=True),
+        refresh_per_second=16,
+        transient=True,
+        redirect_stdout=False,
+        redirect_stderr=False,
+    )
 
 
 def cli_main() -> None:
@@ -56,7 +88,8 @@ def cli_main() -> None:
 
     try:
         with installation_lock(exclusive=False):
-            from novacode_cli.main import cli_main as main
+            with _startup_animation():
+                from novacode_cli.main import cli_main as main
 
             main()
     except UpdateBlockedError as error:

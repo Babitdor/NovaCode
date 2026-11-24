@@ -1,9 +1,6 @@
 """Lightweight startup phase tracing for boot-time diagnostics.
 
-The first user-visible line of a Nova launch is a bare ``· nova: loading…`` and
-the first status the TUI renders is the animated boot sequence — the gap in
-between is where a cold start can stall without any feedback. This module
-records the phase boundaries of the startup path so the tail of
+This module records the phase boundaries behind the startup animation so the tail of
 ``~/.nova/logs/startup.log`` shows exactly where a launch stopped.
 
 Kept deliberately tiny: a timestamped line per phase, no subscribers, no state.

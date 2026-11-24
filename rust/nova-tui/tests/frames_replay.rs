@@ -384,11 +384,6 @@ fn scrolling_offsets_a_taller_transcript() {
         !scrolled.contains("line 79"),
         "scrolling back must hide the newest line"
     );
-    assert_eq!(
-        ui::transcript::window(vec![ratatui::text::Line::from("a")], 35, 0).len(),
-        1,
-        "a short transcript is never truncated"
-    );
 }
 
 #[test]

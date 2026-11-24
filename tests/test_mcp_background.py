@@ -8,6 +8,8 @@ import pytest
 from mcp.types import Tool
 
 from novacode_cli.mcp import middleware as module
+from novacode_cli.mcp.client import build_mcp_config_dict
+from novacode_cli.mcp.config import MCPConfig
 
 
 @pytest.fixture
@@ -49,6 +51,83 @@ async def test_startup_is_nonblocking_and_discovery_is_shared(middleware, monkey
     await asyncio.wait_for(task, 2)
     assert mock.await_count == 2
     assert set(middleware.server_status.values()) == {"ready"}
+
+
+def test_startup_provisioning_preserves_overrides_and_invalid_files(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "novacode_cli.mcp.config.shutil.which", lambda name: name if name == "uvx" else None
+    )
+    path = tmp_path / "mcp.json"
+    config = MCPConfig(path)
+    saved_serena = {"transport": "stdio", "command": "custom", "disabled": True}
+    path.write_text(json.dumps({"mcpServers": {"serena": saved_serena}}), encoding="utf-8")
+    config.provision_startup_servers()
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert saved["mcpServers"]["serena"] == saved_serena
+    assert config.get_server("browser-use").tools == ["browser_screenshot"]
+    assert set(build_mcp_config_dict(config)) == {"browser-use"}
+
+    path.write_text("{invalid", encoding="utf-8")
+    config.provision_startup_servers()
+    assert path.read_text(encoding="utf-8") == "{invalid"
+
+
+async def test_default_servers_reconnect_from_warm_cache_and_unlock_agents(
+    tmp_path, monkeypatch
+):
+    from types import SimpleNamespace
+
+    from novacode_cli.agents.profiles import profile_readiness, profile_tool_allowed
+
+    monkeypatch.setattr("novacode_cli.mcp.config.shutil.which", lambda name: name)
+    monkeypatch.setattr(
+        "novacode_cli.config.nova_config.NovaConfig",
+        lambda: SimpleNamespace(
+            get=lambda key, default=None: default,
+            get_browser_mode_servers=lambda: ["obscura"],
+        ),
+    )
+    middleware = module.MCPMiddleware(tmp_path / "mcp.json")
+    middleware.mcp_config.provision_startup_servers()
+    monkeypatch.setattr("novacode_cli.mcp.get_shared_mcp_middleware", lambda: middleware)
+    raw = {
+        "serena": [Tool(name="find_symbol", inputSchema={"type": "object"})],
+        "browser-use": [
+            Tool(name=name, inputSchema={"type": "object"})
+            for name in ("browser_screenshot", "browser_exec")
+        ],
+    }
+    cache = {
+        name: {
+            "fingerprint": module._connection_fingerprint(connection),
+            "tools": [tool.model_dump(mode="json") for tool in raw[name]],
+        }
+        for name, connection in build_mcp_config_dict(middleware.mcp_config).items()
+    }
+    monkeypatch.setattr(module, "_load_schema_cache", lambda: cache)
+    monkeypatch.setattr(module, "_save_schema_cache", lambda _: None)
+    connect = AsyncMock(side_effect=lambda name, _: SimpleNamespace(tools=raw[name]))
+    monkeypatch.setattr(middleware._session_pool, "get", connect)
+    monkeypatch.setattr(
+        "langchain_mcp_adapters.tools._list_all_tools",
+        AsyncMock(side_effect=lambda session: session.tools),
+    )
+
+    middleware.prepare_cached_tools()
+    assert profile_readiness("nora")
+    assert profile_readiness("serena")
+    await middleware.start_background_discovery()
+    assert connect.await_count == 2
+    assert profile_readiness("nora") is None
+    assert profile_readiness("serena") is None
+    assert {tool.name for tool in middleware.tools} == {
+        "serena_find_symbol",
+        "browser-use_browser_screenshot",
+    }
+    screenshot = next(tool for tool in middleware.tools if tool.name.startswith("browser-use"))
+    assert not profile_tool_allowed(
+        "nora", screenshot.name, {**screenshot.metadata, "nova_builtin_browser_use": False}
+    )
 
 
 async def test_retry_bypasses_cache_and_preserves_other_tools(middleware, monkeypatch):

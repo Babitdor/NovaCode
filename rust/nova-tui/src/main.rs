@@ -308,16 +308,21 @@ fn run(
         state.status.theme = palette.name.clone();
         Theme::from_palette(&palette, base)
     });
+    let started = Instant::now();
+    let mut previous_frame = started;
     loop {
-        state.tick = state.tick.wrapping_add(1);
+        let now = Instant::now();
+        state.tick = (now.duration_since(started).as_millis() / TICK.as_millis()) as u64;
+        let elapsed = now.duration_since(previous_frame).as_secs_f64().min(0.25);
+        previous_frame = now;
         // The sprite animates on the client's own clock, so it keeps moving
         // without a server frame per step.
         if let Some(banner) = state.home.as_mut() {
-            banner.advance(TICK.as_secs_f64());
+            banner.advance(elapsed);
         }
         if let Some(sprite) = state.avatar.as_mut() {
             let busy = state.turn_running || !state.streaming.is_empty();
-            sprite.advance(TICK.as_secs_f64(), busy);
+            sprite.advance(elapsed, busy);
         }
         terminal.draw(|frame| ui::draw(frame, state, &theme))?;
 
@@ -352,10 +357,16 @@ fn run(
                     state.hovered_control =
                         ui::composer::control_at(state, areas[3], mouse.column, mouse.row);
                     match mouse.kind {
-                        MouseEventKind::Down(MouseButton::Left) => state
-                            .hovered_control
-                            .map(|control| vec![ui::composer::activate(state, control)])
-                            .unwrap_or_default(),
+                        MouseEventKind::Down(MouseButton::Left) => {
+                            if let Some(control) = state.hovered_control {
+                                vec![ui::composer::activate(state, control)]
+                            } else {
+                                if areas[0].contains((mouse.column, mouse.row).into()) {
+                                    ui::transcript::toggle_tool_at(state, mouse.row);
+                                }
+                                Vec::new()
+                            }
+                        }
                         MouseEventKind::ScrollUp => {
                             state.scroll = state.scroll.saturating_add(3);
                             Vec::new()
@@ -554,7 +565,7 @@ fn handle_key(state: &mut AppState, key: &KeyEvent) -> Vec<Effect> {
         }
         KeyCode::Char('o') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             // ctrl+o: expand/collapse every tool card, like the other coding CLIs.
-            state.expand_all = !state.expand_all;
+            ui::transcript::toggle_all_tools(state);
         }
         KeyCode::Char(digit @ '1'..='9') if key.modifiers.contains(KeyModifiers::ALT) => {
             // Alt+<n> picks a tab by position, matching the number the tab bar

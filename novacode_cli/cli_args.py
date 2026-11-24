@@ -663,12 +663,20 @@ def parse_args() -> argparse.Namespace:  # noqa: PLR0912, PLR0915 — one existi
     parser.add_argument("--serve-port", type=int, default=0, help=argparse.SUPPRESS)
     parser.add_argument("--serve-token", default=None, help=argparse.SUPPRESS)
     _env_ui = (os.environ.get("NOVA_UI") or "textual").strip().lower()
-    parser.add_argument(
+    frontend = parser.add_mutually_exclusive_group()
+    frontend.add_argument(
         "--ui",
         choices=("textual", "ratatui"),
         default=_env_ui if _env_ui in ("textual", "ratatui") else "textual",
         help="Terminal UI frontend: 'textual' (default) or 'ratatui' (Rust client). "
         "The NOVA_UI environment variable sets the same default.",
+    )
+    frontend.add_argument(
+        "--ratatui",
+        dest="ui",
+        action="store_const",
+        const="ratatui",
+        help="Start the Rust terminal UI. Equivalent to --ui ratatui.",
     )
     _add_agent_server_args(parser)
     parser.add_argument(

@@ -1,7 +1,6 @@
 //! One line of live facts: model, workspace, context gauge, activity.
 
 use ratatui::layout::Rect;
-use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
@@ -9,6 +8,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::state::AppState;
 use crate::theme::Theme;
+use crate::ui::activity;
 
 /// Draw the status bar into *area*.
 pub fn draw(frame: &mut Frame, area: Rect, state: &AppState, theme: &Theme) {
@@ -36,15 +36,17 @@ pub fn line(state: &AppState, theme: &Theme, width: usize) -> Line<'static> {
             theme.success(),
         ),
         Span::styled(state.status.model_label(), theme.body()),
-        Span::styled("  ", theme.muted()),
-        Span::styled(state.status.cwd_label(), theme.muted()),
     ];
-    if state.turn_running {
+    if let Some(label) = activity::label(state) {
         spans.push(Span::styled(
-            "  working",
-            Style::default().fg(theme.activity),
+            format!("  {} {label}", activity::spinner(state.tick)),
+            theme.muted().fg(theme.activity),
         ));
     }
+    spans.push(Span::styled(
+        format!("  {}", state.status.cwd_label()),
+        theme.muted(),
+    ));
     if !state.status.theme.is_empty() {
         spans.push(Span::styled(
             format!("  {}", state.status.theme),

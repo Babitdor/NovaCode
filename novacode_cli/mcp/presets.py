@@ -8,6 +8,8 @@ from typing import Any
 
 from novacode_cli.mcp.config import MCPServerConfig
 
+STARTUP_MCP_SERVERS = ("serena", "browser-use")
+
 
 def _google_workspace_preset(name: str, service: str, port: int) -> dict[str, Any]:
     """Use service-scoped Workspace MCP tools with local Google OAuth setup."""
@@ -171,12 +173,18 @@ MCP_PRESETS: dict[str, dict[str, Any]] = {
             "command": "uvx",
             "args": [
                 "--from",
-                "git+https://github.com/oraios/serena",
+                "git+https://github.com/oraios/serena@23c06ff715409b2e9dc9be7ca26b7b2fbf356b7c",
                 "serena",
                 "start-mcp-server",
                 "--project-from-cwd",
                 "--context",
                 "agent",
+                "--open-web-dashboard",
+                "false",
+                "--enable-gui-log-window",
+                "false",
+                "--log-level",
+                "ERROR",
             ],
             "env": {},
         },

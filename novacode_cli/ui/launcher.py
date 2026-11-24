@@ -134,7 +134,8 @@ async def launch_ratatui(spec: SessionSpec) -> bool:
     if binary is None:
         console.print(
             "[yellow]nova-tui (the Rust client) is not installed.[/yellow] "
-            "[dim]Set NOVA_TUI_BIN, or build it with 'cargo build --release -p nova-tui'. "
+            "[dim]Download the matching binary from https://github.com/Babitdor/NovaCode/releases "
+            "and set NOVA_TUI_BIN to its path. "
             "Starting the Textual UI instead.[/dim]"
         )
         return False

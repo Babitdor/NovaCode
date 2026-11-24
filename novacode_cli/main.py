@@ -54,15 +54,6 @@ warnings.filterwarnings(
     "ignore",
     message="Using fallback GPT-2 tokenizer for token counting",
 )
-# Instant boot feedback — printed BEFORE the heavy imports below (langchain,
-# deepagents, anthropic ≈ several seconds cold) so the terminal isn't blank
-# while Python loads. stderr + isatty keeps piped/scripted output clean.
-import sys as _sys
-
-if _sys.stderr.isatty():
-    _sys.stderr.write("\x1b[2m· nova: loading…\x1b[0m\n")
-    _sys.stderr.flush()
-
 from novacode_cli.startup_trace import mark
 
 mark("heavy_imports_start")
@@ -100,7 +91,7 @@ log_dir.mkdir(parents=True, exist_ok=True)
 log_file = log_dir / "nova.log"
 
 # Configure file handler for warnings
-if "pytest" in _sys.modules:
+if "pytest" in sys.modules:
     # Tests raise on purpose ("model down", "boom"); those tracebacks do not
     # belong in the user's log, where they bury the real errors.
     file_handler: logging.Handler = logging.NullHandler()
@@ -812,7 +803,7 @@ async def _run_agent_session(
         session_state.headless_exit_code = exit_code
         return
 
-    # Textual TUI — the only interactive UI.
+    # Shared setup for both interactive frontends.
     from novacode_cli.input_utils import ImageTracker
     from novacode_cli.tui import run_tui
     from novacode_cli.ui.ui_elements import TokenTracker
@@ -875,9 +866,15 @@ async def _run_agent_session(
         session_state.headless_exit_code = _serve_code
         return
     if _frontend == "ratatui":
+        from novacode_cli.mcp import get_shared_mcp_middleware
         from novacode_cli.ui.launcher import launch_ratatui
 
+        mcp = get_shared_mcp_middleware()
+        mcp.start_background_discovery()
         if await launch_ratatui(_frontend_spec()):
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(mcp.aclose(), timeout=5)
+            await _shutdown_background_services(session_state, agent=agent)
             return
         # The launcher printed why; Textual takes over so a machine without the
         # Rust binary still gets a working session.
@@ -1100,6 +1097,10 @@ async def main(
         console.print()
         sys.exit(1)
     mark("path_approval")
+
+    from novacode_cli.mcp.config import MCPConfig
+
+    await asyncio.to_thread(lambda: MCPConfig().provision_startup_servers())
 
     # Hydrate API keys stored in the OS keychain into the environment so model
     # clients (which read os.environ) can find them — keys may live only in the

@@ -16,6 +16,7 @@ import pytest
 
 from novacode_cli.server import frames
 from novacode_cli.server.host import SessionSpec
+from novacode_cli.server.transport import HANDSHAKE_TIMEOUT
 from novacode_cli.ui import launcher
 
 if TYPE_CHECKING:
@@ -85,7 +86,7 @@ class _FakeProcess:
         checks["hello"] = (await _recv(reader)).get("t")
         writer.write(frames.encode_line({"t": "auth", "token": token}))
         await writer.drain()
-        checks["ready"] = (await _recv(reader, skip="notice")).get("t")
+        checks["ready"] = (await _recv(reader, skip="notice", deadline=HANDSHAKE_TIMEOUT)).get("t")
         writer.close()
         await writer.wait_closed()
         self.returncode = 0
@@ -95,6 +96,7 @@ class _FakeProcess:
         self.killed = True
 
 
+@pytest.mark.timeout(45)
 async def test_the_client_connects_before_the_launcher_waits(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

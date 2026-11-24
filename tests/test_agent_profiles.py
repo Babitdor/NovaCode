@@ -95,6 +95,8 @@ def test_profile_tools_and_mcp_discovery(monkeypatch):
     assert profile_readiness("serena") is None
     assert profile_readiness("nora") is None
     mcp.server_status["obscura"] = "cached"
+    assert profile_readiness("nora") is None
+    mcp.server_status["browser-use"] = "cached"
     assert "/mcp" in profile_readiness("nora")
     token = current_profile.set("serena")
     try:

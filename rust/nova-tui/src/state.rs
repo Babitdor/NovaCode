@@ -150,7 +150,18 @@ pub struct ToolCard {
     pub full_output: String,
     pub is_error: bool,
     pub finished: bool,
-    pub expanded: bool,
+    pub expanded: Option<bool>,
+    pub files: Vec<FileChange>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileChange {
+    pub operation: String,
+    pub path: String,
+    pub diff: String,
+    pub added: u64,
+    pub removed: u64,
+    pub failed: bool,
 }
 
 /// One line of transcript.
@@ -173,11 +184,7 @@ pub enum BlockKind {
         icon: String,
     },
     Error,
-    FileOp {
-        operation: String,
-        path: String,
-        call_id: Option<String>,
-    },
+    FileOp(FileChange),
 }
 
 /// A transcript entry plus the text it carries.
@@ -763,6 +770,8 @@ pub struct AppState {
     pub home: Option<Home>,
     /// ctrl+o: expand every tool card for this session until pressed again.
     pub expand_all: bool,
+    /// Visible tool headers mapped to the entries they control.
+    pub transcript_tools: Vec<(u16, usize)>,
 }
 
 impl AppState {
@@ -1329,9 +1338,10 @@ fn apply_event(state: &mut AppState, event: &UiEvent) {
             is_error,
             call_id,
         } => {
-            let card = match state.tool_mut(call_id.as_deref()) {
-                Some(card) => Some(card),
-                None => state.last_tool_mut(),
+            let card = if let Some(id) = call_id {
+                state.tool_mut(Some(id))
+            } else {
+                state.last_tool_mut()
             };
             if let Some(card) = card {
                 card.preview = preview.clone();
@@ -1356,25 +1366,37 @@ fn apply_event(state: &mut AppState, event: &UiEvent) {
         }
         UiEvent::FileOp {
             call_id,
+            parent_call_id,
             operation,
             path,
             full_output,
-            ..
+            diff,
+            added,
+            removed,
+            failed,
         } => {
-            if let Some(card) = state.tool_mut(call_id.as_deref()) {
-                if !full_output.is_empty() {
+            let label = path.clone().unwrap_or_else(|| "(no path)".to_string());
+            let change = FileChange {
+                operation: operation.clone(),
+                path: label.clone(),
+                diff: diff.clone(),
+                added: *added,
+                removed: *removed,
+                failed: *failed,
+            };
+            let target = parent_call_id.as_deref().or(call_id.as_deref());
+            if let Some(card) = state.tool_mut(target) {
+                if parent_call_id.is_none() {
+                    card.finished = true;
+                    card.is_error |= failed;
+                }
+                if parent_call_id.is_none() && !full_output.is_empty() && diff.is_empty() {
                     card.full_output = full_output.clone();
                 }
+                card.files.push(change);
+            } else {
+                state.entries.push(entry(BlockKind::FileOp(change), label));
             }
-            let label = path.clone().unwrap_or_else(|| "(no path)".to_string());
-            state.entries.push(entry(
-                BlockKind::FileOp {
-                    operation: operation.clone(),
-                    path: label.clone(),
-                    call_id: call_id.clone(),
-                },
-                label,
-            ));
         }
         UiEvent::TodoUpdate(todos) => state.todos = todos.clone(),
         UiEvent::StatusUpdate(message) => {

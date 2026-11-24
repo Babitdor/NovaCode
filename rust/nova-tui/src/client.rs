@@ -14,8 +14,9 @@ use std::time::Duration;
 
 use crate::frames::{self, Inbound};
 
-/// How long the client waits for each handshake frame before giving up.
-const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+const HELLO_TIMEOUT: Duration = Duration::from_secs(10);
+/// The Python server may initialize the session after authentication.
+const SESSION_READY_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Something that happened on the socket.
 #[derive(Debug, Clone)]
@@ -107,7 +108,7 @@ impl Client {
 
     fn handshake(&mut self, token: &str) -> std::io::Result<()> {
         self.send(frames::hello())?;
-        let hello = self.expect_frame(HANDSHAKE_TIMEOUT)?;
+        let hello = self.expect_frame(HELLO_TIMEOUT)?;
         match hello {
             Inbound::Hello { protocol } if protocol != frames::PROTOCOL_VERSION => {
                 // Forward compatibility: warn on stderr later, but never abort
@@ -119,7 +120,7 @@ impl Client {
             }
         }
         self.send(frames::auth(token))?;
-        let ready = self.expect_frame(HANDSHAKE_TIMEOUT)?;
+        let ready = self.expect_frame(SESSION_READY_TIMEOUT)?;
         match ready {
             Inbound::Error { message, .. } => Err(invalid(message)),
             Inbound::Ready { .. } => {

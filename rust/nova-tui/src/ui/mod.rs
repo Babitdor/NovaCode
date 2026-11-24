@@ -3,10 +3,12 @@
 //! `draw` is the whole rendering entry point; the replay test calls it against
 //! `TestBackend` so a layout regression is a diff, not a bug report.
 
+pub mod activity;
 pub mod avatar;
 pub mod brand_art;
 pub mod composer;
 pub mod council;
+pub mod diff;
 pub mod home;
 pub mod matrix;
 pub mod modal;
@@ -16,6 +18,7 @@ pub mod statusbar;
 pub mod subagents;
 pub mod tabs;
 pub mod terminal;
+pub mod tool_card;
 pub mod transcript;
 
 use ratatui::layout::{Constraint, Layout, Rect};

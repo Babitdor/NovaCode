@@ -2,25 +2,28 @@
 //! them answerable without documentation.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use ratatui::layout::Rect;
+use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 use ratatui::Frame;
 use serde_json::json;
 
 use crate::frames;
+use crate::markdown;
 use crate::state::{AppState, Effect, Modal};
 use crate::theme::Theme;
 
 /// A rectangle *percent_x* by *percent_y* of *area*, centred.
 pub fn centered(area: Rect, percent_x: u16, percent_y: u16) -> Rect {
-    let width = area.width.saturating_mul(percent_x) / 100;
-    let height = area.height.saturating_mul(percent_y) / 100;
+    let width = ((u32::from(area.width) * u32::from(percent_x) / 100).max(20))
+        .min(u32::from(area.width)) as u16;
+    let height = ((u32::from(area.height) * u32::from(percent_y) / 100).max(7))
+        .min(u32::from(area.height)) as u16;
     Rect {
         x: area.x + (area.width.saturating_sub(width)) / 2,
         y: area.y + (area.height.saturating_sub(height)) / 2,
-        width: width.max(20),
-        height: height.max(7),
+        width,
+        height,
     }
 }
 
@@ -78,8 +81,7 @@ pub fn handle_key(state: &mut AppState, key: &KeyEvent) -> Option<Effect> {
                 return None;
             }
             if matches!(key.code, KeyCode::Down | KeyCode::PageDown) {
-                *scroll = (*scroll + if key.code == KeyCode::PageDown { 8 } else { 1 })
-                    .min(detail.len().saturating_sub(1));
+                *scroll = scroll.saturating_add(if key.code == KeyCode::PageDown { 8 } else { 1 });
                 return None;
             }
             let approve = matches!(key.code, KeyCode::Char('y' | 'Y'));
@@ -122,8 +124,8 @@ pub fn handle_key(state: &mut AppState, key: &KeyEvent) -> Option<Effect> {
 }
 
 /// Draw the active modal, if any, over the whole screen area.
-pub fn draw(frame: &mut Frame, area: Rect, state: &AppState, theme: &Theme) {
-    let Some(modal) = &state.modal else {
+pub fn draw(frame: &mut Frame, area: Rect, state: &mut AppState, theme: &Theme) {
+    let Some(modal) = &mut state.modal else {
         return;
     };
     let popup = centered(area, 76, 60);
@@ -131,6 +133,10 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &AppState, theme: &Theme) {
     frame
         .buffer_mut()
         .set_style(popup, theme.body().bg(theme.surface));
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(theme.accent_border())
+        .title(Span::styled(" approval ", theme.muted()));
     let mut lines: Vec<Line<'static>> = Vec::new();
     match modal {
         Modal::Approval {
@@ -141,9 +147,6 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &AppState, theme: &Theme) {
             decisions,
             ..
         } => {
-            lines.push(Line::from(Span::styled(headline.clone(), theme.heading())));
-            lines.push(Line::from(""));
-            let page = popup.height.saturating_sub(6).max(1) as usize;
             let details = if kind == "tool" {
                 detail
                     .get(decisions.len())
@@ -152,23 +155,43 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &AppState, theme: &Theme) {
             } else {
                 detail.as_slice()
             };
-            for line in details
-                .iter()
-                .flat_map(|line| line.lines())
-                .skip(*scroll)
-                .take(page)
-            {
-                lines.push(Line::from(Span::styled(line.to_owned(), theme.body())));
+            if kind == "plan" {
+                lines = markdown::render(&details.join("\n"), theme);
+            } else {
+                lines.extend(
+                    details
+                        .iter()
+                        .flat_map(|text| text.lines())
+                        .map(|line| Line::from(Span::styled(line.to_owned(), theme.body()))),
+                );
             }
-            lines.push(Line::from(""));
+            let [header, body, footer] = Layout::vertical([
+                Constraint::Length(2),
+                Constraint::Min(0),
+                Constraint::Length(1),
+            ])
+            .areas(block.inner(popup));
+            frame.render_widget(block, popup);
+            frame.render_widget(
+                Paragraph::new(Span::styled(headline.clone(), theme.heading())),
+                header,
+            );
+            let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
+            let last_page = paragraph
+                .line_count(body.width)
+                .saturating_sub(usize::from(body.height))
+                .min(usize::from(u16::MAX));
+            *scroll = (*scroll).min(last_page);
+            frame.render_widget(paragraph.scroll((*scroll as u16, 0)), body);
             let hints = if kind == "oracle" {
                 "y accept · f fix · e extend · n/Esc pause"
             } else if kind == "plan" {
                 "y approve · n reject · ↑↓ scroll · Esc reject"
             } else {
-                "y approve · n reject · Esc rejects remaining"
+                "y approve · n reject · ↑↓ scroll · Esc rejects remaining"
             };
-            lines.push(Line::from(Span::styled(hints, theme.muted())));
+            frame.render_widget(Paragraph::new(Span::styled(hints, theme.muted())), footer);
+            return;
         }
         Modal::Question {
             question,
@@ -208,10 +231,6 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &AppState, theme: &Theme) {
             )));
         }
     }
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(theme.accent_border())
-        .title(Span::styled(" approval ", theme.muted()));
     frame.render_widget(
         Paragraph::new(lines)
             .block(block)

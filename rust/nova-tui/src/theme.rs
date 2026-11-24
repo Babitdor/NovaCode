@@ -22,6 +22,7 @@ pub struct Theme {
     pub surface: Color,
     pub activity: Color,
     pub code: Color,
+    pub dark: bool,
 }
 
 impl Default for Theme {
@@ -38,6 +39,7 @@ impl Default for Theme {
             surface: Color::Rgb(0x1c, 0x18, 0x25),
             activity: Color::Rgb(0xff, 0xc8, 0x5f),
             code: Color::Rgb(0x9c, 0xdc, 0xfe),
+            dark: true,
         }
     }
 }
@@ -83,6 +85,20 @@ impl Theme {
     /// Inline code and code blocks.
     pub fn code(&self) -> Style {
         Style::default().fg(self.code)
+    }
+
+    pub fn code_panel(&self) -> Style {
+        self.code().bg(self.surface)
+    }
+
+    pub fn diff_line(&self, added: bool) -> Style {
+        let (foreground, background) = match (self.dark, added) {
+            (true, true) => (Color::Rgb(171, 225, 191), Color::Rgb(25, 57, 44)),
+            (true, false) => (Color::Rgb(255, 183, 177), Color::Rgb(73, 37, 40)),
+            (false, true) => (Color::Rgb(30, 83, 52), Color::Rgb(220, 238, 220)),
+            (false, false) => (Color::Rgb(116, 39, 41), Color::Rgb(249, 221, 218)),
+        };
+        Style::default().fg(foreground).bg(background)
     }
 
     /// Headings inside assistant markdown.
@@ -153,6 +169,7 @@ impl Theme {
             surface: colour(palette.surface.as_ref(), base.surface),
             activity: colour(palette.activity.as_ref(), warning),
             code: if palette.dark { base.code } else { text },
+            dark: palette.dark,
         }
     }
 }
