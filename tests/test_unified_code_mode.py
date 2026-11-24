@@ -670,6 +670,7 @@ async def test_read_only_failure_does_not_claim_side_effects():
     fired on every snippet failure, including plain bad-path reads, and sent
     the model re-checking harmless completed reads.
     """
+
     @tool
     def read_file(file_path: str) -> str:
         """Return the backend's missing-file error."""
@@ -690,6 +691,7 @@ async def test_read_only_failure_does_not_claim_side_effects():
 
 async def test_timeout_keeps_the_conservative_side_effects_hint():
     """A timeout can kill a call that never reached the outcomes ledger."""
+
     @tool
     def slow_write(file_path: str) -> str:
         """A write that outlives the snippet deadline."""

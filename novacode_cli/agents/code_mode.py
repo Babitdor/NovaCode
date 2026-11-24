@@ -166,8 +166,7 @@ def _recovery_hint(exc: Exception, outcomes: list[dict], *, omitted: bool) -> st
         )
     elif any(step.get("dispatched") for step in outcomes):
         hints.append(
-            "The dispatched calls were reads — no state changed. "
-            "Fix the reported error and retry."
+            "The dispatched calls were reads — no state changed. Fix the reported error and retry."
         )
     elif outcomes or not hints:
         hints.append("No host tools started. Fix the reported error before retrying.")

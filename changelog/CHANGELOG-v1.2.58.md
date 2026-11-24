@@ -42,6 +42,22 @@
   routing modes: a multimodal main model receives the pasted image block; a text-only
   model gets it stripped with the `[image-N]` marker intact.
 
+## Background-tasks bar rebuilt as a compact summary; down arrow opens the panel
+
+- The collapsed indicator now matches the coding-CLI shape: a dim `Background`
+  header over a count line — `1 active shell` (agents and waiters append to the
+  same line) — with a `(↓ tasks)` hint. Per-command detail moved to the expanded
+  panel instead of cramming truncated commands into one row.
+- Pressing Down on the last composer line — after input history is exhausted —
+  opens the Background Tasks panel: the natural "look down at what's running"
+  gesture. Ctrl+B (empty prompt), a click on the bar, and `/tasks` open the same
+  panel; the composer modes line shows `· ↓ tasks` while background work is
+  active.
+- Root-cause fix found on the way: every sync entry point into the panel (click,
+  two Ctrl+B branches, `/tasks`) called the async `_open_tasks_panel` without
+  awaiting it — dangling coroutines, so the Tasks panel silently never opened
+  from those paths. They all go through a worker launcher now.
+
 ## Shell tool description accuracy
 
 - On Linux/macOS the `shell` tool runs `/bin/sh` — dash on Debian/Ubuntu — not bash.
@@ -50,5 +66,6 @@
 
 ## Packaging
 
-- New tests: composer footer routing, paste vision routing, `file_outline`, and the
-  first-party import contract test. Loop-guard test files removed with the feature.
+- New tests: composer footer routing, paste vision routing, `file_outline`,
+  the background-tasks bar and down-arrow gesture, and the first-party import
+  contract test. Loop-guard test files removed with the feature.

@@ -1972,7 +1972,7 @@ class NovaApp(App):
     }
     #tasks-bar {
         display: none;
-        height: 1;
+        height: auto;
         padding: 0 1;
         background: $background;
         color: $accent;
@@ -3721,7 +3721,7 @@ class NovaApp(App):
             self._log(Text(message, style=self._palette.warning))
             return
         if low in ("/tasks", "/jobs"):
-            self._open_tasks_panel()
+            self.open_background_tasks()
             return
         if low in ("/command-center", "/cc"):
             await self._run_command_center()
@@ -8370,6 +8370,8 @@ class NovaApp(App):
         else:
             mode = Text("⏵ accept edits off", style=pal.muted)
         line = Text.assemble(mode, Text(" (shift+tab) · ? for shortcuts", style=pal.muted))
+        if self.tasks_bar_active():
+            line.append(" · ↓ tasks", style=pal.dim)
         if getattr(self, "_caveman_enabled", False):
             line.append(" · lite: on", style=pal.muted)
         with contextlib.suppress(NoMatches):
@@ -9862,7 +9864,7 @@ class NovaApp(App):
         pane = getattr(self, "_active_pane", None)
         if pane is not None and pane.kind == "child":
             self.run_worker(self._send_job_control(pane, "detach", None))
-            self._open_tasks_panel()
+            self.open_background_tasks()
             return
         try:
             prompt_widget = self._w("#prompt", PromptInput)
@@ -9887,7 +9889,7 @@ class NovaApp(App):
             #  • a command is running  → detach IT to the background (the
             #    registry "started" event logs the task id + updates the ⚙ bar).
             #  • nothing running       → open the Background Tasks panel.
-            self._open_tasks_panel()
+            self.open_background_tasks()
             return
         prompt_widget.value = ""
         self._update_mode_badge()
@@ -10000,14 +10002,27 @@ class NovaApp(App):
         else:
             self._log(text, transcript=True)
 
+    def tasks_bar_active(self) -> bool:
+        """Whether the background-tasks summary line is on screen right now."""
+        try:
+            return self._w("#tasks-bar", Static).has_class("active")
+        except Exception:  # noqa: BLE001 — not mounted yet
+            return False
+
+    def open_background_tasks(self) -> None:
+        """Open the Background Tasks panel from a sync context.
+
+        `_open_tasks_panel` is async (it waits on the panel screen), so every
+        sync entry point — click, Ctrl+B branches, `/tasks`, down arrow — goes
+        through this worker launcher. The previous direct `self._open_tasks_panel()`
+        calls created dangling coroutines: the panel silently never opened.
+        """
+        self.run_worker(self._open_tasks_panel(), exclusive=False)
+
     def _refresh_tasks_bar(self) -> None:
         """Show running jobs, subagents, and the targets of active waiters."""
         active = []
-        fmt_runtime = lambda s: f"{int(s)}s"  # noqa: E731 — fallback if jobs import fails
         try:
-            from novacode_cli.shell.jobs import fmt_runtime as _fr
-
-            fmt_runtime = _fr
             active = self._tasks_registry().active()
         except Exception:  # noqa: BLE001
             pass
@@ -10047,31 +10062,23 @@ class NovaApp(App):
         pal = self._palette
         total = len(active) + len(agents)
         title = getattr(pane, "title", "Main")[:20]
+        # The collapsed summary matches the coding-CLI shape: a dim "Background"
+        # header, then the count. Details live in the panel (down arrow / click
+        # / Ctrl+B) instead of cramming commands into one line.
+        t.append("Background\n", style=pal.dim)
         if total == 0:
             t.append(f"◷ Waiters · {title}", style=f"bold {pal.accent}")
-        elif total == 1 and active:
-            job = active[0]
-            t.append(f"● Tasks · {title}  ", style=f"bold {pal.primary}")
-            t.append("● ", style=pal.success)
-            t.append(f"{job.task_id} {job.command[:40]}", style=pal.text)
-            t.append(f"  {fmt_runtime(job.runtime())}", style=pal.dim)
-        elif total == 1 and agents:
-            a = agents[0]
-            t.append(f"◇ Tasks · {title}  ", style=f"bold {pal.accent}")
-            t.append("● ", style=pal.accent)
-            t.append(str(a["agent_name"])[:36], style=pal.text)
-            t.append(f"  {fmt_runtime(a['runtime'])}", style=pal.dim)
         else:
-            t.append(f"● Tasks · {title} ({total})  ", style=f"bold {pal.primary}")
-            segs = []
-            for job in active[:2]:
-                segs.append(f"● {job.command.split()[0][:14]} {fmt_runtime(job.runtime())}")
-            for a in agents[:2]:
-                segs.append(f"◇ {str(a['agent_name'])[:14]} {fmt_runtime(a['runtime'])}")
-            t.append("  ·  ".join(segs), style=pal.text)
-            shown = min(len(active), 2) + min(len(agents), 2)
-            if total > shown:
-                t.append(f"  +{total - shown} more", style=pal.dim)
+            summary = ""
+            if active:
+                summary += f"{len(active)} active shell{'s' if len(active) != 1 else ''}"
+            if agents:
+                summary += (
+                    (" · " if summary else "")
+                    + f"{len(agents)} active agent{'s' if len(agents) != 1 else ''}"
+                )
+            t.append(summary or "idle", style=f"bold {pal.primary}")
+            t.append("  (↓ tasks)", style=pal.dim)
         if waiters:
             from novacode_cli.tools.waiter_tools import MAX_WAIT_SECONDS
 
@@ -10367,7 +10374,7 @@ class NovaApp(App):
                     self._open_artifacts_list()
                     return
                 if wid == "tasks-bar":
-                    self._open_tasks_panel()
+                    self.open_background_tasks()
                     return
                 if wid == "todo-dock":
                     self.action_toggle_todos()

@@ -1661,6 +1661,18 @@ class PromptInput(TextArea):
                 event.prevent_default()
                 event.stop()
                 return
+            # Down on the last line with no history left: open the background
+            # tasks panel when the summary line is on screen (the natural
+            # "look down at what's running" gesture).
+            if (
+                event.key == "down"
+                and edge
+                and getattr(self.app, "tasks_bar_active", lambda: False)()
+            ):
+                event.prevent_default()
+                event.stop()
+                self.app.open_background_tasks()
+                return
         # Enter sends by default; the app preference can switch to multiline
         # Enter with Ctrl+Enter to send. Shift+Enter always inserts a newline.
         submit_on_enter = getattr(self.app, "_submit_on_enter", True)

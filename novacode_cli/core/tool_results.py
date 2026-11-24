@@ -98,19 +98,24 @@ class ReadCapture:
             # Give the model numbers, not just "smaller": a model that knows the
             # rendered size and its window can compute a working limit in one
             # retry instead of bouncing off this guard three times.
-            window_lines = (
-                (page.end_line - page.start_line + 1)
-                if page.end_line is not None and page.end_line > page.start_line
-                else max(1, len(raw.splitlines()))
-            )
-            suggested = max(1, int(window_lines * len(display) / max(1, len(rendered)) * 0.8))
-            message = (
-                "Read output was transformed or truncated by the display pipeline "
-                f"(showing ~{len(display):,} of ~{len(rendered):,} rendered characters "
-                f"for lines {page.start_line}-{page.end_line}). "
-                f"Request a smaller offset/limit — retry with limit={suggested}, "
-                "then page forward with offset."
-            )
+            if isinstance(display, str):
+                window_lines = (
+                    (page.end_line - page.start_line + 1)
+                    if page.end_line is not None and page.end_line > page.start_line
+                    else max(1, len(raw.splitlines()))
+                )
+                suggested = max(1, int(window_lines * len(display) / max(1, len(rendered)) * 0.8))
+                message = (
+                    "Read output was transformed or truncated by the display pipeline "
+                    f"(showing ~{len(display):,} of ~{len(rendered):,} rendered characters "
+                    f"for lines {page.start_line}-{page.end_line}). "
+                    f"Request a smaller offset/limit — retry with limit={suggested}, "
+                    "then page forward with offset."
+                )
+            else:
+                message = (
+                    "Read output was transformed or truncated; request a smaller offset/limit."
+                )
             raise ValueError(message)
         return raw
 
