@@ -43,6 +43,35 @@ def test_a_start_event_becomes_a_running_row():
     assert task.model == "deepseek-v4.1-flash"
 
 
+def test_a_code_mode_delegation_stamps_the_code_kind():
+    """Code Mode's task() stamps phase_kind "code" so the row docks."""
+    task = st.task_from_custom_event(
+        {
+            "id": "mcp-code-abc123",
+            "type": "subagent",
+            "phase": "start",
+            "eval_id": "call_eval_2",
+            "phase_kind": "code",
+            "subagent_type": "researcher",
+        },
+        now=1000.0,
+    )
+
+    assert task is not None
+    assert task.phase_kind == "code"
+    assert task.phase_id == "call_eval_2"
+
+
+def test_an_unknown_phase_kind_falls_back_to_eval():
+    task = st.task_from_custom_event(
+        {"id": "t9", "type": "subagent", "phase": "start", "phase_kind": "mystery"},
+        now=1000.0,
+    )
+
+    assert task is not None
+    assert task.phase_kind == "eval"
+
+
 def test_complete_and_error_events_carry_the_duration():
     done = st.task_from_custom_event(
         {"id": "t1", "type": "subagent", "phase": "complete", "duration_ms": 38300},

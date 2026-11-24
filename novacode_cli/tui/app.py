@@ -858,6 +858,7 @@ def _combine_toasts(messages: list[str]) -> str:
     lines = ([f"+{dropped} more"] if dropped else []) + kept
     return "\n".join(lines)
 
+
 #: Percentage thresholds at which a usage meter turns amber, then red.
 _PCT_WARN = 75
 _PCT_CRITICAL = 90
@@ -2781,11 +2782,14 @@ class NovaApp(App):
                         ),
                     )
                     yield Button(
-                        "Oracle: off", id="oracle-toggle",
+                        "Oracle: off",
+                        id="oracle-toggle",
                         tooltip="Independent scored reviews for subsequent requests",
                     )
                     yield Button(
-                        "Settings", id="oracle-settings", compact=True,
+                        "Settings",
+                        id="oracle-settings",
+                        compact=True,
                         tooltip="Configure Oracle target, rounds, reviewers and new-thread default",
                     )
             yield Static("", id="home-composer-meta")
@@ -3190,7 +3194,9 @@ class NovaApp(App):
             pending, self._tool_out_pending = self._tool_out_pending, {}
             self._tool_out_scheduled = False
         for call_id, buffer in pending.items():
-            self._write_tool_output(call_id, _display_tail(buffer.drain(), expanded=self._tools_expanded))
+            self._write_tool_output(
+                call_id, _display_tail(buffer.drain(), expanded=self._tools_expanded)
+            )
 
     def _write_tool_output(self, call_id: str, text: str) -> None:
         """Append live output to the widget showing ``call_id`` (UI thread)."""
@@ -3217,9 +3223,7 @@ class NovaApp(App):
                 if log_widget.has_class("active"):
                     log_widget.write(Text(text))
                     self._tool_group_log_lines += text.count("\n")
-                    self._set_log_height(
-                        log_widget, min(max(self._tool_group_log_lines + 2, 5), 8)
-                    )
+                    self._set_log_height(log_widget, min(max(self._tool_group_log_lines + 2, 5), 8))
             except Exception:
                 pass
 
@@ -3606,7 +3610,8 @@ class NovaApp(App):
             fields = ("session_id", "title", "project", "status", "model", "branch", "updated_at")
             rows = [
                 {key: getattr(row, key) for key in fields}
-                for row in live_sessions(self) if row.session_id and row.status != "Inactive"
+                for row in live_sessions(self)
+                if row.session_id and row.status != "Inactive"
             ]
             await asyncio.to_thread(presence.publish, rows)
 
@@ -4501,7 +4506,9 @@ class NovaApp(App):
             older, recent = rows[:-PAGE_ROWS], rows[-PAGE_ROWS:]
             manager = self.session_manager
             session_id, thread_id = history.meta.session_id, history.meta.thread_id
-            historical = bool(older or any(m.additional_kwargs.get("history_files") for m in messages))
+            historical = bool(
+                older or any(m.additional_kwargs.get("history_files") for m in messages)
+            )
             if not historical:
                 historical = await asyncio.to_thread(
                     (manager.sessions_dir / session_id / "history.jsonl").is_file
@@ -4514,9 +4521,9 @@ class NovaApp(App):
                     ]
                 )
             if recent:
-                await scroll.mount(*(
-                    history_card(message, native_scrollback=True) for message in recent
-                ))
+                await scroll.mount(
+                    *(history_card(message, native_scrollback=True) for message in recent)
+                )
         self._refresh_tabs()
         self._pending_task_for = getattr(self, "_pending_task_for", {})
         if task:
@@ -6838,9 +6845,7 @@ class NovaApp(App):
         self._tools_expanded = not self._tools_expanded
         transcript = self._transcript()
         cards = [
-            widget
-            for widget in transcript.query(Collapsible)
-            if widget is not self._tool_group
+            widget for widget in transcript.query(Collapsible) if widget is not self._tool_group
         ]
         if self._tools_expanded:
             for card in cards:
@@ -6916,11 +6921,16 @@ class NovaApp(App):
         self._schedule_subagents_paint()
 
     def _subagent_task_list(self) -> list[Any]:
-        """Active rows in arrival order, capped for a runaway fan-out."""
+        """Active rows in arrival order, capped for a runaway fan-out.
+
+        The dock lists background work — async tasks, Code-Mode delegations
+        (``phase_kind == "code"``) and compacting rows. Foreground dispatches
+        (direct/eval) render inline in the transcript instead.
+        """
         rows = [
             row
             for row in self._subagent_rows.values()
-            if row.status == "running" and (row.phase_kind == "async" or row.compacting)
+            if row.status == "running" and (row.phase_kind in ("async", "code") or row.compacting)
         ]
         if len(rows) > subagent_tasks.MAX_ROWS:
             rows = rows[-subagent_tasks.MAX_ROWS :]
@@ -7307,9 +7317,7 @@ class NovaApp(App):
             return
         path = getattr(rec, "display_path", None)
         block = Text(f"• {path or 'file'}  {summary}", style="dim")
-        if panel.diff_block_count < _CODE_MODE_DIFF_MAX_FILES and (
-            diff := self._fileop_diff(rec)
-        ):
+        if panel.diff_block_count < _CODE_MODE_DIFF_MAX_FILES and (diff := self._fileop_diff(rec)):
             block.append("\n")
             block.append_text(
                 self._render_diff_text(diff, max_lines=_CODE_MODE_DIFF_MAX_LINES, path=path)
@@ -7725,10 +7733,12 @@ class NovaApp(App):
                     body.scroll_end(animate=False)
                     return
                 body.clear()
-                body.write(Text(
-                    final,
-                    style=pal.tool_fail if is_error else "",
-                ))
+                body.write(
+                    Text(
+                        final,
+                        style=pal.tool_fail if is_error else "",
+                    )
+                )
                 body.scroll_end(animate=False)
             return
         mark = "•"
@@ -8301,6 +8311,27 @@ class NovaApp(App):
             return False
         return True
 
+    def _model_accepts_effort(self) -> bool:
+        """Whether the current provider/model consumes the configured effort.
+
+        Cached per (provider, model): the footer refreshes often and the
+        predicate walks the construction branches each time otherwise.
+        """
+        provider = getattr(self, "_model_provider", None)
+        model = self.model_name or ""
+        key = (provider, model)
+        cache = getattr(self, "_effort_accepts_cache", None)
+        if cache is not None and cache[0] == key:
+            return cache[1]
+        try:
+            from novacode_cli.config.model_create import model_accepts_effort
+
+            accepted = model_accepts_effort(provider, model)
+        except Exception:  # noqa: BLE001 — the footer must never crash on this
+            accepted = False
+        self._effort_accepts_cache = (key, accepted)
+        return accepted
+
     def _refresh_composer_info(self) -> None:
         """Line 1 of the composer footer: model · context · cwd · branch · version."""
         from novacode_cli._version import __version__
@@ -8319,7 +8350,15 @@ class NovaApp(App):
             router_enabled, self.model_name, getattr(self, "_routed_model_name", None)
         )
         effort = getattr(self, "_reasoning_effort", None)
-        head = f"{model} with {effort}" if effort and effort != "default" else model
+        # Only advertise effort when the built model actually consumes it —
+        # several providers silently drop the field (model_accepts_effort).
+        if (
+            effort in ("off", "low", "medium", "high", "xhigh", "max")
+            and self._model_accepts_effort()
+        ):
+            head = f"{model} with {effort}"
+        else:
+            head = model
         window = used = 0
         with contextlib.suppress(Exception):
             breakdown = self.token_tracker.get_breakdown()
@@ -8364,7 +8403,7 @@ class NovaApp(App):
         if not visible:
             return
         if getattr(self.session_state, "plan_mode_enabled", False):
-            mode = Text("⏸ plan mode", style=f"bold {pal.warning}")
+            mode = Text("plan mode", style=f"bold {pal.warning}")
         elif getattr(self.session_state, "auto_approve", False):
             mode = Text("✗ accept edits on", style=f"bold {pal.success}")
         else:
@@ -10074,9 +10113,8 @@ class NovaApp(App):
                 summary += f"{len(active)} active shell{'s' if len(active) != 1 else ''}"
             if agents:
                 summary += (
-                    (" · " if summary else "")
-                    + f"{len(agents)} active agent{'s' if len(agents) != 1 else ''}"
-                )
+                    " · " if summary else ""
+                ) + f"{len(agents)} active agent{'s' if len(agents) != 1 else ''}"
             t.append(summary or "idle", style=f"bold {pal.primary}")
             t.append("  (↓ tasks)", style=pal.dim)
         if waiters:
@@ -12764,13 +12802,15 @@ class NovaApp(App):
 
                 self.push_screen(StructuredReportScreen("UI configuration", result))
             else:
-                self.notify({
-                    "patch": "UI patch staged. Use /ui preview to view it.",
-                    "preview": "UI preview applied.",
-                    "rollback": "UI restored to the saved layout.",
-                    "commit": "UI layout saved.",
-                    "reset": "UI restored to the default layout.",
-                }[operation])
+                self.notify(
+                    {
+                        "patch": "UI patch staged. Use /ui preview to view it.",
+                        "preview": "UI preview applied.",
+                        "rollback": "UI restored to the saved layout.",
+                        "commit": "UI layout saved.",
+                        "reset": "UI restored to the default layout.",
+                    }[operation]
+                )
         except (ValueError, OSError) as error:
             self._log(Text(f"UI change failed: {error}", style="yellow"))
 
@@ -13063,7 +13103,9 @@ class NovaApp(App):
         run = getattr(state, "oracle_run", None)
         key = (
             (id(state), run.identity, run.revision)
-            if getattr(state, "oracle_enabled", False) and run is not None and run.revision
+            if getattr(state, "oracle_enabled", False)
+            and run is not None
+            and run.revision
             and run.status in {"passed", "waiting", "accepted"}
             else None
         )
@@ -13073,7 +13115,8 @@ class NovaApp(App):
             if key is not None:
                 self.run_worker(
                     self._watch_oracle_changes(state, run, key),
-                    group="oracle-freshness", exit_on_error=False,
+                    group="oracle-freshness",
+                    exit_on_error=False,
                 )
 
     async def _watch_oracle_changes(self, state, run, key) -> None:
@@ -13081,26 +13124,44 @@ class NovaApp(App):
 
         from watchfiles import awatch
 
-        from novacode_cli.core.oracle import snapshot, workspace_changes_relevant, workspace_watch_paths
+        from novacode_cli.core.oracle import (
+            snapshot,
+            workspace_changes_relevant,
+            workspace_watch_paths,
+        )
 
         def current() -> bool:
             return (
-                self.session_state is state and state.oracle_enabled and state.oracle_run is run
-                and self._oracle_watch_key == key and run.revision == key[2]
+                self.session_state is state
+                and state.oracle_enabled
+                and state.oracle_run is run
+                and self._oracle_watch_key == key
+                and run.revision == key[2]
                 and run.status in {"passed", "waiting", "accepted"}
             )
 
         first = True
         try:
             paths = await asyncio.to_thread(workspace_watch_paths, run.directory)
-            roots = [path for path in paths if not any(path != other and path.is_relative_to(other) for other in paths)]
+            roots = [
+                path
+                for path in paths
+                if not any(path != other and path.is_relative_to(other) for other in paths)
+            ]
             # The empty poll closes the gap between publishing scores and subscribing.
-            async for changes in awatch(*roots, watch_filter=None, rust_timeout=500, yield_on_timeout=True):
+            async for changes in awatch(
+                *roots, watch_filter=None, rust_timeout=500, yield_on_timeout=True
+            ):
                 if not current():
                     return
-                if first or (changes and await asyncio.to_thread(
-                    workspace_changes_relevant, paths, {name for _, name in changes},
-                )):
+                if first or (
+                    changes
+                    and await asyncio.to_thread(
+                        workspace_changes_relevant,
+                        paths,
+                        {name for _, name in changes},
+                    )
+                ):
                     first = False
                     revision = await asyncio.to_thread(snapshot, run.directory)
                     if revision.revision != key[2]:
@@ -13143,7 +13204,7 @@ class NovaApp(App):
             return
         if action != "status":
             state = self.session_state
-            state.oracle_enabled = (action == "on" if action else not state.oracle_enabled)
+            state.oracle_enabled = action == "on" if action else not state.oracle_enabled
             run = getattr(state, "oracle_run", None)
             if not state.oracle_enabled and run and run.decision and not run.decision.done():
                 run.decision.set_result({"action": "pause"})
@@ -14487,6 +14548,11 @@ class NovaApp(App):
         event.stop()
         self.run_worker(self._run_command_center(), group="command-center", exclusive=True)
 
+    def on_prompt_input_help_requested(self, event: Any) -> None:
+        """`?` on an empty composer: the shortcuts/command reference."""
+        event.stop()
+        self._run_help()
+
     async def _run_command_center(self) -> None:
         """Inspect all saved projects and live tabs without replacing a running turn."""
         from novacode_cli.tui.command_center import CommandCenterScreen, live_sessions
@@ -14825,7 +14891,9 @@ class NovaApp(App):
         from novacode_cli.handoff import restore_handoff
 
         restore_prime(self.session_state, getattr(session_data.meta, "prime", None))
-        self.session_state.oracle_enabled = getattr(session_data.meta, "oracle_enabled", None) is True
+        self.session_state.oracle_enabled = (
+            getattr(session_data.meta, "oracle_enabled", None) is True
+        )
         self.session_state.oracle_run = None
         restore_handoff(self.session_state, getattr(session_data.meta, "handoff", None))
         from novacode_cli.remote.session import connection_payload, reconnect_remote
@@ -15044,7 +15112,8 @@ class NovaApp(App):
                 self._mcp_failure_notices.add(key)
                 self.notify(
                     f"MCP {name}: connection failed ({error}). Open /mcp and select Retry.",
-                    severity="warning", timeout=10,
+                    severity="warning",
+                    timeout=10,
                 )
 
     async def _run_mcp(self) -> None:
@@ -16325,10 +16394,15 @@ class NovaApp(App):
         from novacode_cli.update_guard import check_update_blockers
 
         supervisor = getattr(self, "_session_supervisor", None)
-        owned = {
-            child.proc.pid for child in supervisor.list()
-            if child.proc is not None and child.alive
-        } if supervisor is not None else set()
+        owned = (
+            {
+                child.proc.pid
+                for child in supervisor.list()
+                if child.proc is not None and child.alive
+            }
+            if supervisor is not None
+            else set()
+        )
         try:
             await asyncio.to_thread(check_update_blockers, ignore_pids=owned)
         except (OSError, ValueError) as error:
@@ -16352,11 +16426,21 @@ class NovaApp(App):
                     break
                 await asyncio.sleep(0.05)
             if self._turn_running():
-                self._log(Text("Update not started: the turn is still stopping. Retry /update once it stops.", style="yellow"))
+                self._log(
+                    Text(
+                        "Update not started: the turn is still stopping. Retry /update once it stops.",
+                        style="yellow",
+                    )
+                )
                 return
         self._set_status("saving the session before the update…")
         if not await self._save_session(pane=getattr(self, "_root_pane", None)):
-            self._log(Text("Update not started: could not save the session. Retry /save, then /update.", style="red"))
+            self._log(
+                Text(
+                    "Update not started: could not save the session. Retry /save, then /update.",
+                    style="red",
+                )
+            )
             return
         session_id = getattr(self.session_state, "session_id", None)
         manager = self.session_manager
@@ -17065,7 +17149,9 @@ class NovaApp(App):
         applied = False
         if self.session_state is not None:
             try:
-                new_agent, new_backend = await self.session_state.switch_model(_quiet_call(create_model))
+                new_agent, new_backend = await self.session_state.switch_model(
+                    _quiet_call(create_model)
+                )
                 self.agent = new_agent
                 self.backend = new_backend
                 applied = True
@@ -17111,7 +17197,6 @@ class NovaApp(App):
             task_count += sum(task.status == "running" for task in self._background_agent_tasks())
         return {
             "model": str(model),
-            "effort": f"effort: {self._reasoning_effort or 'default'}",
             "directory": str(directory),
             "branch": f"branch: {branch}",
             "session": f"session: {getattr(pane, 'title', None) or self.assistant_id or 'Nova'}",
@@ -17205,7 +17290,7 @@ class NovaApp(App):
             t.append("Reasoning Effort Configuration\n", style="bold")
             t.append(f"Current: ", style="dim")
             t.append(f"{current}\n", style="bold cyan")
-            t.append("\nUsage: /effort <low|medium|high|off|default>\n", style="dim")
+            t.append("\nUsage: /effort <low|medium|high|xhigh|max|off|default>\n", style="dim")
             t.append(
                 reasoning_setting_note(
                     self._model_provider, self.model_name, self._reasoning_effort
@@ -17216,15 +17301,26 @@ class NovaApp(App):
 
         val = args.strip().lower()
         if val == "none":
-            val = "off"
-        if val not in ("low", "medium", "high", "off", "default"):
+            val = "default"
+        if val not in ("low", "medium", "high", "xhigh", "max", "off", "default"):
             self._log(
-                Text(f"Invalid effort level '{args}'. Choose: low, medium, high, off", style="red")
+                Text(
+                    f"Invalid effort level '{args}'. "
+                    "Choose: low, medium, high, xhigh, max, off, default",
+                    style="red",
+                )
             )
             return
 
         nova_config.set("reasoning_effort", None if val == "default" else val)
-        t = Text(f"● Reasoning effort set to '{val}' and saved to config.\n", style="green")
+        t = Text(
+            (
+                "● Reasoning effort reset to the provider default and saved to config.\n"
+                if val == "default"
+                else f"● Reasoning effort set to '{val}' and saved to config.\n"
+            ),
+            style="green",
+        )
 
         # Hot-swap the model
         if self.session_state is not None and self._model_provider:
@@ -18776,7 +18872,9 @@ class NovaApp(App):
                 card = RalphProgress(event, session, stop)
                 self._ralph_mount(card)
             elif isinstance(event, rev.StatusSnapshot):
-                self._ralph_mount(Static(self._ralph_status_renderable(event), classes="ralph-status"))
+                self._ralph_mount(
+                    Static(self._ralph_status_renderable(event), classes="ralph-status")
+                )
             elif card is not None:
                 card.update_run(event)
 
@@ -18788,8 +18886,14 @@ class NovaApp(App):
                     self.call_from_thread(_paint_event, event)
 
         await handle_ralph_command(
-            self.agent, session, self.assistant_id, self.token_tracker, args,
-            execute_fn=self._tui_ralph_execute, emit=_emit, on_event=_on_event,
+            self.agent,
+            session,
+            self.assistant_id,
+            self.token_tracker,
+            args,
+            execute_fn=self._tui_ralph_execute,
+            emit=_emit,
+            on_event=_on_event,
         )
 
     async def _run_trello(self, text: str) -> None:
@@ -19568,10 +19672,12 @@ class NovaApp(App):
             body = comp.output
             await self._mount(comp)
             if isinstance(body, OutputLog):
-                await comp.mount(Static(
-                    Text("Ctrl+B · run in background", style="dim"),
-                    classes="background-shell-hint",
-                ))
+                await comp.mount(
+                    Static(
+                        Text("Ctrl+B · run in background", style="dim"),
+                        classes="background-shell-hint",
+                    )
+                )
             entry = (comp, body, base)
             if e.call_id:
                 self._tool_components[e.call_id] = entry
@@ -19602,10 +19708,14 @@ class NovaApp(App):
             # File operations retain their colored diff inside the compact row.
             rec = e.record
             errored = bool(getattr(rec, "error", None)) or (getattr(rec, "status", "") == "error")
-            entry = self._pop_tool(e.call_id) if (
-                (e.call_id and e.call_id in self._tool_components)
-                or (not e.call_id and self._last_tool is not None)
-            ) else None
+            entry = (
+                self._pop_tool(e.call_id)
+                if (
+                    (e.call_id and e.call_id in self._tool_components)
+                    or (not e.call_id and self._last_tool is not None)
+                )
+                else None
+            )
             if entry is not None:
                 comp, body, base = entry
                 # A bullet, not ✓/✗: the emoji are painted by the terminal's own
@@ -19614,7 +19724,8 @@ class NovaApp(App):
                 if isinstance(comp, CodeModePanel):
                     comp.finish(
                         e.full_output or getattr(rec, "read_output", None) or "",
-                        is_error=errored, preview=self._fileop_summary(rec),
+                        is_error=errored,
+                        preview=self._fileop_summary(rec),
                     )
                 else:
                     comp.title = f"{base}  {mark} {_esc(self._fileop_summary(rec))}".rstrip()
@@ -19731,7 +19842,9 @@ class NovaApp(App):
         elif isinstance(e, ev.SubagentTask):
             # Keep tracking state, but render local tasks only as inline text.
             self._ingest_subagent_task(e)
-            if e.phase_kind != "async":
+            # Code-Mode delegations live in the dock (like async tasks), not
+            # as inline transcript cards.
+            if e.phase_kind not in ("async", "code"):
                 await self._show_inline_subagent(e)
         elif isinstance(e, ev.SubagentCompaction):
             row = self._subagent_rows.get(e.task_id)
@@ -20255,8 +20368,11 @@ class NovaApp(App):
         origin = NovaApp._remote_approval_origin(self, pane)
         if e.kind == "oracle":
             run = getattr(state, "oracle_run", None)
-            if (run is not None and run.identity == e.payload.get("run_id")
-                    and self._remote_msg is None):
+            if (
+                run is not None
+                and run.identity == e.payload.get("run_id")
+                and self._remote_msg is None
+            ):
                 self._refresh_oracle()
                 await e.future
             return

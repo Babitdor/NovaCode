@@ -11,7 +11,6 @@ from __future__ import annotations
 FIELDS: dict[str, str] = {
     "activity": "Activity and elapsed time",
     "model": "Model",
-    "effort": "Reasoning effort",
     "directory": "Current directory",
     "branch": "Git branch",
     "session": "Session name",

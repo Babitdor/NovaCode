@@ -290,7 +290,7 @@ def statusline_spec(selected: Sequence[str] | None = None) -> ScreenSpec:
 
 
 # Reasoning effort levels, in the order the Textual settings screen offers them.
-EFFORT_OPTIONS: tuple[str, ...] = ("off", "low", "medium", "high")
+EFFORT_OPTIONS: tuple[str, ...] = ("default", "off", "low", "medium", "high", "xhigh", "max")
 
 # Context budgets offered by the same screen, as (tokens, label). Zero means "the
 # model's whole window".
@@ -343,7 +343,7 @@ def settings_spec(effort: str, budget: int) -> ScreenSpec:
     Returns:
         A `form` spec with two choice fields.
     """
-    current = effort if effort in EFFORT_OPTIONS else "off"
+    current = effort if effort in EFFORT_OPTIONS else "default"
     return ScreenSpec(
         "form",
         {
@@ -551,7 +551,7 @@ def preferences_spec(prefs: Preferences) -> ScreenSpec:
         _choice(
             "reasoning_effort",
             "Reasoning effort",
-            prefs.effort if prefs.effort in EFFORT_OPTIONS else "off",
+            prefs.effort if prefs.effort in EFFORT_OPTIONS else "default",
             list(EFFORT_OPTIONS),
         ),
         _choice(

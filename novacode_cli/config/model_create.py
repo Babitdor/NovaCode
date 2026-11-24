@@ -28,11 +28,13 @@ PROVIDER_KEY_ENV: dict[str, str] = {
     # no key in the environment, so a key gate would wrongly turn it away.
 }
 
-PROVIDER_KEY_ENV.update({
-    provider: preset["api_key_var"]
-    for provider, preset in CATALOG_PROVIDERS.items()
-    if preset.get("api_key_var")
-})
+PROVIDER_KEY_ENV.update(
+    {
+        provider: preset["api_key_var"]
+        for provider, preset in CATALOG_PROVIDERS.items()
+        if preset.get("api_key_var")
+    }
+)
 
 
 def azure_base_url() -> str:
@@ -173,7 +175,9 @@ def opencode_session_id() -> str:
 
 #: Claude model IDs: family, major, minor (``claude-sonnet-5-5``, ``claude-opus-4-8``).
 #: A dated suffix (``claude-sonnet-4-20250514``) is not a minor version.
-_CLAUDE_VERSION = re.compile(r"claude-(opus|sonnet|haiku|fable|mythos)-(\d+)(?:-(\d{1,2}))?(?=-|@|$)")
+_CLAUDE_VERSION = re.compile(
+    r"claude-(opus|sonnet|haiku|fable|mythos)-(\d+)(?:-(\d{1,2}))?(?=-|@|$)"
+)
 
 
 def _claude_takes_adaptive_thinking(model_name: str) -> bool:
@@ -188,25 +192,29 @@ def _claude_takes_adaptive_thinking(model_name: str) -> bool:
 
 
 def anthropic_thinking_kwargs(model_name: str, effort: str | None, budget: int = 0) -> dict:
-    """ChatAnthropic thinking settings for Nova's ``/effort`` (off/low/medium/high).
+    """ChatAnthropic thinking settings for Nova's ``/effort``.
 
     Adaptive models get ``effort`` (``output_config.effort``) with adaptive
     thinking shown as a summary, so Nova's reasoning stream has text. "off" is
     the lowest effort rather than disabled thinking, which Opus 5.5, Sonnet 5.5
-    and Fable reject. Older models keep ``budget_tokens``, from the configured
-    ``thinking_budget`` or a per-effort default.
+    and Fable reject. Sonnet 4.6 and later accept ``low/medium/high/max``;
+    ``xhigh`` follows ``max`` there. Older models keep ``budget_tokens``, from
+    the configured ``thinking_budget`` or a per-effort default.
     """
-    level = effort if effort in ("low", "medium", "high") else None
+    level = effort if effort in ("low", "medium", "high", "xhigh", "max") else None
     if _claude_takes_adaptive_thinking(model_name):
         if effort == "off":
             return {"effort": "low"}
         if level is None:  # "default": the model's own defaults
             return {}
+        if level == "xhigh":
+            # Claude's own dial tops out at max (Sonnet 4.6+ effort param).
+            level = "max"
         # Opus/Sonnet 4.6 summarize by default; `display` arrived with 4.7.
         display = {} if re.search(r"-4-6(?!\d)", model_name) else {"display": "summarized"}
         return {"effort": level, "thinking": {"type": "adaptive", **display}}
     if not budget and effort and effort != "off":
-        budget = {"low": 2048, "medium": 4096, "high": 16384}.get(effort, 4096)
+        budget = {"low": 2048, "medium": 4096, "high": 16384}.get(effort, 16384)
     if budget > 0:
         return {"thinking": {"type": "enabled", "budget_tokens": budget}}
     return {}
@@ -227,14 +235,22 @@ def openai_reasoning_kwargs(model_name: str, effort: str | None, *, summary: boo
         return {}
     if effort == "off":
         return {"reasoning_effort": "low"}
-    if summary and effort in {"low", "medium", "high"} and not name.startswith("o1"):
+    if (
+        summary
+        and effort in {"low", "medium", "high", "xhigh", "max"}
+        and not name.startswith("o1")
+    ):
         return {
             "use_responses_api": True,
             "store": False,
             "include": ["reasoning.encrypted_content"],
             "reasoning": {"effort": effort, "summary": "auto"},
         }
-    return {"reasoning_effort": effort} if effort in ("low", "medium", "high") else {}
+    # OpenAI's own dial: none/minimal/low/medium/high/xhigh/max, model-dependent.
+    # xhigh = deep research tier, max = maximum reasoning (GPT-5.5 and later).
+    return (
+        {"reasoning_effort": effort} if effort in ("low", "medium", "high", "xhigh", "max") else {}
+    )
 
 
 def google_thinking_kwargs(model_name: str, effort: str | None) -> dict:
@@ -247,9 +263,12 @@ def google_thinking_kwargs(model_name: str, effort: str | None) -> dict:
     """
     name = model_name.lower().rsplit("/", 1)[-1]
     match = re.search(r"gemini-(\d+)(?:\.(\d+))?", name)
-    if match is None or effort not in ("off", "low", "medium", "high"):
+    if match is None or effort not in ("off", "low", "medium", "high", "xhigh", "max"):
         return {}
     version = (int(match.group(1)), int(match.group(2) or 0))
+    # Gemini's dial tops out at high; Nova's xhigh/max clamp to it.
+    if effort in ("xhigh", "max"):
+        effort = "high"
     if version >= (3, 0):
         level = "low" if effort == "off" else effort
         if level == "medium" and "gemini-3-pro" in name:
@@ -272,7 +291,7 @@ def gateway_reasoning_kwargs(provider: str, model_name: str, effort: str | None)
     On those gateways ``off`` requests minimum effort, not disabled thinking.
     Unknown families keep provider defaults rather than receiving guessed fields.
     """
-    if effort not in {"off", "low", "medium", "high"}:
+    if effort not in {"off", "low", "medium", "high", "xhigh", "max"}:
         return {}
     if provider == "openrouter":
         return {"extra_body": {"reasoning": {"effort": "low" if effort == "off" else effort}}}
@@ -280,6 +299,12 @@ def gateway_reasoning_kwargs(provider: str, model_name: str, effort: str | None)
     name = model_name.lower().rsplit("/", 1)[-1]
     if not kwargs and name.startswith("deepseek-v4"):
         return {"reasoning_effort": "low" if effort in {"off", "low"} else "high"}
+    if not kwargs and name.startswith("glm-5"):
+        # Live-verified 2026-11-24 (glm-5.3-flash via the Zen gateway): the
+        # OpenAI-shaped effort field is accepted on every request. "none"
+        # disables thinking, "low" and "high" reason; raw "medium" came back
+        # with no reasoning at all, so it follows the verified high tier.
+        return {"reasoning_effort": {"off": "none", "low": "low"}.get(effort, "high")}
     return kwargs
 
 
@@ -322,15 +347,48 @@ def reasoning_setting_note(  # noqa: PLR0911 — each provider has a different c
             "because some models cannot disable thinking."
         )
     if provider in {"commandcode", "opencode", "opencode_zen"} and name.startswith("deepseek-v4"):
-        return "DeepSeek V4 receives low/high effort (medium → high, off → low)."
+        return "DeepSeek V4 receives low/high effort (medium and above → high, off → low)."
+    if provider in {"commandcode", "opencode", "opencode_zen"} and name.startswith("glm-5"):
+        return "GLM-5 receives reasoning effort (off disables thinking; medium and above → high)."
     return (
         "No verified configurable effort control for this model/route; "
         "provider defaults remain in effect."
     )
 
 
+def model_accepts_effort(provider: str | None, model_name: str) -> bool:
+    """Whether the built model actually consumes Nova's reasoning effort.
+
+    Mirrors the construction branches in :func:`build_chat_model`, so the
+    composer footer can stop advertising effort for models that silently
+    drop it (catalog providers, plain openai-compatible endpoints, gateway
+    families without a verified control). Verified controls only — the same
+    bar :func:`gateway_reasoning_kwargs` applies to the wire.
+    """
+    if not provider:
+        return False
+    name = model_name.lower().rsplit("/", 1)[-1]
+    if provider in {"ollama", "openrouter", "nvidia"}:
+        # The field is always sent (per-model support varies server-side).
+        return True
+    if provider == "google":
+        return bool(google_thinking_kwargs(model_name, "high"))
+    if provider == "anthropic":
+        return name.startswith("claude-")
+    if provider in {"openai", "azure"}:
+        return bool(openai_reasoning_kwargs(model_name, "high"))
+    if provider in {"commandcode", "opencode", "opencode_zen"}:
+        return name.startswith("claude-") or bool(
+            gateway_reasoning_kwargs(provider, model_name, "high")
+        )
+    return False
+
+
 def build_chat_model(
-    provider: str, model_name: str, *, reasoning_effort: str | None = None,
+    provider: str,
+    model_name: str,
+    *,
+    reasoning_effort: str | None = None,
     max_retries: int | None = None,
 ) -> BaseChatModel:
     """Build a provider model, with an optional per-route effort override.
@@ -346,7 +404,8 @@ def build_chat_model(
     else:
         model = (
             _build_chat_model(provider, model_name, reasoning_effort=reasoning_effort)
-            if reasoning_effort is not None else _build_chat_model(provider, model_name)
+            if reasoning_effort is not None
+            else _build_chat_model(provider, model_name)
         )
     # Lossless model identity for new worker processes; never infer a gateway
     # provider from its OpenAI-compatible model class or change its defaults.
@@ -384,7 +443,10 @@ def ollama_openai_base_url() -> str:
 
 
 def _build_chat_model(
-    provider: str, model_name: str, *, reasoning_effort: str | None = None,
+    provider: str,
+    model_name: str,
+    *,
+    reasoning_effort: str | None = None,
     max_retries: int = 5,
 ) -> BaseChatModel:
     """THE model constructor — every ChatX(...) in Nova is built here.
@@ -404,7 +466,9 @@ def _build_chat_model(
     from novacode_cli.config.nova_config import NovaConfig
 
     nova_config = NovaConfig()
-    effort = reasoning_effort if reasoning_effort is not None else nova_config.get("reasoning_effort")
+    effort = (
+        reasoning_effort if reasoning_effort is not None else nova_config.get("reasoning_effort")
+    )
 
     if provider in CATALOG_PROVIDERS:
         from novacode_cli.config.catalog_models import build_catalog_model
@@ -438,7 +502,12 @@ def _build_chat_model(
 
         ollama_kwargs: dict = {}
         if effort:
-            ollama_kwargs["reasoning_effort"] = "none" if effort == "off" else effort
+            # Ollama knows none/low/medium/high; Nova's higher tiers clamp.
+            ollama_kwargs["reasoning_effort"] = {
+                "off": "none",
+                "low": "low",
+                "medium": "medium",
+            }.get(effort, "high")
 
         return ChatOpenAI(
             model=model_name,
@@ -580,7 +649,8 @@ def _build_chat_model(
         apply_openai_reasoning_content_patch()
 
         openai_kwargs: dict = (
-            openai_reasoning_kwargs(model_name, effort) if provider == "openai"
+            openai_reasoning_kwargs(model_name, effort)
+            if provider == "openai"
             else gateway_reasoning_kwargs(provider, model_name, effort)
         )
         if provider == "openrouter":
@@ -602,27 +672,34 @@ def _build_chat_model(
             openai_kwargs["base_url"] = MODEL_PRESETS[provider]["base_url"]
             # Keyring-aware (see openrouter note): os.environ alone was empty on a
             # restart even with the key saved, so OpenCode silently 401'd.
-            openai_kwargs["api_key"] = getattr(settings, f"{provider}_api_key", None) or os.environ.get(
-                PROVIDER_KEY_ENV[provider]
-            )
+            openai_kwargs["api_key"] = getattr(
+                settings, f"{provider}_api_key", None
+            ) or os.environ.get(PROVIDER_KEY_ENV[provider])
             # The gateway REJECTS requests without this header — every call
             # fails with 400 MissingSessionID — so it is not optional.
             openai_kwargs["default_headers"] = headers(opencode_session_id())
             api = protocol(provider, model_name)
             if api == "unsupported":
-                raise ValueError("This OpenCode model uses an API not supported by the chat provider.")
+                raise ValueError(
+                    "This OpenCode model uses an API not supported by the chat provider."
+                )
             if api == "messages":
                 from langchain_anthropic import ChatAnthropic
+
                 thinking_kwargs = (
                     anthropic_thinking_kwargs(
                         model_name, effort, int(nova_config.get("thinking_budget", 0) or 0)
-                    ) if model_name.lower().startswith("claude-") else {}
+                    )
+                    if model_name.lower().startswith("claude-")
+                    else {}
                 )
                 return ChatAnthropic(
-                    model=model_name, api_key=openai_kwargs["api_key"],
+                    model=model_name,
+                    api_key=openai_kwargs["api_key"],
                     base_url=openai_kwargs["base_url"],
                     default_headers=openai_kwargs["default_headers"],
-                    max_tokens=20_000, max_retries=max_retries,
+                    max_tokens=20_000,
+                    max_retries=max_retries,
                     **thinking_kwargs,
                 )
             if api == "responses":
@@ -708,7 +785,9 @@ def _build_chat_model(
                 model=model_name, max_retries=max_retries, **openai_kwargs
             )
         if openai_kwargs.get("use_responses_api"):
-            return _chatgpt_plan_chat_class()(model=model_name, max_retries=max_retries, **openai_kwargs)
+            return _chatgpt_plan_chat_class()(
+                model=model_name, max_retries=max_retries, **openai_kwargs
+            )
         return ChatOpenAI(model=model_name, max_retries=max_retries, **openai_kwargs)
 
     if provider == "nvidia":
@@ -756,9 +835,7 @@ def _build_chat_model(
         # Both routes produce a byte-identical request payload; this one is
         # simply the declared way to say it.
         if effort:
-            nvidia_kwargs["model_kwargs"] = {
-                "chat_template_kwargs": {"thinking": effort != "off"}
-            }
+            nvidia_kwargs["model_kwargs"] = {"chat_template_kwargs": {"thinking": effort != "off"}}
 
         return ChatNVIDIA(
             model=model_name,
@@ -797,8 +874,11 @@ def _build_chat_model(
         )
 
         google_kwargs: dict = {}
-        google_key = (os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
-                      or settings.google_api_key)
+        google_key = (
+            os.environ.get("GOOGLE_API_KEY")
+            or os.environ.get("GEMINI_API_KEY")
+            or settings.google_api_key
+        )
         oauth_selected = use_oauth(has_key=bool(google_key))
         if oauth_selected:
             if not has_credentials():
@@ -828,11 +908,13 @@ def _build_chat_model(
             import httpx
             from google import genai
             from google.genai.types import HttpOptions
+
             # Explicit HTTPX clients prevent the SDK's optional aiohttp path
             # bypassing OAuth. Both streaming and non-streaming use these.
             model.client.close()
             model.client = genai.Client(
-                vertexai=False, api_key="nova-oauth-managed",
+                vertexai=False,
+                api_key="nova-oauth-managed",
                 http_options=HttpOptions(
                     base_url="https://generativelanguage.googleapis.com/",
                     api_version=model.api_version,
@@ -878,6 +960,7 @@ def create_model_from_config(provider: str, model_name: str) -> BaseChatModel | 
             has_key = _openai_auth_available()
         elif provider == "google":
             from novacode_cli.config.provider_auth import get_provider_auth_status
+
             has_key = get_provider_auth_status("google").is_usable
         if not has_key:
             return None
@@ -926,7 +1009,8 @@ def create_model_for_session(
 
         status = get_provider_auth_status(provider)
         reason = (
-            status.detail if not status.is_usable
+            status.detail
+            if not status.is_usable
             else f"provider '{provider}' or model is unavailable"
         )
     elif key_var and not (
@@ -978,6 +1062,7 @@ def create_model() -> BaseChatModel:
         )
         if provider == "google":
             from novacode_cli.config.provider_auth import get_provider_auth_status
+
             available = get_provider_auth_status("google").is_usable
         elif provider in CATALOG_PROVIDERS:
             available = get_provider_auth_status(provider).is_usable
@@ -1010,8 +1095,13 @@ def create_model() -> BaseChatModel:
             "claude-sonnet-4-5-20250929",
             "Anthropic",
         ),
-        (get_provider_auth_status("google").is_usable,
-         "google", "GOOGLE_MODEL", "gemini-3-pro-preview", "Google Gemini"),
+        (
+            get_provider_auth_status("google").is_usable,
+            "google",
+            "GOOGLE_MODEL",
+            "gemini-3-pro-preview",
+            "Google Gemini",
+        ),
         (
             settings.has_openrouter,
             "openrouter",
@@ -1026,7 +1116,13 @@ def create_model() -> BaseChatModel:
             "glm-5.3",
             "OpenCode Go",
         ),
-        (settings.has_opencode_zen, "opencode_zen", "OPENCODE_ZEN_MODEL", "big-pickle", "OpenCode Zen"),
+        (
+            settings.has_opencode_zen,
+            "opencode_zen",
+            "OPENCODE_ZEN_MODEL",
+            "big-pickle",
+            "OpenCode Zen",
+        ),
         (
             settings.has_commandcode,
             "commandcode",
@@ -1233,10 +1329,13 @@ PROVIDER_DEFAULT_MODEL: dict[str, str] = {
     "google": "gemini-3-pro-preview",
     "openrouter": "z-ai/glm-5.2",
 }
-PROVIDER_DEFAULT_MODEL.update({
-    provider: preset["default_model"] for provider, preset in CATALOG_PROVIDERS.items()
-    if preset.get("default_model")
-})
+PROVIDER_DEFAULT_MODEL.update(
+    {
+        provider: preset["default_model"]
+        for provider, preset in CATALOG_PROVIDERS.items()
+        if preset.get("default_model")
+    }
+)
 
 
 def build_role_model(role: str) -> BaseChatModel | None:
@@ -1304,9 +1403,8 @@ def build_async_agent_model(*, per_agent_model_var: str | None = None) -> BaseCh
     """
     provider = (os.environ.get(ASYNC_AGENT_PROVIDER_ENV) or "").strip().lower() or "ollama"
     if provider not in VALID_ASYNC_PROVIDERS:
-        message = (
-            f"Unknown {ASYNC_AGENT_PROVIDER_ENV}={provider!r}. Valid providers: "
-            + ", ".join(VALID_ASYNC_PROVIDERS)
+        message = f"Unknown {ASYNC_AGENT_PROVIDER_ENV}={provider!r}. Valid providers: " + ", ".join(
+            VALID_ASYNC_PROVIDERS
         )
         raise ValueError(message)
 
@@ -1327,7 +1425,8 @@ def build_async_agent_model(*, per_agent_model_var: str | None = None) -> BaseCh
 
     key_var = PROVIDER_KEY_ENV.get(provider)
     if (
-        key_var and provider not in CATALOG_PROVIDERS
+        key_var
+        and provider not in CATALOG_PROVIDERS
         and not (os.environ.get(key_var) or "").strip()
     ):
         message = (

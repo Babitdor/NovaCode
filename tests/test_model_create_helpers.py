@@ -216,6 +216,94 @@ def test_an_unknown_family_keeps_provider_defaults() -> None:
     assert gateway_reasoning_kwargs("openrouter", "z-ai/glm-5.2", None) == {}
 
 
+@pytest.mark.parametrize(
+    ("effort", "expected"),
+    [("off", "none"), ("low", "low"), ("medium", "high"), ("high", "high")],
+)
+def test_glm5_on_a_gateway_gets_verified_levels(effort: str, expected: str) -> None:
+    """Live-verified 2026-11-24: the Zen gateway accepts reasoning_effort for
+    glm-5.3-flash — "none" disables thinking, "low"/"high" reason, and raw
+    "medium" produced no reasoning at all, so it follows the high tier."""
+    assert gateway_reasoning_kwargs("opencode", "glm-5.3-flash", effort) == {
+        "reasoning_effort": expected
+    }
+    assert gateway_reasoning_kwargs("opencode", "zai-org/glm-5.3-flash", effort) == {
+        "reasoning_effort": expected
+    }
+
+
+def test_xhigh_and_max_clamp_to_each_provider_ceiling() -> None:
+    """Nova's top tiers ride each provider's own dial where one exists."""
+    # OpenAI has real xhigh/max (GPT-5.5+).
+    assert openai_reasoning_kwargs("gpt-6.2", "xhigh") == {"reasoning_effort": "xhigh"}
+    assert openai_reasoning_kwargs("gpt-6.2", "max") == {"reasoning_effort": "max"}
+    assert openai_reasoning_kwargs("gpt-6.2", "max", summary=True)["reasoning"]["effort"] == "max"
+    # Anthropic's dial tops out at max (Sonnet 4.6+); xhigh follows max.
+    assert anthropic_thinking_kwargs("claude-sonnet-4-6", "max") == {
+        "effort": "max",
+        "thinking": {"type": "adaptive"},
+    }
+    assert anthropic_thinking_kwargs("claude-opus-5", "xhigh") == {
+        "effort": "max",
+        "thinking": {"type": "adaptive", "display": "summarized"},
+    }
+    # Gemini, GLM and DeepSeek top out at high.
+    assert google_thinking_kwargs("gemini-4-flash", "max") == {
+        "thinking_level": "high",
+        "include_thoughts": True,
+    }
+    assert gateway_reasoning_kwargs("opencode", "glm-5.3-flash", "max") == {
+        "reasoning_effort": "high"
+    }
+    assert gateway_reasoning_kwargs("commandcode", "deepseek-v4-flash", "xhigh") == {
+        "reasoning_effort": "high"
+    }
+    # OpenRouter forwards the unified reasoning field verbatim.
+    assert gateway_reasoning_kwargs("openrouter", "z-ai/glm-5.2", "max") == {
+        "extra_body": {"reasoning": {"effort": "max"}}
+    }
+
+
+# --- which models actually consume effort ------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("provider", "model_name", "accepted"),
+    [
+        # Verified gateway families.
+        ("opencode", "glm-5.3-flash", True),
+        ("opencode", "deepseek-v4.1-flash", True),
+        ("opencode", "gpt-5-mini", True),
+        ("opencode", "claude-opus-5", True),
+        ("commandcode", "deepseek/deepseek-v4-flash", True),
+        # Gateway families without a verified control: the field stays home.
+        ("opencode", "qwen3-coder-next", False),
+        ("commandcode", "some-unknown-model", False),
+        # Direct providers with real controls.
+        ("anthropic", "claude-sonnet-4-5-20250929", True),
+        ("anthropic", "gpt-5", False),
+        ("openai", "gpt-5", True),
+        ("openai", "gpt-4o", False),
+        ("google", "gemini-3-pro-preview", True),
+        ("google", "gemini-2.0-flash", False),
+        ("ollama", "gemma4:31b-cloud", True),
+        ("openrouter", "z-ai/glm-5.2", True),
+        ("azure", "gpt-5", True),
+        ("nvidia", "deepseek-ai/deepseek-v4-pro-0813", True),
+        # Construction paths that drop effort entirely.
+        ("minimax", "MiniMax-M2.5", False),
+        ("bedrock", "anthropic.claude-sonnet-4-5", False),
+        ("groq", "llama-4-scout", False),
+        (None, "glm-5.3-flash", False),
+    ],
+)
+def test_model_accepts_effort_mirrors_the_wire(
+    provider: str, model_name: str, accepted: bool
+) -> None:
+    """The footer must only advertise effort where build_chat_model sends it."""
+    assert model_create.model_accepts_effort(provider, model_name) is accepted
+
+
 # --- the /effort note --------------------------------------------------------
 
 
@@ -237,6 +325,7 @@ def test_the_note_says_default_when_every_setting_is_default() -> None:
         ("openrouter", "z-ai/glm-5.2", "high", "OpenRouter"),
         ("openai", "gpt-5", "high", "reasoning effort"),
         ("commandcode", "deepseek/deepseek-v4-flash", "medium", "DeepSeek V4"),
+        ("opencode", "glm-5.3-flash", "high", "GLM-5"),
     ],
 )
 def test_the_note_names_the_control_that_actually_applies(

@@ -32,7 +32,12 @@ FACTORY_ROLES: tuple[str, ...] = (
     "security",
 )
 CAVEMAN_LEVELS: tuple[str, ...] = (
-    "lite", "full", "ultra", "wenyan-lite", "wenyan-full", "wenyan-ultra",
+    "lite",
+    "full",
+    "ultra",
+    "wenyan-lite",
+    "wenyan-full",
+    "wenyan-ultra",
 )
 DEFAULT_ATTRIBUTION_NAME = "NovaCode"
 DEFAULT_ATTRIBUTION_EMAIL = "noreply@novacode.invalid"
@@ -67,7 +72,11 @@ def _config_bool(value: Any, *, default: bool = False) -> bool:
 @lru_cache(maxsize=16)
 def _read_code_mode(path: Path, _version: tuple[int, ...]) -> bool:
     values = json.loads(path.read_text(encoding="utf-8"))
-    return _config_bool(values.get("code_mode_enabled", True), default=True) if isinstance(values, dict) else True
+    return (
+        _config_bool(values.get("code_mode_enabled", True), default=True)
+        if isinstance(values, dict)
+        else True
+    )
 
 
 def live_code_mode_enabled() -> bool:
@@ -77,7 +86,9 @@ def live_code_mode_enabled() -> bool:
     path = HOME_DIR / "Nova.config.json"
     try:
         stat = path.stat()
-        return _read_code_mode(path, (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns))
+        return _read_code_mode(
+            path, (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
+        )
     except (OSError, ValueError):
         return True
 
@@ -980,7 +991,14 @@ class NovaConfig:
                 entry["base_url"] = base_url.strip()
             effort = route.get("reasoning_effort")
             if effort is not None:
-                if not isinstance(effort, str) or effort not in {"off", "low", "medium", "high"}:
+                if not isinstance(effort, str) or effort not in {
+                    "off",
+                    "low",
+                    "medium",
+                    "high",
+                    "xhigh",
+                    "max",
+                }:
                     raise ValueError(f"Route {route_id!r} has invalid reasoning effort.")
                 entry["reasoning_effort"] = effort
             cleaned.append(entry)

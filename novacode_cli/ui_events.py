@@ -168,7 +168,7 @@ class SubagentTask:
     task_id: str  # quickjs "ptc_task_<uuid8>", or the tool call id
     status: str = "running"  # "running" | "done" | "failed" | "stopped"
     phase_id: str | None = None  # eval_id; None = a dispatch outside a fan-out
-    phase_kind: str = "eval"  # "eval" | "direct" | "async" | "team" (execution path)
+    phase_kind: str = "eval"  # "eval" | "code" | "direct" | "async" | "team" (execution path)
     subagent_type: str = ""
     label: str = ""  # the bridge's label, else the task description
     description: str = ""

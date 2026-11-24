@@ -331,7 +331,8 @@ def build_route_model(route: dict[str, Any]) -> BaseChatModel | None:
 
     effort = route.get("reasoning_effort", NovaConfig().get("reasoning_effort"))
     if effort is not None and (
-        not isinstance(effort, str) or effort not in {"off", "low", "medium", "high"}
+        not isinstance(effort, str)
+        or effort not in {"off", "low", "medium", "high", "xhigh", "max"}
     ):
         return None
     key = (provider, model_name, str(effort))
@@ -344,7 +345,8 @@ def build_route_model(route: dict[str, Any]) -> BaseChatModel | None:
     try:
         built = (
             build_chat_model(provider, model_name, reasoning_effort=effort)
-            if effort is not None else build_chat_model(provider, model_name)
+            if effort is not None
+            else build_chat_model(provider, model_name)
         )
     except Exception:
         logger.warning(

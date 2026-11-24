@@ -71,7 +71,6 @@ def _task(task_id: str, **kwargs) -> ev.SubagentTask:
     return ev.SubagentTask(**base)  # type: ignore[arg-type]
 
 
-
 @pytest.mark.parametrize("phase_kind", ["direct", "eval"])
 @pytest.mark.parametrize("size", [(120, 44), (55, 24)])
 async def test_local_task_opens_live_preview_without_leaking_details(
@@ -147,15 +146,23 @@ async def test_subagent_compaction_updates_only_its_panel_row():
         assert not app._subagent_rows["worker-a"].compacting
 
 
-@pytest.mark.parametrize("status,word", [("done", "completed"), ("failed", "failed"), ("stopped", "stopped")])
+@pytest.mark.parametrize(
+    "status,word", [("done", "completed"), ("failed", "failed"), ("stopped", "stopped")]
+)
 async def test_inline_status_updates_same_line_and_keeps_other_agent_running(status, word):
     app = _app()
     async with app.run_test(size=(120, 44)):
         await app._render(_task("a", subagent_type="reviewer"))
         await app._render(_task("b", subagent_type="reviewer"))
         widget = app._inline_subagents["a"]
-        await app._render(_task("a", status=status, duration_ms=2500,
-                                error="provider unavailable" if status == "failed" else ""))
+        await app._render(
+            _task(
+                "a",
+                status=status,
+                duration_ms=2500,
+                error="provider unavailable" if status == "failed" else "",
+            )
+        )
         assert app._inline_subagents["a"] is widget
         assert word in str(widget.render())
         assert "2.5s" in str(widget.render())
@@ -172,7 +179,9 @@ async def test_activity_and_detailed_events_share_one_inline_line():
         await app._render(ev.SubagentActivity("dispatched", subagent_type="reviewer", call_id="a"))
         widget = app._inline_subagents["a"]
         await app._render(_task("a", phase_kind="direct", subagent_type="reviewer"))
-        await app._render(ev.SubagentActivity("tool_start", call_id="a", message="grep(secret)", detail="tool"))
+        await app._render(
+            ev.SubagentActivity("tool_start", call_id="a", message="grep(secret)", detail="tool")
+        )
         await app._render(ev.SubagentActivity("status", call_id="a", message="verbose progress"))
         assert app._inline_subagents["a"] is widget
         assert len(app.query(".subagent-inline")) == 1
@@ -200,7 +209,9 @@ async def test_turn_end_marks_inline_tasks_stopped(event):
 async def test_async_panel_survives_local_turn_and_local_tasks_stay_inline():
     app = _app()
     async with app.run_test(size=(120, 44)):
-        app._ingest_async_tasks({"a": {"task_id": "a", "agent_name": "remote-reviewer", "status": "running"}})
+        app._ingest_async_tasks(
+            {"a": {"task_id": "a", "agent_name": "remote-reviewer", "status": "running"}}
+        )
         await app._render(_task("local", subagent_type="local-reviewer"))
         app._paint_subagents()
         assert {row.task_id for row in app._subagent_task_list()} == {"async:a"}
@@ -214,6 +225,54 @@ async def test_async_panel_survives_local_turn_and_local_tasks_stay_inline():
         app._paint_subagents()
         assert not app.query_one("#subagents-dock").has_class("active")
         assert app._subagents_tick is None
+
+
+async def test_code_mode_delegations_live_in_the_dock_not_inline():
+    """A `task()` call from a Code Mode snippet shows in the SubagentsDock —
+    the same panel async tasks use — instead of an inline transcript card."""
+    app = _app()
+    async with app.run_test(size=(120, 44)):
+        app._set_home_visible(visible=False)
+        code_task = _task(
+            "mcp-code-abc123",
+            phase_kind="code",
+            subagent_type="researcher",
+            label="research: docling",
+        )
+        await app._render(code_task)
+        app._paint_subagents()
+        body = str(app.query_one("#subagents-body").render())
+        assert "research: docling" in body
+        assert {row.task_id for row in app._subagent_task_list()} == {"mcp-code-abc123"}
+        assert not app._inline_subagents, "code delegations skip the inline card"
+
+        # Completion flips the row and collapses the dock.
+        await app._render(
+            _task("mcp-code-abc123", phase_kind="code", status="done", duration_ms=4200)
+        )
+        app._paint_subagents()
+        assert app._subagent_rows["mcp-code-abc123"].status == "done"
+        assert not app.query_one("#subagents-dock").has_class("active")
+
+
+async def test_code_mode_error_lands_in_the_dock_row():
+    app = _app()
+    async with app.run_test(size=(120, 44)):
+        app._set_home_visible(visible=False)
+        await app._render(_task("mcp-code-err", phase_kind="code", subagent_type="reviewer"))
+        await app._render(
+            _task(
+                "mcp-code-err",
+                phase_kind="code",
+                status="failed",
+                error="Subagent timed out",
+                duration_ms=900,
+            )
+        )
+        app._paint_subagents()
+        row = app._subagent_rows["mcp-code-err"]
+        assert row.status == "failed"
+        assert row.error == "Subagent timed out"
 
 
 async def test_ingest_freezes_finished_async_duration_and_drops_stale_rows(
@@ -277,6 +336,7 @@ async def test_escape_cancels_stream_and_stops_inline_subagent(monkeypatch):
     async with app.run_test(size=(120, 44)) as pilot:
         app.run_worker(app._stream_prompt("run a subagent"), group="turn")
         from tests.test_tui_app import _wait_until
+
         assert await _wait_until(pilot, started.is_set, timeout=5)
         await pilot.press("escape")
         assert await _wait_until(pilot, cancelled.is_set, timeout=5)
@@ -315,9 +375,12 @@ async def test_spawned_teammate_uses_inline_lifecycle_without_agent_server(tmp_p
     from novacode_cli.teams.coordinator import TeamCoordinator
     from novacode_cli.teams.models import Identity
 
-    server_specs = Mock(side_effect=AssertionError("Team display must not consult the agent server"))
+    server_specs = Mock(
+        side_effect=AssertionError("Team display must not consult the agent server")
+    )
     monkeypatch.setattr(
-        "novacode_cli.agents.default_subagents.async_subagents.retrieve_async_subagents", server_specs
+        "novacode_cli.agents.default_subagents.async_subagents.retrieve_async_subagents",
+        server_specs,
     )
     adapter = AsyncMock()
     adapter.start.return_value.stop.return_value = True

@@ -155,11 +155,12 @@ def panel_row_model(
 ) -> str:
     """What the subagents panel should print in MODEL for one row.
 
-    ``phase_kind`` is the row's provenance: ``direct`` is a blocking ``task`` call
-    and ``eval`` a JS fan-out, which dispatches the same configured agents, so both
-    resolve to the subagent role. ``async`` rows run on the server, which decides
-    their model from its own environment. Anything else keeps the session model,
-    which is what every row showed before per-role models existed.
+    ``phase_kind`` is the row's provenance: ``direct`` is a blocking ``task`` call,
+    ``eval`` a JS fan-out and ``code`` a delegation from a Code Mode snippet, which
+    all dispatch the same configured agents, so they resolve to the subagent role.
+    ``async`` rows run on the server, which decides their model from its own
+    environment. Anything else keeps the session model, which is what every row
+    showed before per-role models existed.
 
     One imprecision, accepted deliberately: an individual discovered agent carrying
     its own ``model:`` in frontmatter is shown as its role's model, because a row
@@ -170,6 +171,6 @@ def panel_row_model(
     if phase_kind == "async":
         # The async role, or the session's model when that role is unset.
         return spec_of(cfg.get_role_model("async")) or session_model
-    if phase_kind in ("direct", "eval"):
+    if phase_kind in ("direct", "eval", "code"):
         return subagent_spec(cfg) or dynamic_spec(cfg) or session_model
     return session_model

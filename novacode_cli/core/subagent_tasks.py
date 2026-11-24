@@ -41,7 +41,10 @@ TASK_ID_METADATA_KEY = "nova_task_id"
 ASYNC_PHASE = "async"
 
 #: How a row was launched. Drives the phase grouping's fallback label.
-PHASE_KINDS = ("eval", "direct", "async", "team")
+#: ``code`` is a subagent the Code Mode snippet delegated (``task()`` inside
+#: a dispatched snippet) — it renders in the dock like an async row instead
+#: of the inline transcript card the other foreground kinds use.
+PHASE_KINDS = ("eval", "code", "direct", "async", "team")
 
 #: Status glyphs, matching the vocabulary the rest of the TUI uses (✓ / ✗ from
 #: the tool cards, the hourglass from a running tool).
@@ -136,11 +139,14 @@ def task_from_custom_event(
         started_at = 0.0
 
     eval_id = payload.get("eval_id")
+    phase_kind = str(payload.get("phase_kind") or "eval")
+    if phase_kind not in PHASE_KINDS:
+        phase_kind = "eval"
     return SubagentTask(
         task_id=task_id,
         status=status,
         phase_id=str(eval_id) if eval_id else None,
-        phase_kind="eval",
+        phase_kind=phase_kind,
         subagent_type=str(payload.get("subagent_type") or ""),
         label=str(payload.get("label") or ""),
         description=str(payload.get("description") or ""),

@@ -81,11 +81,29 @@ class CachedMarkdown(Markdown):
 
     _cache_key: Any = None
     _cache_segments: list | None = None
-    _style_names = tuple("markdown." + name for name in (
-        "h1", "h2", "h3", "h4", "h5", "h6", "h7", "code", "code_block",
-        "block_quote", "item.bullet", "item.number", "list", "link", "link_url",
-        "table.border", "table.header", "kbd",
-    ))
+    _style_names = tuple(
+        "markdown." + name
+        for name in (
+            "h1",
+            "h2",
+            "h3",
+            "h4",
+            "h5",
+            "h6",
+            "h7",
+            "code",
+            "code_block",
+            "block_quote",
+            "item.bullet",
+            "item.number",
+            "list",
+            "link",
+            "link_url",
+            "table.border",
+            "table.header",
+            "kbd",
+        )
+    )
 
     def __rich_console__(self, console: Any, options: Any) -> Any:
         # Rich segments contain resolved colours. Reuse them only while those
@@ -96,7 +114,6 @@ class CachedMarkdown(Markdown):
             self._cache_segments = list(console.render(_UncachedMarkdown(self), options))
             self._cache_key = key
         return iter(self._cache_segments)
-
 
 
 # ---------------------------------------------------------------------------
@@ -396,10 +413,11 @@ class MatrixRain(Static):
         if self._animation_enabled is None:
             import os
 
-            self._animation_enabled = (
-                os.environ.get("NOVA_ANIMATIONS", "").strip().lower()
-                in {"1", "true", "yes"}
-            )
+            self._animation_enabled = os.environ.get("NOVA_ANIMATIONS", "").strip().lower() in {
+                "1",
+                "true",
+                "yes",
+            }
         # Start the timer directly: ``is_mounted`` is still False inside
         # ``on_mount``, so ``set_animation_enabled`` would return early and the
         # rain would never run even when it was asked for.
@@ -634,7 +652,10 @@ class MatrixRain(Static):
         if self._matrix3:
             self._ensure_theme_cache()
             self._matrix3_engine.draw(
-                self._frame_lines, self._frame_styles, self._matrix3_styles, self._animation_fps,
+                self._frame_lines,
+                self._frame_styles,
+                self._matrix3_styles,
+                self._animation_fps,
             )
             self._composite_art()
             return
@@ -728,7 +749,6 @@ class MatrixRain(Static):
                             row_l[gx] = ch
                             row_s[gx] = art_style
                     ax += cell_len(ch)
-
 
 
 # Nova's default palette, registered as a real Textual theme so /theme can swap
@@ -941,9 +961,17 @@ class OutputLog(VerticalScroll):
     OutputLog > .output-text { height: auto; width: 1fr; }
     """
 
-    def __init__(self, *, max_lines: int = 1000, max_chars: int = 200000,
-                 highlight: bool = False, markup: bool = False, wrap: bool = True,
-                 auto_scroll: bool = True, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        *,
+        max_lines: int = 1000,
+        max_chars: int = 200000,
+        highlight: bool = False,
+        markup: bool = False,
+        wrap: bool = True,
+        auto_scroll: bool = True,
+        **kwargs: Any,
+    ) -> None:
         super().__init__(**kwargs)
         from collections import deque
 
@@ -952,6 +980,7 @@ class OutputLog(VerticalScroll):
         self.markup = markup
         if highlight:
             from rich.highlighter import ReprHighlighter
+
             self._highlighter = ReprHighlighter()
         else:
             self._highlighter = None
@@ -978,11 +1007,11 @@ class OutputLog(VerticalScroll):
         if self._closing or self._pruning:
             return self
         if isinstance(content, Text):
-            text = content[-(self.max_chars - 1):]
+            text = content[-(self.max_chars - 1) :]
         elif isinstance(content, str):
             # Bound decoding too: a multi-megabyte result must not be parsed in
             # full on the UI loop just to discard its beginning afterwards.
-            content = content[-(self.max_chars - 1):]
+            content = content[-(self.max_chars - 1) :]
             if not self.markup and all(c not in content for c in ("\x1b", "\r", "\t")):
                 self._store_lines(Text(line) for line in content.split("\n"))
                 return self
@@ -995,13 +1024,14 @@ class OutputLog(VerticalScroll):
                 text = Text(content)
         else:
             from rich.console import Console
+
             console = Console(width=max(20, self.size.width or 80), record=True)
             with console.capture() as capture:
                 console.print(content)
             text = Text.from_ansi(capture.get())
-        text = text[-(self.max_chars - 1):]
+        text = text[-(self.max_chars - 1) :]
         text.expand_tabs()
-        text = text[-(self.max_chars - 1):]
+        text = text[-(self.max_chars - 1) :]
         self._store_lines(text.split("\n"))
         return self
 
@@ -1040,7 +1070,7 @@ class OutputLog(VerticalScroll):
         else:
             text = Text(str(content))
         text.expand_tabs()
-        plain = text.plain[-(self.max_chars - 1):]
+        plain = text.plain[-(self.max_chars - 1) :]
         final_lines = plain.split("\n")
         stored = self._output_lines
         if len(final_lines) > len(stored):
@@ -1090,9 +1120,7 @@ class TranscriptScroll(VerticalScroll):
     class Scrolled(Message):
         """Posted on every scroll position change (for the distance readout)."""
 
-        def __init__(
-            self, scroll: TranscriptScroll, *, old_y: float, new_y: float
-        ) -> None:
+        def __init__(self, scroll: TranscriptScroll, *, old_y: float, new_y: float) -> None:
             """Record the scroll region that moved and its before/after offset.
 
             The delta is carried on the message rather than compared against a
@@ -1146,11 +1174,7 @@ class TranscriptScroll(VerticalScroll):
             self.app._update_jump_latest(measure=True)
 
     def _request_history_at_top(self) -> bool:
-        return (
-            self.scroll_y <= 1
-            and self._scrollback is not None
-            and self._scrollback.request()
-        )
+        return self.scroll_y <= 1 and self._scrollback is not None and self._scrollback.request()
 
     def _on_mouse_scroll_up(self, event: events.MouseScrollUp) -> None:
         if not (event.ctrl or event.shift) and self._request_history_at_top():
@@ -1254,9 +1278,7 @@ class ChatMessage(Vertical):
     ChatMessage.user > .role { color: $primary; }
     """
 
-    def __init__(
-        self, header: Text, role_class: str, *, collapsible: bool = False
-    ) -> None:
+    def __init__(self, header: Text, role_class: str, *, collapsible: bool = False) -> None:
         super().__init__(classes=role_class)
         self._header = header
         # Plain-text form of the body, kept in sync by update_body so the message
@@ -1432,9 +1454,7 @@ class ChatMessage(Vertical):
             return
         body.update(
             renderable,
-            layout=prev is None
-            or prev[1] != dims
-            or len(plain) >= _STREAM_SATURATED_CHARS,
+            layout=prev is None or prev[1] != dims or len(plain) >= _STREAM_SATURATED_CHARS,
         )
         body._nova_painted = (look, dims)
 
@@ -1478,7 +1498,6 @@ class ChatMessage(Vertical):
             event.stop()
         except Exception:  # noqa: BLE001
             pass
-
 
 
 class ComposerActions(Horizontal):
@@ -1550,6 +1569,9 @@ class PromptInput(TextArea):
 
     class CommandCenterRequested(Message):
         """Open the session overview from an empty composer."""
+
+    class HelpRequested(Message):
+        """Open the shortcuts/command reference from an empty composer (?)."""
 
     @property
     def value(self) -> str:
@@ -1646,10 +1668,27 @@ class PromptInput(TextArea):
             return False
 
     async def _on_key(self, event: events.Key) -> None:
-        if event.key == "left" and not self.text and not self._palette_open() and not self._paste_active:
+        if (
+            event.key == "left"
+            and not self.text
+            and not self._palette_open()
+            and not self._paste_active
+        ):
             event.prevent_default()
             event.stop()
             self.post_message(self.CommandCenterRequested())
+            return
+        # "?" on an empty composer opens the command/shortcuts reference — the
+        # gesture the modes line advertises. Mid-text "?" still types itself.
+        if (
+            event.key == "question_mark"
+            and not self.text
+            and not self._palette_open()
+            and not self._paste_active
+        ):
+            event.prevent_default()
+            event.stop()
+            self.post_message(self.HelpRequested())
             return
         # Up on the first line / Down on the last: input history (and queued
         # messages). Inside multi-line text the arrows still move the cursor,
@@ -1682,9 +1721,7 @@ class PromptInput(TextArea):
             self._end_paste_merge()
             self.post_message(self.Submitted(self, self.text))
             return
-        if event.key in ("shift+enter", "ctrl+j") or (
-            event.key == "enter" and not submit_on_enter
-        ):
+        if event.key in ("shift+enter", "ctrl+j") or (event.key == "enter" and not submit_on_enter):
             event.prevent_default()
             event.stop()
             self._end_paste_merge()
@@ -2154,7 +2191,6 @@ class TuiInitRenderer:
             await self._app._stream_prompt(prompt)
         finally:
             session_state.auto_approve = prev
-
 
 
 class SubagentStatus(Static):

@@ -952,7 +952,14 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
         writer = request.runtime.stream_writer
         task_id = f"mcp-code-{uuid4().hex}"
         started = time.monotonic()
-        event = {"type": "subagent", "id": task_id, "eval_id": request.tool_call["id"]}
+        # phase_kind "code": the panel shows Code-Mode delegations in the
+        # SubagentsDock (like async tasks) instead of the inline transcript card.
+        event = {
+            "type": "subagent",
+            "id": task_id,
+            "eval_id": request.tool_call["id"],
+            "phase_kind": "code",
+        }
         writer(
             {
                 **event,

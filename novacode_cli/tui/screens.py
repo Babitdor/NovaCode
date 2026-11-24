@@ -482,9 +482,7 @@ class ModelScreen(ModalScreen[dict | None]):
         #: drive it; the two never share a list.
         self._tab = "model"
         self._initial_tab = (
-            initial_tab
-            if initial_tab in {"model", "voice", "vision", "decision"}
-            else "model"
+            initial_tab if initial_tab in {"model", "voice", "vision", "decision"} else "model"
         )
         #: Option index -> what that row selects. `OptionList.highlighted`
         #: reports an index, so this is the mapping back to a choice.
@@ -635,9 +633,7 @@ class ModelScreen(ModalScreen[dict | None]):
             with contextlib.suppress(Exception):
                 vision_cfg = config.get_vision_model_config()
         with contextlib.suppress(Exception):
-            self.app.call_from_thread(
-                self._apply, statuses, models, recent, voice_cfg, vision_cfg
-            )
+            self.app.call_from_thread(self._apply, statuses, models, recent, voice_cfg, vision_cfg)
 
     def _apply(
         self,
@@ -674,9 +670,7 @@ class ModelScreen(ModalScreen[dict | None]):
         options = [(str(preset.get("name") or pid), pid) for pid, preset in MODEL_PRESETS.items()]
         select.set_options(options)
         preferred = (
-            self._vision_cfg.get("provider")
-            if self._tab == "vision"
-            else self._current_provider
+            self._vision_cfg.get("provider") if self._tab == "vision" else self._current_provider
         )
         if preferred in MODEL_PRESETS:
             select.value = preferred
@@ -834,8 +828,7 @@ class ModelScreen(ModalScreen[dict | None]):
             models = [
                 model
                 for model in self._provider_models(provider)
-                if f"{provider}:{model}" not in seen
-                and _fuzzy_match(f"{provider}:{model}", needle)
+                if f"{provider}:{model}" not in seen and _fuzzy_match(f"{provider}:{model}", needle)
             ]
             if not models:
                 continue
@@ -918,9 +911,7 @@ class ModelScreen(ModalScreen[dict | None]):
             picks = [
                 pick
                 for pick in picks
-                if _fuzzy_match(
-                    f"{pick.spec} {pick.display} {registry_name} {keywords}", needle
-                )
+                if _fuzzy_match(f"{pick.spec} {pick.display} {registry_name} {keywords}", needle)
             ]
         return picks
 
@@ -980,10 +971,9 @@ class ModelScreen(ModalScreen[dict | None]):
         if pick.kind == "model":
             return self._is_current_model(pick)
         if pick.kind == "vision":
-            return (
-                pick.provider == self._vision_cfg.get("provider")
-                and pick.name == self._vision_cfg.get("model")
-            )
+            return pick.provider == self._vision_cfg.get(
+                "provider"
+            ) and pick.name == self._vision_cfg.get("model")
         if pick.kind == "role":
             return pick.name == self._role_target
         return self._is_current_voice(pick)
@@ -1119,9 +1109,7 @@ class ModelScreen(ModalScreen[dict | None]):
 
     def _show_hint(self, message: str, *, error: bool = False) -> None:
         """Write a message into the footer, replacing the key hints."""
-        self.query_one("#model-hint", Static).update(
-            Text(message, style="red" if error else "dim")
-        )
+        self.query_one("#model-hint", Static).update(Text(message, style="red" if error else "dim"))
 
     def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id == "model-filter":
@@ -1408,7 +1396,9 @@ class McpScreen(ModalScreen[None]):
         try:
             success = await get_shared_mcp_middleware().retry_server(name)
             app.notify(
-                f"MCP {name}: connected." if success else f"MCP {name}: connection failed. You can retry again.",
+                f"MCP {name}: connected."
+                if success
+                else f"MCP {name}: connection failed. You can retry again.",
                 severity="information" if success else "warning",
             )
         except Exception as exc:
@@ -1446,7 +1436,9 @@ class McpScreen(ModalScreen[None]):
 
             middleware = get_shared_mcp_middleware()
             connection_status = getattr(middleware, "server_status", {})
-            active_servers.update(name for name, status in connection_status.items() if status == "ready")
+            active_servers.update(
+                name for name, status in connection_status.items() if status == "ready"
+            )
             for tool_meta in middleware._tools_cache:
                 sn = tool_meta.get("server")
                 if sn and connection_status.get(sn) not in {"failed", "connecting"}:
@@ -1619,7 +1611,9 @@ class McpScreen(ModalScreen[None]):
         self.query_one("#mcp-hint", Static).update(
             Text("Opening browser. Follow the sign-in prompt, then return to Nova…", style="cyan")
         )
-        status = Text("Authentication failed. Check the server URL and browser sign-in.", style="red")
+        status = Text(
+            "Authentication failed. Check the server URL and browser sign-in.", style="red"
+        )
         try:
             candidate = config.model_copy(update={"oauth": True})
             connected, detail = await check_server_connection(name, candidate)
@@ -1635,9 +1629,10 @@ class McpScreen(ModalScreen[None]):
                 self.app.session_state, "reload_mcp_servers"
             ):
                 try:
-                    self.app.agent, self.app.backend = (
-                        await self.app.session_state.reload_mcp_servers()
-                    )
+                    (
+                        self.app.agent,
+                        self.app.backend,
+                    ) = await self.app.session_state.reload_mcp_servers()
                 except Exception:  # noqa: BLE001 - sign-in succeeded; reload can retry next session
                     status = Text(
                         f"{name} authenticated. Restart the session to load its tools.",
@@ -1844,9 +1839,7 @@ class McpScreen(ModalScreen[None]):
 
                     secret_headers = {}
                     if result.get("header_name"):
-                        secret_headers[result["header_name"]] = store_header(
-                            result["header_value"]
-                        )
+                        secret_headers[result["header_name"]] = store_header(result["header_value"])
                     config = MCPServerConfig(
                         transport="http",
                         url=result["url"],
@@ -1973,10 +1966,13 @@ class McpCustomModal(ModalScreen[dict | None]):
                 id="mcp-conn",
             )
             yield Input(placeholder="Description (optional)", id="mcp-desc")
-            yield Input(placeholder="HTTP header name (optional, e.g. X-API-Key)", id="mcp-header-name")
+            yield Input(
+                placeholder="HTTP header name (optional, e.g. X-API-Key)", id="mcp-header-name"
+            )
             yield Input(
                 placeholder="HTTP header value (stored securely)",
-                id="mcp-header-value", password=True,
+                id="mcp-header-value",
+                password=True,
             )
             yield Static("", id="mcp-custom-hint")
             with Horizontal(id="modal-buttons"):
@@ -2111,34 +2107,26 @@ class LangSmithSetupModal(ModalScreen[dict[str, str] | None]):
                 ),
                 id="langsmith-hint",
             )
-            yield Static(
-                Text("LANGSMITH_TRACING:", style="bold"), classes="langsmith-field-label"
-            )
+            yield Static(Text("LANGSMITH_TRACING:", style="bold"), classes="langsmith-field-label")
             yield Select(
                 [("true", "true"), ("false", "false")],
                 id="langsmith-tracing",
                 value=tracing,
             )
-            yield Static(
-                Text("LANGSMITH_ENDPOINT:", style="bold"), classes="langsmith-field-label"
-            )
+            yield Static(Text("LANGSMITH_ENDPOINT:", style="bold"), classes="langsmith-field-label")
             yield Input(
                 value=current.get("LANGSMITH_ENDPOINT") or "",
                 placeholder="https://api.smith.langchain.com",
                 id="langsmith-endpoint",
             )
-            yield Static(
-                Text("LANGSMITH_API_KEY:", style="bold"), classes="langsmith-field-label"
-            )
+            yield Static(Text("LANGSMITH_API_KEY:", style="bold"), classes="langsmith-field-label")
             yield Input(
                 value=current.get("LANGSMITH_API_KEY") or "",
                 placeholder="lsv2_...",
                 password=True,
                 id="langsmith-api-key",
             )
-            yield Static(
-                Text("LANGSMITH_PROJECT:", style="bold"), classes="langsmith-field-label"
-            )
+            yield Static(Text("LANGSMITH_PROJECT:", style="bold"), classes="langsmith-field-label")
             yield Input(
                 value=current.get("LANGSMITH_PROJECT") or "",
                 placeholder="Nova-Code",
@@ -2150,7 +2138,9 @@ class LangSmithSetupModal(ModalScreen[dict[str, str] | None]):
                 ("LANGSMITH_AGENT_ENVIRONMENT", "langsmith-agent-environment"),
             ):
                 label = f"NOVA_{name}" if name.startswith("LANGSMITH_AGENT_") else name
-                yield Static(Text(f"{label} (optional):", style="bold"), classes="langsmith-field-label")
+                yield Static(
+                    Text(f"{label} (optional):", style="bold"), classes="langsmith-field-label"
+                )
                 yield Input(value=current.get(name) or "", id=field_id)
             with Horizontal(id="modal-buttons"):
                 yield Button("Save", id="do-save", variant="primary")
@@ -2196,9 +2186,13 @@ class LangSmithSetupModal(ModalScreen[dict[str, str] | None]):
                 "LANGSMITH_ENDPOINT": endpoint,
                 "LANGSMITH_API_KEY": api_key,
                 "LANGSMITH_PROJECT": project,
-                "LANGSMITH_WORKSPACE_ID": self.query_one("#langsmith-workspace", Input).value.strip(),
+                "LANGSMITH_WORKSPACE_ID": self.query_one(
+                    "#langsmith-workspace", Input
+                ).value.strip(),
                 "LANGSMITH_AGENT_ID": self.query_one("#langsmith-agent-id", Input).value.strip(),
-                "LANGSMITH_AGENT_ENVIRONMENT": self.query_one("#langsmith-agent-environment", Input).value.strip(),
+                "LANGSMITH_AGENT_ENVIRONMENT": self.query_one(
+                    "#langsmith-agent-environment", Input
+                ).value.strip(),
             }
         )
 
@@ -2303,13 +2297,17 @@ class ProjectSessionPicker(ModalScreen[dict[str, str] | None]):
     def compose(self) -> ComposeResult:
         with Vertical(id="modal-box"):
             yield Static(Text("New session tab", style="bold"), id="modal-title")
-            yield Static("Choose an approved project folder and optional first task.", id="modal-hint")
+            yield Static(
+                "Choose an approved project folder and optional first task.", id="modal-hint"
+            )
             yield Select(
                 [(label, folder) for label, folder in self._projects],
                 prompt="Choose a project",
                 id="project-folder",
             )
-            yield Input(value=self._initial_task, placeholder="Initial task (optional)", id="project-task")
+            yield Input(
+                value=self._initial_task, placeholder="Initial task (optional)", id="project-task"
+            )
             with Horizontal(id="modal-buttons"):
                 yield Button("Continue", id="continue", variant="success")
                 yield Button("Cancel", id="cancel")
@@ -2495,8 +2493,11 @@ class ClaudePluginsScreen(ModalScreen[None]):
             yield OptionList(id="cplugins-list")
             yield Static("", id="cplugin-detail", classes="preview-box")
             yield Select(
-                [("Install: User", "user"), ("Install: Project", "project"),
-                 ("Install: Local", "local")],
+                [
+                    ("Install: User", "user"),
+                    ("Install: Project", "project"),
+                    ("Install: Local", "local"),
+                ],
                 value="user",
                 allow_blank=False,
                 id="plugin-scope",
@@ -2867,14 +2868,24 @@ class SettingsScreen(ModalScreen[None]):
                 yield Static("AGENT", classes="settings-section")
                 yield Static("Reasoning effort", classes="settings-label")
                 yield Select(
-                    [("Off", "off"), ("Low", "low"), ("Medium", "medium"), ("High", "high")],
+                    [
+                        ("Default · provider", "default"),
+                        ("Off · minimum", "off"),
+                        ("Low", "low"),
+                        ("Medium", "medium"),
+                        ("High", "high"),
+                        ("Xhigh", "xhigh"),
+                        ("Max", "max"),
+                    ],
                     value=self._effort(),
                     allow_blank=False,
                     id="effort-select",
                 )
                 yield Static(
-                    "How hard the model thinks before answering. Higher is slower and costs more. "
-                    "Same as /effort.",
+                    "How hard the model thinks before answering. Higher is slower and costs "
+                    "more; xhigh/max only exist on newer OpenAI, Claude and Grok models and "
+                    "clamp to each provider's ceiling elsewhere. Default restores the "
+                    "provider's own behaviour; Off is minimum thinking. Same as /effort.",
                     classes="settings-description",
                 )
                 yield Static("Context budget", classes="settings-label")
@@ -2924,9 +2935,14 @@ class SettingsScreen(ModalScreen[None]):
 
                 yield Static("INPUT", classes="settings-section")
                 with Horizontal(classes="settings-row"):
-                    yield Switch(value=self._preference("submit_on_enter"), id="submit-enter-toggle")
+                    yield Switch(
+                        value=self._preference("submit_on_enter"), id="submit-enter-toggle"
+                    )
                     yield Static("Enter sends the prompt", classes="settings-label")
-                yield Static("Turn off to make Enter insert a line; Ctrl+Enter sends.", classes="settings-description")
+                yield Static(
+                    "Turn off to make Enter insert a line; Ctrl+Enter sends.",
+                    classes="settings-description",
+                )
                 with Horizontal(classes="settings-row"):
                     yield Switch(
                         value=self._preference("autocomplete_enabled"), id="autocomplete-toggle"
@@ -2952,7 +2968,9 @@ class SettingsScreen(ModalScreen[None]):
                     classes="settings-description",
                 )
                 with Horizontal(classes="settings-row"):
-                    yield Switch(value=self._preference("low_resource_mode"), id="low-resource-toggle")
+                    yield Switch(
+                        value=self._preference("low_resource_mode"), id="low-resource-toggle"
+                    )
                     yield Static("Lower active refresh rate", classes="settings-label")
                 yield Static(
                     "Override animation rate: 5 FPS status updates and at most 15 FPS rain.",
@@ -2965,7 +2983,9 @@ class SettingsScreen(ModalScreen[None]):
                         value=self._preference("auto_approve_decisions_enabled"),
                         id="auto-approve-decisions-toggle",
                     )
-                    yield Static("Ask a decision model in auto-approve mode", classes="settings-label")
+                    yield Static(
+                        "Ask a decision model in auto-approve mode", classes="settings-label"
+                    )
                 yield Static(
                     "The configured Decisions model approves or rejects actions that need review. "
                     "Policy denials stay blocked; configure the model in /model → Decisions.",
@@ -3084,8 +3104,10 @@ class SettingsScreen(ModalScreen[None]):
         )
 
     def _effort(self) -> str:
-        value = str(self._config.get("reasoning_effort", "off") or "off").lower()
-        return value if value in {"off", "low", "medium", "high"} else "off"
+        """The configured effort; an unset value is the provider default."""
+        value = str(self._config.get("reasoning_effort") or "default").lower()
+        allowed = {"default", "off", "low", "medium", "high", "xhigh", "max"}
+        return value if value in allowed else "default"
 
     #: Context budgets offered, in tokens; 0 means the model's whole window.
     _BUDGETS = (
@@ -3306,8 +3328,13 @@ class UpdateScreen(ModalScreen[None]):
                 detail = Text(status.error)
                 command = "Check your connection, then try again."
             elif status.available:
-                title, color = f"Update available · {status.release_title or status.latest[:12]}", "green"
-                detail = Text(f"Installed  {status.current[:12] or 'Unknown'}\nLatest     {status.latest[:12]}")
+                title, color = (
+                    f"Update available · {status.release_title or status.latest[:12]}",
+                    "green",
+                )
+                detail = Text(
+                    f"Installed  {status.current[:12] or 'Unknown'}\nLatest     {status.latest[:12]}"
+                )
                 if status.release_version:
                     detail.append(f"\nRelease    {status.release_version}")
                 command = (
@@ -3325,7 +3352,9 @@ class UpdateScreen(ModalScreen[None]):
             self.query_one("#update-detail", Static).update(detail)
             self.query_one("#update-command", Static).update(Text(command))
         except Exception as exc:  # noqa: BLE001 — leave a retryable screen
-            self.query_one("#update-status", Static).update(Text("Could not check for updates", style="bold yellow"))
+            self.query_one("#update-status", Static).update(
+                Text("Could not check for updates", style="bold yellow")
+            )
             self.query_one("#update-detail", Static).update(Text(str(exc)))
         finally:
             retry.disabled = False
@@ -3525,9 +3554,12 @@ class ContextScreen(ModalScreen[None]):
         )
         snapshot = getattr(tracker, "context_snapshot", None)
         if snapshot:
-            hero.append(f"\nLast assembled request: ~{snapshot['estimated_input_tokens']:,} input tokens; "
-                        f"{snapshot['protected_tokens']:,} protected; "
-                        f"{snapshot['output_reservation']:,} reserved output.", style="dim")
+            hero.append(
+                f"\nLast assembled request: ~{snapshot['estimated_input_tokens']:,} input tokens; "
+                f"{snapshot['protected_tokens']:,} protected; "
+                f"{snapshot['output_reservation']:,} reserved output.",
+                style="dim",
+            )
             observed = snapshot.get("provider_input_tokens")
             if observed is not None:
                 hero.append(f"\nProvider-reported input: {observed:,}.", style="dim")
@@ -3537,7 +3569,8 @@ class ContextScreen(ModalScreen[None]):
                 hero.append(
                     "\nObserved request changes: "
                     + (", ".join(changes) or "none / first request")
-                    + ". Provider cache-miss cause: unknown.", style="dim",
+                    + ". Provider cache-miss cause: unknown.",
+                    style="dim",
                 )
             for reference in snapshot.get("recovery", []):
                 hero.append(f"\nRecovery: {reference}", style="dim")
@@ -3840,7 +3873,10 @@ class AgentCreateModal(ModalScreen[dict | None]):
                 yield Static(
                     Text.assemble(
                         ("System Prompt ", "bold"),
-                        ("(optional) — paste your own, or leave empty to have one generated:", "dim"),
+                        (
+                            "(optional) — paste your own, or leave empty to have one generated:",
+                            "dim",
+                        ),
                     ),
                     id="agent-prompt-label",
                 )
@@ -4322,9 +4358,7 @@ class AgentsScreen(ModalScreen[None]):
                     except Exception:
                         pass
                 self.app._log(
-                    Text(
-                        f"● Custom subagent '@{name}' created successfully!{extra}", style="green"
-                    )
+                    Text(f"● Custom subagent '@{name}' created successfully!{extra}", style="green")
                 )
                 self.app._agent_names_cache = None
             except Exception as e:
@@ -4600,8 +4634,10 @@ class LearningScreen(ModalScreen[None]):
             # Import generated legacy artifacts through the same path as the
             # console command, then read structured revisions for this screen.
             await asyncio.to_thread(
-                handle_learning_review, "review",
-                agent_dir=self._agent_dir, project=self._project,
+                handle_learning_review,
+                "review",
+                agent_dir=self._agent_dir,
+                project=self._project,
             )
             ledger = LearningLedger(self._agent_dir / "learning.sqlite3")
             self._records = await asyncio.to_thread(ledger.list, project=self._project)
@@ -4614,8 +4650,7 @@ class LearningScreen(ModalScreen[None]):
         for index, record in enumerate(self._records):
             subject = record.target or record.applicability or "lesson"
             label = (
-                f"{record.status.upper():<16} {record.kind:<14} "
-                f"{subject}  ·  {record.reference}"
+                f"{record.status.upper():<16} {record.kind:<14} {subject}  ·  {record.reference}"
             )
             options.add_option(Option(label))
             if record.reference == keep_reference:
@@ -4637,9 +4672,9 @@ class LearningScreen(ModalScreen[None]):
         record = self._selected()
         detail = self.query_one("#learning-detail", Static)
         if record is None:
-            detail.update(Text(
-                "Completed coding tasks can propose lessons and skills here.", style="dim"
-            ))
+            detail.update(
+                Text("Completed coding tasks can propose lessons and skills here.", style="dim")
+            )
         else:
             body = Text()
             body.append(f"{record.reference}  ·  {record.status}\n", style="bold cyan")
@@ -4673,8 +4708,10 @@ class LearningScreen(ModalScreen[None]):
         self._show_selected()
         try:
             message = await asyncio.to_thread(
-                handle_learning_review, f"{action} {record.reference}",
-                agent_dir=self._agent_dir, project=self._project,
+                handle_learning_review,
+                f"{action} {record.reference}",
+                agent_dir=self._agent_dir,
+                project=self._project,
             )
             self.query_one("#learning-message", Static).update(Text(message, style="green"))
         except (OSError, ValueError) as error:
@@ -5015,9 +5052,7 @@ class SkillsScreen(ModalScreen[None]):
 
     async def _confirm_and_archive(self, marked: list[str], body: "Text") -> None:
         """Ask for confirmation, then archive (never delete on one keystroke)."""
-        confirmed = await self.app.push_screen_wait(
-            ConfirmModal("Prune skills", body)
-        )
+        confirmed = await self.app.push_screen_wait(ConfirmModal("Prune skills", body))
         if not confirmed:
             return
         if not self.is_mounted:
@@ -5097,6 +5132,7 @@ class SkillsScreen(ModalScreen[None]):
                         if len(parts) >= 3:
                             instructions = parts[2].strip()
                             import yaml
+
                             metadata = yaml.safe_load(parts[1]) or {}
                             desc = str(metadata.get("description", ""))
                             optional = (metadata.get("metadata") or {}).get("include_tools", "")
@@ -5139,10 +5175,13 @@ class SkillsScreen(ModalScreen[None]):
             index = self.query_one("#skills-list", OptionList).highlighted
             if index is not None and 0 <= index < len(names):
                 from novacode_cli.skills.skills_prefs import effective_disabled
+
                 if names[index] not in effective_disabled():
                     self.dismiss(names[index])
                 else:
-                    self.query_one("#skills-hint", Static).update("Enable this skill before pinning it.")
+                    self.query_one("#skills-hint", Static).update(
+                        "Enable this skill before pinning it."
+                    )
         elif event.button.id == "reload":
             self.run_worker(self._reload_from_disk(), group="skills-reload", exclusive=True)
         elif event.button.id == "toggle":
@@ -6019,9 +6058,7 @@ class RemoteScreen(ModalScreen[None]):
 
     def compose(self) -> ComposeResult:
         with VerticalScroll(id="modal-box"):
-            yield Static(
-                Text("↗ Remote Bridges Status & Config", style="bold"), id="modal-title"
-            )
+            yield Static(Text("↗ Remote Bridges Status & Config", style="bold"), id="modal-title")
             with VerticalScroll(id="remote-status-container"):
                 yield Static("", id="remote-status")
             yield Static(Text("Start / Connect Bridge", style="bold"), id="remote-section-title")
@@ -6031,13 +6068,33 @@ class RemoteScreen(ModalScreen[None]):
                 id="remote-token",
             )
             yield Input(placeholder="Channel/Chat ID (blank = saved/auto)", id="remote-chat")
-            yield Static("Discord: sessions get their own threads in the configured text/forum channel. Grant Create Public Threads, Send Messages in Threads and Read Message History; Manage Threads supports locked threads.", id="discord-threads-hint")
+            yield Static(
+                "Discord: sessions get their own threads in the configured text/forum channel. Grant Create Public Threads, Send Messages in Threads and Read Message History; Manage Threads supports locked threads.",
+                id="discord-threads-hint",
+            )
             yield Input(placeholder="Rootapp Bot ID (blank = saved)", id="rootapp-bot-id")
-            yield Static("Rootapp: install the SDK once with Setup Rootapp (Node.js 22+), then enter Dev Token, Bot ID and channel. Send /nova <prompt> in Root.", id="rootapp-hint")
-            yield Static("Telegram: each Nova window gets a session topic. Enable Topics for the bot's private chat, or use a Topics-enabled group with Manage Topics permission.", id="remote-topics-hint")
-            yield Static("Sender access · authorize your personal user ID for the selected platform", id="remote-access-hint")
-            yield Select([("Telegram", "telegram"), ("Discord", "discord"), ("Rootapp", "rootapp")], value="telegram", allow_blank=False, id="remote-access-platform")
-            yield Input(placeholder="Personal user ID (Root GUID or numeric chat account ID)", id="remote-user-id")
+            yield Static(
+                "Rootapp: install the SDK once with Setup Rootapp (Node.js 22+), then enter Dev Token, Bot ID and channel. Send /nova <prompt> in Root.",
+                id="rootapp-hint",
+            )
+            yield Static(
+                "Telegram: each Nova window gets a session topic. Enable Topics for the bot's private chat, or use a Topics-enabled group with Manage Topics permission.",
+                id="remote-topics-hint",
+            )
+            yield Static(
+                "Sender access · authorize your personal user ID for the selected platform",
+                id="remote-access-hint",
+            )
+            yield Select(
+                [("Telegram", "telegram"), ("Discord", "discord"), ("Rootapp", "rootapp")],
+                value="telegram",
+                allow_blank=False,
+                id="remote-access-platform",
+            )
+            yield Input(
+                placeholder="Personal user ID (Root GUID or numeric chat account ID)",
+                id="remote-user-id",
+            )
             yield Static("", id="remote-authorized-users")
             with Horizontal(id="remote-access-buttons"):
                 yield Button("Authorize", id="remote-authorize", variant="success")
@@ -6068,16 +6125,17 @@ class RemoteScreen(ModalScreen[None]):
             t.append("↗ Active Bridges:\n", style=f"bold {palette.accent}")
             for b in bridges:
                 status = b.get("status", "")
-                icon = (
-                    "●" if status == "running" else ("✕" if "error" in status.lower() else "◷")
-                )
+                icon = "●" if status == "running" else ("✕" if "error" in status.lower() else "◷")
                 bot = f" (@{b['bot_user']})" if b.get("bot_user") else ""
                 platform = str(b["platform"]).capitalize()
 
                 t.append("  ")
                 status_color = (
-                    palette.success if status == "running"
-                    else palette.error if "error" in status.lower() else palette.warning
+                    palette.success
+                    if status == "running"
+                    else palette.error
+                    if "error" in status.lower()
+                    else palette.warning
                 )
                 t.append(icon, style=status_color)
                 t.append(f" {platform}{bot}", style=f"bold {palette.text}")
@@ -6099,14 +6157,19 @@ class RemoteScreen(ModalScreen[None]):
         access_platform = self._access_platform()
         users = saved.get(access_platform, {}).get("allowed_user_ids", [])
         self.query_one("#remote-authorized-users", Static).update(
-            Text(f"Authorized {access_platform.title()} users: " + (", ".join(map(str, users)) if users else "none"))
+            Text(
+                f"Authorized {access_platform.title()} users: "
+                + (", ".join(map(str, users)) if users else "none")
+            )
         )
         if saved:
             t.append("\n▣ Saved Configurations:\n", style=f"bold {palette.accent}")
             if "rootapp" in saved:
                 root = saved["rootapp"]
                 t.append("  Rootapp", style="bold green")
-                t.append(f" · Token: {'configured' if root.get('token') else 'missing'} · Channel: {root.get('channel_id', '—')} · Bot: {root.get('bot_id', '—')}\n")
+                t.append(
+                    f" · Token: {'configured' if root.get('token') else 'missing'} · Channel: {root.get('channel_id', '—')} · Bot: {root.get('bot_id', '—')}\n"
+                )
             if "discord" in saved:
                 d = saved["discord"]
                 tok = "● Configured" if d.get("token") else "✖ Missing Token"
@@ -6127,7 +6190,10 @@ class RemoteScreen(ModalScreen[None]):
                 t.append(" · Chat: ")
                 t.append(str(tg.get("chat_id", "—")), style="yellow")
                 t.append("\n")
-        t.append("\nLive streaming: local TUI tasks and remote replies.\nAnswers and tool activity appear separately.", style="dim")
+        t.append(
+            "\nLive streaming: local TUI tasks and remote replies.\nAnswers and tool activity appear separately.",
+            style="dim",
+        )
         self.query_one("#remote-status", Static).update(t)
 
     def _build_args(self, platform: str) -> str:
@@ -6137,7 +6203,9 @@ class RemoteScreen(ModalScreen[None]):
         if token:
             args += f" --token {token}"
         if chat:
-            args += f" --channel {chat}" if platform in {"discord", "rootapp"} else f" --chat {chat}"
+            args += (
+                f" --channel {chat}" if platform in {"discord", "rootapp"} else f" --chat {chat}"
+            )
         if platform == "rootapp":
             bot_id = self.query_one("#rootapp-bot-id", Input).value.strip()
             if bot_id:
@@ -6211,9 +6279,15 @@ class RemoteScreen(ModalScreen[None]):
             platform = self._access_platform()
             from novacode_cli.commands.rootapp_remote import valid_root_id
 
-            valid = valid_root_id(user_id) if platform == "rootapp" else bool(re.fullmatch(r"[1-9][0-9]*", user_id))
+            valid = (
+                valid_root_id(user_id)
+                if platform == "rootapp"
+                else bool(re.fullmatch(r"[1-9][0-9]*", user_id))
+            )
             if not valid:
-                self.query_one("#remote-result", Static).update(Text(f"Enter a valid {platform.title()} user ID.", style="red"))
+                self.query_one("#remote-result", Static).update(
+                    Text(f"Enter a valid {platform.title()} user ID.", style="red")
+                )
                 return
             action = "allow-user" if bid == "remote-authorize" else "deny-user"
             self._run_remote(f"{action} {platform} {user_id}")
@@ -6276,11 +6350,14 @@ class BackgroundTasksScreen(ModalScreen[dict | None]):
             hint = self.query_one("#tasks-hint", Static)
         except NoMatches:
             return
-        hint.update(Text(
-            "↑/↓ · t stop · l logs · Esc" if compact else
-            "↑/↓ select · [t]erminate · [r]estart · [l]ogs · [c]opy cmd · [x] clear done · Esc close",
-            style="dim",
-        ))
+        hint.update(
+            Text(
+                "↑/↓ · t stop · l logs · Esc"
+                if compact
+                else "↑/↓ select · [t]erminate · [r]estart · [l]ogs · [c]opy cmd · [x] clear done · Esc close",
+                style="dim",
+            )
+        )
 
     def _registry(self):
         if self._task_registry is not None:
@@ -6308,7 +6385,9 @@ class BackgroundTasksScreen(ModalScreen[dict | None]):
         if not same_rows:
             ol.clear_options()
         running = sum(task.status == "running" for task in self._tasks)
-        self.query_one("#modal-title", Static).update(Text(f"Background Tasks · {running} running", style="bold"))
+        self.query_one("#modal-title", Static).update(
+            Text(f"Background Tasks · {running} running", style="bold")
+        )
         if not self._tasks:
             ol.add_option(Option("No background tasks."))
         else:
@@ -6537,7 +6616,9 @@ class RouterScreen(ModalScreen[dict | None]):
                     id="router-profile",
                 )
                 with Horizontal(id="router-profile-row"):
-                    yield Input(placeholder="New profile name (e.g. Coding)", id="router-profile-name")
+                    yield Input(
+                        placeholder="New profile name (e.g. Coding)", id="router-profile-name"
+                    )
                     yield Button("Add profile", id="router-profile-add")
                 yield Static("", id="router-status")
                 yield OptionList(id="router-routes")
@@ -6549,14 +6630,27 @@ class RouterScreen(ModalScreen[dict | None]):
                 yield Input(placeholder="gpt-5-mini, qwen3-vl:235b-cloud, …", id="router-model")
                 yield Static("Reasoning effort (provider capability permitting)")
                 yield Select(
-                    [("Use session effort", "inherit"), ("Off", "off"), ("Low", "low"),
-                     ("Medium", "medium"), ("High", "high")],
-                    value="inherit", allow_blank=False, id="router-effort",
+                    [
+                        ("Use session effort", "inherit"),
+                        ("Off", "off"),
+                        ("Low", "low"),
+                        ("Medium", "medium"),
+                        ("High", "high"),
+                        ("Xhigh", "xhigh"),
+                        ("Max", "max"),
+                    ],
+                    value="inherit",
+                    allow_blank=False,
+                    id="router-effort",
                 )
-                yield Static("Criteria — when should this route be chosen?", id="router-criteria-label")
+                yield Static(
+                    "Criteria — when should this route be chosen?", id="router-criteria-label"
+                )
                 yield Input(placeholder="Direct lookups and small edits.", id="router-criteria")
                 yield Static("Decision model", id="router-decision-label")
-                yield Select(list(self._PRESETS), value="tev1", allow_blank=False, id="router-preset")
+                yield Select(
+                    list(self._PRESETS), value="tev1", allow_blank=False, id="router-preset"
+                )
                 yield Input(placeholder="tev1:4b, jev-latest, …", id="router-decision-model")
                 yield Static("System One endpoint", id="router-endpoint-label")
                 yield Input(placeholder="https://…/v1/systemone", id="router-endpoint")
@@ -6583,7 +6677,11 @@ class RouterScreen(ModalScreen[dict | None]):
         elif self._endpoint == self._config.TOOL_VERDICT_JEV_ENDPOINT:
             preset = "jev"
         elif self._endpoint == self._config.TOOL_VERDICT_OPENCODE_ENDPOINT:
-            preset = "opencode_zen_free" if self._model == self._config.TOOL_VERDICT_OPENCODE_FREE_MODEL else "opencode_zen"
+            preset = (
+                "opencode_zen_free"
+                if self._model == self._config.TOOL_VERDICT_OPENCODE_FREE_MODEL
+                else "opencode_zen"
+            )
         elif self._endpoint == self._config.TOOL_VERDICT_COMMANDCODE_ENDPOINT:
             preset = "commandcode"
         elif self._endpoint == self._config.ROUTER_DEFAULT_ENDPOINT and self._model.startswith(
@@ -6716,7 +6814,9 @@ class RouterScreen(ModalScreen[dict | None]):
         self._routes = copy.deepcopy(settings.get("routes", []))
         self._enabled = bool(settings.get("enabled", False))
         self._default_route = settings.get("default_route")
-        self._endpoint = str(settings.get("decision_endpoint") or self._config.ROUTER_DEFAULT_ENDPOINT)
+        self._endpoint = str(
+            settings.get("decision_endpoint") or self._config.ROUTER_DEFAULT_ENDPOINT
+        )
         self._model = str(settings.get("decision_model") or self._config.ROUTER_DEFAULT_MODEL)
         self.query_one("#router-endpoint", Input).value = self._endpoint
         self.query_one("#router-decision-model", Input).value = self._model
@@ -6733,15 +6833,24 @@ class RouterScreen(ModalScreen[dict | None]):
         if event.select.id != "router-preset":
             return
         if event.value == "openai":
-            self.query_one("#router-endpoint", Input).value = self._config.TOOL_VERDICT_OPENAI_ENDPOINT
-            self.query_one("#router-decision-model", Input).value = self._config.TOOL_VERDICT_OPENAI_MODEL
+            self.query_one(
+                "#router-endpoint", Input
+            ).value = self._config.TOOL_VERDICT_OPENAI_ENDPOINT
+            self.query_one(
+                "#router-decision-model", Input
+            ).value = self._config.TOOL_VERDICT_OPENAI_MODEL
         elif event.value == "jev":
             self.query_one("#router-endpoint", Input).value = self._config.TOOL_VERDICT_JEV_ENDPOINT
-            self.query_one("#router-decision-model", Input).value = self._config.TOOL_VERDICT_JEV_MODEL
+            self.query_one(
+                "#router-decision-model", Input
+            ).value = self._config.TOOL_VERDICT_JEV_MODEL
         elif event.value in {"opencode_zen", "opencode_zen_free"}:
-            self.query_one("#router-endpoint", Input).value = self._config.TOOL_VERDICT_OPENCODE_ENDPOINT
+            self.query_one(
+                "#router-endpoint", Input
+            ).value = self._config.TOOL_VERDICT_OPENCODE_ENDPOINT
             self.query_one("#router-decision-model", Input).value = (
-                self._config.TOOL_VERDICT_OPENCODE_FREE_MODEL if event.value == "opencode_zen_free"
+                self._config.TOOL_VERDICT_OPENCODE_FREE_MODEL
+                if event.value == "opencode_zen_free"
                 else self._config.TOOL_VERDICT_OPENCODE_MODEL
             )
             self._hint("Uses your OpenCode Zen API key, configured through /auth.")
@@ -6752,8 +6861,12 @@ class RouterScreen(ModalScreen[dict | None]):
             self.query_one("#router-decision-model", Input).value = model
             self._hint("Uses your Command Code API key, configured through /auth.")
         elif event.value == "tev1":
-            self.query_one("#router-endpoint", Input).value = self._config.TOOL_VERDICT_DEFAULT_ENDPOINT
-            self.query_one("#router-decision-model", Input).value = self._config.TOOL_VERDICT_DEFAULT_MODEL
+            self.query_one(
+                "#router-endpoint", Input
+            ).value = self._config.TOOL_VERDICT_DEFAULT_ENDPOINT
+            self.query_one(
+                "#router-decision-model", Input
+            ).value = self._config.TOOL_VERDICT_DEFAULT_MODEL
 
     def _read_fields(self) -> dict[str, str] | None:
         """The route currently described by the fields, or ``None`` if incomplete."""
@@ -6781,7 +6894,9 @@ class RouterScreen(ModalScreen[dict | None]):
         if route is None:
             return
         if any(r["id"] == route["id"] for r in self._routes):
-            self._hint(f"Route {route['id']!r} already exists. Use Update selected to edit it.", error=True)
+            self._hint(
+                f"Route {route['id']!r} already exists. Use Update selected to edit it.", error=True
+            )
             return
         self._routes.append(route)
         self._editing = None
@@ -6798,7 +6913,9 @@ class RouterScreen(ModalScreen[dict | None]):
         route = self._read_fields()
         if route is None:
             return
-        if any(i != index and existing["id"] == route["id"] for i, existing in enumerate(self._routes)):
+        if any(
+            i != index and existing["id"] == route["id"] for i, existing in enumerate(self._routes)
+        ):
             self._hint(f"Route {route['id']!r} already exists.", error=True)
             return
         self._routes[index] = route

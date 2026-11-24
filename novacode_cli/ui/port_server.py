@@ -203,11 +203,11 @@ def _config() -> Any:  # noqa: ANN401 — NovaConfig is untyped configuration
 
 
 def _effort_setting(config: Any) -> str:  # noqa: ANN401 — see _config
-    """Read reasoning effort, falling back to `off` for an unknown value."""
+    """Read reasoning effort; an unset value is the provider default."""
     from novacode_cli.ui.screen_specs import EFFORT_OPTIONS
 
-    value = str(config.get("reasoning_effort", "off") or "off").lower()
-    return value if value in EFFORT_OPTIONS else "off"
+    value = str(config.get("reasoning_effort") or "default").lower()
+    return value if value in EFFORT_OPTIONS else "default"
 
 
 def _budget_setting(config: Any) -> int:  # noqa: ANN401 — see _config
@@ -361,7 +361,9 @@ def _apply_preferences(config: Any, before: Any, answer: dict[str, Any]) -> Any:
     swarm = flag("agent_teams_swarm", current=before.swarm) and teams
 
     with contextlib.suppress(Exception):
-        config.set("reasoning_effort", effort)
+        # "default" clears the override — the stored value must be unset, not
+        # the string, or ollama would wire a literal "default" effort.
+        config.set("reasoning_effort", None if effort == "default" else effort)
         config.set("context_budget_tokens", budget)
         config.set("submit_on_enter", flag("submit_on_enter", current=before.submit_on_enter))
         config.set(
@@ -431,7 +433,8 @@ def _store_settings(effort: str, budget: int) -> None:
     """
     config = _config()
     with contextlib.suppress(Exception):
-        config.set("reasoning_effort", effort)
+        # "default" means unset — never store the literal string.
+        config.set("reasoning_effort", None if effort == "default" else effort)
         config.set("context_budget_tokens", budget)
 
 

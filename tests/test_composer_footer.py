@@ -128,3 +128,73 @@ async def test_shift_tab_cycles_accept_edits_then_plan_mode() -> None:
         await pilot.pause()
         assert state.auto_approve is False and state.plan_mode_enabled is False
         assert "accept edits off" in str(app.query_one("#composer-modes").render())
+
+
+async def test_effort_suffix_shows_only_when_the_model_consumes_it(monkeypatch) -> None:
+    """A model that silently drops effort must not be advertised with it."""
+    app = _app()
+    async with app.run_test(size=(120, 40)) as pilot:
+        app._home_style = "minimal"
+        app._refresh_info_bar()
+        app._reasoning_effort = "high"
+        monkeypatch.setattr(app, "_model_provider", "opencode", raising=False)
+        await pilot.pause()
+
+        # A model family with no verified effort control: plain name only.
+        app.model_name = "some-unknown-model"
+        app._effort_accepts_cache = None
+        app._refresh_composer_info()
+        await pilot.pause()
+        head = str(app.query_one("#composer-info").render()).split(" · ")[0]
+        assert head == "some-unknown-model", "no effort claim for a model that drops it"
+
+        # A verified family shows the suffix.
+        app.model_name = "glm-5.3-flash"
+        app._effort_accepts_cache = None
+        app._refresh_composer_info()
+        await pilot.pause()
+        head = str(app.query_one("#composer-info").render()).split(" · ")[0]
+        assert head == "glm-5.3-flash with high"
+
+
+async def test_plan_mode_indicator_is_plain_text() -> None:
+    app = _app()
+    async with app.run_test(size=(120, 40)) as pilot:
+        app._home_style = "minimal"
+        app._refresh_info_bar()
+        await pilot.pause()
+        app.session_state.plan_mode_enabled = True
+        app._refresh_composer_modes()
+        await pilot.pause()
+        modes = str(app.query_one("#composer-modes").render())
+        assert "plan mode" in modes
+        assert "⏸" not in modes, "the plan-mode indicator is plain text"
+
+
+async def test_question_mark_on_empty_composer_opens_the_help_reference() -> None:
+    from novacode_cli.tui.reference_screens import HelpScreen
+
+    app = _app()
+    async with app.run_test(size=(120, 40)) as pilot:
+        app._home_style = "minimal"
+        app._refresh_info_bar()
+        await pilot.pause()
+        await pilot.press("?")
+        await pilot.pause(0.2)
+        assert any(isinstance(screen, HelpScreen) for screen in app.screen_stack), (
+            "? must open the shortcuts/command reference"
+        )
+
+
+async def test_question_mark_mid_text_still_types_itself() -> None:
+    app = _app()
+    async with app.run_test(size=(120, 40)) as pilot:
+        app._home_style = "minimal"
+        app._refresh_info_bar()
+        await pilot.pause()
+        prompt = app.query_one("#prompt")
+        prompt.text = "what"
+        prompt.move_cursor(prompt.document.end)
+        await pilot.press("?")
+        await pilot.pause()
+        assert prompt.text == "what?"

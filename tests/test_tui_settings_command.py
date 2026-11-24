@@ -42,6 +42,7 @@ def _worker() -> SimpleNamespace:
 def config(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     """A fake NovaConfig: a dict behind the two accessors the port uses."""
     stored: dict[str, Any] = {"reasoning_effort": "medium", "context_budget_tokens": 200_000}
+
     def get(key: str, default: Any = None) -> Any:  # noqa: ANN401 — mirrors NovaConfig
         return stored.get(key, default)
 
@@ -75,9 +76,22 @@ def test_the_spec_offers_both_choices() -> None:
     assert len(fields["context_budget_tokens"]["options"]) == len(CONTEXT_BUDGETS)
 
 
-def test_an_unknown_effort_falls_back_to_off() -> None:
+def test_an_unknown_effort_falls_back_to_provider_default() -> None:
     fields = {field["key"]: field for field in settings_spec("turbo", 0).payload["fields"]}
-    assert fields["reasoning_effort"]["value"] == "off"
+    assert fields["reasoning_effort"]["value"] == "default"
+
+
+def test_the_effort_options_span_the_provider_dials() -> None:
+    """xhigh and max exist natively on OpenAI/Claude/Grok and clamp elsewhere."""
+    assert EFFORT_OPTIONS == ("default", "off", "low", "medium", "high", "xhigh", "max")
+
+
+async def test_a_default_answer_clears_the_override(config: dict[str, Any]) -> None:
+    """'default' must store unset, not the literal string, or ollama would
+    wire a literal 'default' effort into every request."""
+    port, _ = _port(answer={"reasoning_effort": "default"})
+    await port.run("settings", None)
+    assert config["reasoning_effort"] is None
 
 
 def test_a_hand_set_budget_stays_visible() -> None:
