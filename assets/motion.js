@@ -187,6 +187,28 @@
     if (img) tl.fromTo(img, { scale: 1.07 }, { scale: 1, duration: 1.2, ease: "power4.out" }, 0);
   });
 
+  /* ---- the crew: each cut-out drifts against its card while the card crosses the
+     viewport. Scrubbed by Lenis through ScrollTrigger, never pinned, and the cards
+     themselves are [data-fade] so they still press in. Agent view disables every
+     trigger above; reduced motion never reaches this file. */
+  gsap.utils.toArray(".crew-card").forEach(function (card) {
+    var artEl = card.querySelector(".crew-art");
+    if (!artEl) return;
+    var drift = card.querySelector(".crew-dots");
+    /* rises only: a drift that dipped would push the feet below the card floor and
+       the overflow clip would behead or crop the figure */
+    gsap.fromTo(artEl, { yPercent: 0 }, {
+      yPercent: -3, ease: "none",
+      scrollTrigger: { trigger: card, start: "top bottom", end: "bottom top", scrub: 0.5 }
+    });
+    if (drift) {
+      gsap.fromTo(drift, { yPercent: -6 }, {
+        yPercent: 6, ease: "none",
+        scrollTrigger: { trigger: card, start: "top bottom", end: "bottom top", scrub: 0.7 }
+      });
+    }
+  });
+
   /* ---- magnetic: the two controls worth aiming at lean toward the pointer */
   if (fine) {
     gsap.utils.toArray("[data-magnetic]").forEach(function (el) {

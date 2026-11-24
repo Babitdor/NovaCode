@@ -63,12 +63,17 @@
   font-family:'Geist Mono';src:url('assets/fonts/geist-mono-var.woff2') format('woff2');
   font-weight:100 900;font-style:normal;font-display:swap;
 }
+@font-face{
+  font-family:'Archivo';src:url('assets/fonts/archivo-400_700-normal.woff2') format('woff2');
+  font-weight:400 700;font-style:normal;font-display:swap;
+}
 /* Phosphor: charcoal-teal screen, one cyan, one red and one mint held in reserve.
    The light theme is the same plate in daylight: identical roles shifted to their print inks. */
 :root{
   --ground:#030E3E; --panel:#131B5D; --ink:#FAD9B6; --muted:rgba(250,217,182,.72);
   --line:rgba(250,217,182,.28); --accent:#F7B98A; --on-accent:#030E3E;
   --proof:#B96F6E; --live:#B3A7AC;
+  --sticker:brightness(0) invert(1);
   --screen:#0A1215; --screen-chrome:#131B5D; --screen-ink:250 217 182; --screen-accent:247 185 138;
   --scroll-thumb:#3D203C; --scroll-track:#030E3E;
   --f-disp:'Instrument Serif',Georgia,'Times New Roman',serif;
@@ -88,6 +93,7 @@
     --ground:#FAD9B6; --panel:#FFFFFF; --ink:#0A1215; --muted:rgba(10,20,22,.74);
     --line:rgba(10,20,22,.30); --accent:#7A2F3A; --on-accent:#FAD9B6;
     --proof:#7A2F3A; --live:#6B5B7A;
+    --sticker:brightness(0);
     --screen:#FFF7EC; --screen-chrome:#F1DFC6; --screen-ink:10 18 21; --screen-accent:122 47 58;
     --scroll-thumb:#817494; --scroll-track:#FAD9B6;
     color-scheme:light;
@@ -97,6 +103,7 @@
   --ground:#FAD9B6; --panel:#FFFFFF; --ink:#0A1215; --muted:rgba(10,20,22,.74);
   --line:rgba(10,20,22,.30); --accent:#7A2F3A; --on-accent:#FAD9B6;
   --proof:#7A2F3A; --live:#6B5B7A;
+  --sticker:brightness(0);
   --screen:#FFF7EC; --screen-chrome:#F1DFC6; --screen-ink:10 18 21; --screen-accent:122 47 58;
   --scroll-thumb:#817494; --scroll-track:#FAD9B6;
   color-scheme:light;
@@ -314,6 +321,49 @@ code{
 .workflow h3{font-family:var(--f-disp);font-size:1.35rem;color:var(--accent);letter-spacing:-.005em}
 .workflow .body{margin-top:10px;color:var(--muted);font-size:.94rem}
 .workflow code{background:none;border:0;padding:0;color:var(--accent)}
+/* the crew: one 16:9 card per agent — a themed plate, an accent tag, a sticker-cut
+   portrait. Every colour is a palette role, so the card turns with the theme; only the
+   cut-out's own outline flips (white at night, ink in daylight) through --sticker.
+   Radius stays 0. */
+.crew-band{margin-top:clamp(16px,2.2vw,26px)}
+.crew-band .crew-card{grid-template-columns:1fr 1fr}
+.crew-band .crew-copy{padding:clamp(20px,2.6vw,34px)}
+.crew-band .crew-badge{font-size:.68rem;padding:7px 10px 6px}
+.crew-band .crew-name{font-size:clamp(1.7rem,2.6vw,2.4rem)}
+.crew-band .crew-body{max-width:36ch;font-size:clamp(.82rem,1vw,.98rem)}
+.crew-band .crew-line{font-size:clamp(.9rem,1.2vw,1.12rem)}
+.crew-card{position:relative;display:grid;grid-template-columns:1.06fr .94fr;aspect-ratio:16/9;background:var(--panel);border:1px solid var(--line);overflow:hidden;min-width:0}
+.crew-copy{position:relative;z-index:2;display:flex;flex-direction:column;padding:clamp(16px,2.1vw,26px);min-width:0}
+.crew-badge{align-self:flex-start;background:var(--accent);color:var(--on-accent);font:700 .64rem/1 var(--f-mono);letter-spacing:.16em;text-transform:uppercase;padding:6px 8px 5px}
+.crew-name{margin-top:clamp(9px,1.2vw,14px);font-family:'Archivo',ui-sans-serif,system-ui,sans-serif;font-weight:700;font-size:clamp(1.35rem,1.9vw,1.8rem);line-height:1.02;letter-spacing:-.02em;color:var(--ink)}
+.crew-body{margin-top:9px;color:var(--muted);font-size:clamp(.76rem,.86vw,.86rem);line-height:1.5}
+.crew-line{margin-top:auto;padding-left:10px;border-left:2px solid var(--accent);color:var(--ink);font-family:'Archivo',ui-sans-serif,system-ui,sans-serif;font-weight:700;font-size:clamp(.78rem,.95vw,.95rem);line-height:1.35;letter-spacing:-.01em}
+.crew-tools{margin-top:8px;color:var(--muted);font:400 .62rem/1.4 var(--f-mono);letter-spacing:.12em;text-transform:uppercase}
+.crew-stage{position:relative;overflow:hidden}
+.crew-stage picture{display:contents}
+.crew-dots{position:absolute;inset:auto 0 0 0;width:78%;height:60%;margin-left:auto;background-image:radial-gradient(circle,var(--accent) 1.1px,transparent 1.4px);background-size:10px 10px;opacity:.45;-webkit-mask-image:linear-gradient(205deg,#000 8%,transparent 76%);mask-image:linear-gradient(205deg,#000 8%,transparent 76%)}
+/* the whole figure must stand inside the card: its height is capped by the card, its
+   feet rest on the bottom edge, and neither axis may exceed the stage */
+/* inset must clear the silhouette's own 7% horizontal expansion, or overflow:hidden
+   slices the sticker outline along the card's right edge */
+.crew-silhouette,.crew-art{position:absolute;right:clamp(9px,1.5vw,18px);bottom:0;left:auto;height:min(94%,calc(100% - 8px));width:auto;max-width:none}
+.crew-silhouette{z-index:1;filter:var(--sticker);transform:scaleX(1.07) scaleY(1.025);transform-origin:50% 100%}
+.crew-art{z-index:2}
+.crew-icon{position:absolute;z-index:3;top:clamp(12px,1.6vw,18px);right:clamp(12px,1.6vw,18px);display:grid;place-items:center;width:34px;height:34px;border:1px solid var(--line);color:var(--ink)}
+.crew-icon svg{display:block;width:18px;height:18px}
+@media (max-width:700px){
+  /* a 16:9 card cannot hold the copy on a phone: the card turns upright and the
+     cut-out drops to a bottom-right stage under the text */
+  .crew-card{display:block;aspect-ratio:4/5}
+  .crew-copy{padding:16px 18px;height:100%}
+  .crew-body{max-width:clamp(180px,58%,300px)}
+  .crew-stage{position:absolute;inset:auto 0 0 auto;width:70%;height:58%}
+  .crew-silhouette,.crew-art{height:min(100%,calc(100% - 6px))}
+  .crew-body{max-width:100%}
+  /* the phrase and scope sit bottom-left; the cut-out's legs occupy the bottom-right,
+     so both are held to the left half rather than running under the figure */
+  .crew-line,.crew-tools{max-width:52%}
+}
 .trail-full article{padding-right:18px}
 /* the six checkpoints, punched into the plate */
 .checks{display:grid;grid-template-columns:repeat(3,auto);gap:8px 14px;margin-top:14px;font:400 .8rem/1.5 var(--f-mono)}
@@ -819,7 +869,7 @@ html.js .art.art-ready{opacity:1}
 .nova-sprite{position:absolute;inset:0;background:url('assets/mascots/nova-directions.webp') 50% 50% / 300% 300% no-repeat}
 .nova-mascot[data-reaction] .nova-sprite{background-image:url('assets/mascots/nova-reactions.webp')}
 .nova-mascot:hover,.nova-mascot:focus-visible{background:var(--panel)}
-.index-cols{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:0 clamp(16px,2.4vw,34px)}
+.index-cols{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:0 clamp(16px,2.4vw,34px)}
 @media (max-width:1180px){.index-cols{grid-template-columns:repeat(3,minmax(0,1fr))}}
 @media (max-width:760px){.index-cols{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media (max-width:560px){.index-cols{grid-template-columns:1fr}}
@@ -1076,13 +1126,15 @@ html[data-view="agent"] .page-progress{display:none !important}
     <a href="#install">Install</a>
     <h2>Die 01 &middot; delegation</h2>
     <a href="#rooms">Several agents, one terminal</a>
-    <h2>Die 02 &middot; memory</h2>
+    <h2>Die 02 &middot; the crew</h2>
+    <a href="#crew">Nova and the specialists</a>
+    <h2>Die 03 &middot; memory</h2>
     <a href="#memory">Memory you can inspect</a>
-    <h2>Die 03 &middot; verification</h2>
+    <h2>Die 04 &middot; verification</h2>
     <a href="#verify">Proof, not a claim</a>
-    <h2>Die 04 &middot; control</h2>
+    <h2>Die 05 &middot; control</h2>
     <a href="#control">You set the boundaries</a>
-    <h2>Die 05 &middot; the record</h2>
+    <h2>Die 06 &middot; the record</h2>
     <a href="#record">Release by release</a>
     <h2>Spec</h2>
     <a href="#spec">Only in Nova</a>
@@ -1327,20 +1379,24 @@ e55c392 tui: context compression</div>
           <a href="#rooms">Several agents<em>01</em></a>
         </div>
         <div class="index-col">
-          <h3>02 &middot; memory</h3>
-          <a href="#memory">Notes in Markdown<em>02</em></a>
+          <h3>02 &middot; the crew</h3>
+          <a href="#crew">Who does what<em>02</em></a>
         </div>
         <div class="index-col">
-          <h3>03 &middot; verification</h3>
-          <a href="#verify">Proof, not a claim<em>03</em></a>
+          <h3>03 &middot; memory</h3>
+          <a href="#memory">Notes in Markdown<em>03</em></a>
         </div>
         <div class="index-col">
-          <h3>04 &middot; control</h3>
-          <a href="#control">Plans and approvals<em>04</em></a>
+          <h3>04 &middot; verification</h3>
+          <a href="#verify">Proof, not a claim<em>04</em></a>
         </div>
         <div class="index-col">
-          <h3>05 &middot; the record</h3>
-          <a href="#record">Release by release<em>05</em></a>
+          <h3>05 &middot; control</h3>
+          <a href="#control">Plans and approvals<em>05</em></a>
+        </div>
+        <div class="index-col">
+          <h3>06 &middot; the record</h3>
+          <a href="#record">Release by release<em>06</em></a>
         </div>
       </div>
     </div>
@@ -1457,9 +1513,116 @@ e55c392 tui: context compression</div>
     </div>
   </section>
 
-  <section class="divider" aria-labelledby="memory-chapter">
+  <section class="divider" aria-labelledby="crew-chapter">
     <div class="wrap">
       <div class="num" aria-hidden="true">die 02</div>
+      <div>
+        <h2 class="chap" data-motion-text="words" id="crew-chapter">Four hands on one terminal</h2>
+        <p class="sub">Nova is the default. Serena, Ralph and Nora each hold one discipline and a toolset that will not pretend otherwise.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="band wrap" id="crew" aria-labelledby="crew-title">
+    <div class="sec-head">
+      <div>
+        <h2 class="l" data-motion-text="words" id="crew-title">Named agents, not anonymous subprocesses.</h2>
+      </div>
+      <p class="lead" data-fade>You call any of them by name. Each keeps its own scope and its own tools, and the transcript stays clear about who did the work.</p>
+    </div>
+  </section>
+
+  <section class="wrap crew-band" aria-labelledby="crew-nova">
+    <article class="crew-card" data-fade>
+      <div class="crew-copy">
+        <p class="crew-badge">The core architect</p>
+        <h3 class="crew-name" id="crew-nova">Nova</h3>
+        <p class="crew-body">Reads the prompt as a spec, picks the smallest tool that fits, and ships the result with nothing spare.</p>
+        <p class="crew-line">&ldquo;Spec understood. Executing.&rdquo;</p>
+        <p class="crew-tools">Native tools &middot; the default</p>
+      </div>
+      <div class="crew-stage">
+        <span class="crew-dots" aria-hidden="true"></span>
+        <img class="crew-silhouette" src="assets/crew/nova.webp" alt="" aria-hidden="true" width="640" height="960" loading="lazy" decoding="async">
+        <picture>
+          <source srcset="assets/crew/nova.webp" type="image/webp">
+          <img class="crew-art" src="assets/nova.png" alt="Nova: short brown hair, a dark zip jacket with a Nova patch on the sleeve, holding a tablet beside a floating code panel" width="640" height="960" loading="lazy" decoding="async">
+        </picture>
+      </div>
+        <span class="crew-icon" aria-hidden="true"><svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="square"><rect x="6.5" y="6.5" width="19" height="19"/><rect x="13" y="13" width="6" height="6"/></svg></span>
+    </article>
+  </section>
+
+  <section class="wrap crew-band" aria-labelledby="crew-serena">
+    <article class="crew-card" data-fade>
+      <div class="crew-copy">
+        <p class="crew-badge">The surgical specialist</p>
+        <h3 class="crew-name" id="crew-serena">Serena</h3>
+        <p class="crew-body">Bound to her own toolset. Inside scope she cuts once; outside it she says so instead of guessing.</p>
+        <p class="crew-line">&ldquo;Stay in scope. Cut once.&rdquo;</p>
+        <p class="crew-tools">Own toolset only</p>
+      </div>
+      <div class="crew-stage">
+        <span class="crew-dots" aria-hidden="true"></span>
+        <img class="crew-silhouette" src="assets/crew/serena.webp" alt="" aria-hidden="true" width="640" height="960" loading="lazy" decoding="async">
+        <picture>
+          <source srcset="assets/crew/serena.webp" type="image/webp">
+          <img class="crew-art" src="assets/serena.png" alt="Serena: long black hair, thin glasses and a long white lab coat, arms folded" width="640" height="960" loading="lazy" decoding="async">
+        </picture>
+      </div>
+        <span class="crew-icon" aria-hidden="true"><svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="square"><path d="M7 25 25 7M25 7H15M25 7v10"/></svg></span>
+    </article>
+  </section>
+
+  <section class="wrap crew-band" aria-labelledby="crew-ralph">
+    <article class="crew-card" data-fade>
+      <div class="crew-copy">
+        <p class="crew-badge">The relentless workhorse</p>
+        <h3 class="crew-name" id="crew-ralph">Ralph</h3>
+        <p class="crew-body">Built for autonomous loops: read the trace, adjust, swing again, and keep going until the exit code is zero.</p>
+        <p class="crew-line">&ldquo;Failed? Cool. Running iteration 14.&rdquo;</p>
+        <p class="crew-tools">Autonomous loops</p>
+      </div>
+      <div class="crew-stage">
+        <span class="crew-dots" aria-hidden="true"></span>
+        <img class="crew-silhouette" src="assets/crew/ralph.webp" alt="" aria-hidden="true" width="640" height="960" loading="lazy" decoding="async">
+        <picture>
+          <source srcset="assets/crew/ralph.webp" type="image/webp">
+          <img class="crew-art" src="assets/ralph.png" alt="Ralph: tousled brown hair, a hooded dark jacket, gloves and a full tool belt, boots planted, holding a tablet" width="640" height="960" loading="lazy" decoding="async">
+        </picture>
+      </div>
+        <span class="crew-icon" aria-hidden="true"><svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="square"><path d="M25 15.6A9 9 0 1 1 22.3 9"/><path d="M25 6v4.4h-4.4"/></svg></span>
+    </article>
+  </section>
+
+  <section class="wrap crew-band" aria-labelledby="crew-nora">
+    <article class="crew-card" data-fade>
+      <div class="crew-copy">
+        <p class="crew-badge">The field investigator</p>
+        <h3 class="crew-name" id="crew-nora">Nora</h3>
+        <p class="crew-body">The one who leaves the sandbox — browsers, web search, computer use — and turns messy pages into structured intel.</p>
+        <p class="crew-line">&ldquo;Let me pull up a browser and check.&rdquo;</p>
+        <p class="crew-tools">Browser &middot; web &middot; desktop</p>
+      </div>
+      <div class="crew-stage">
+        <span class="crew-dots" aria-hidden="true"></span>
+        <img class="crew-silhouette" src="assets/crew/nora.webp" alt="" aria-hidden="true" width="640" height="960" loading="lazy" decoding="async">
+        <picture>
+          <source srcset="assets/crew/nora.webp" type="image/webp">
+          <img class="crew-art" src="assets/nora.png" alt="Nora: sunglasses pushed up into long dark hair, an olive field jacket and a backpack, camera at her hip, holding a laptop marked with a crescent" width="640" height="960" loading="lazy" decoding="async">
+        </picture>
+      </div>
+        <span class="crew-icon" aria-hidden="true"><svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="square"><circle cx="16" cy="16" r="8.5"/><path d="M16 5v4M16 23v4M5 16h4M23 16h4"/></svg></span>
+    </article>
+  </section>
+  <section class="wrap crew-band" aria-label="Crew notes">
+    <p class="tol" style="max-width:70ch">&plusmn; Specialists run in-process or in the background. Background work needs the <code>agents-server</code> extra.</p>
+    <a class="text-link" href="docs/#page-subagents" style="display:inline-flex;margin-top:18px">Read about agents and their scopes <span aria-hidden="true">&nearr;</span></a>
+  </section>
+
+  <section class="divider" aria-labelledby="memory-chapter">
+    <div class="wrap">
+      <div class="num" aria-hidden="true">die 03</div>
       <div>
         <h2 class="chap" data-motion-text="words" id="memory-chapter">Memory you can inspect</h2>
         <p class="sub">Useful notes live in files you can open, search, edit, or remove.</p>
@@ -1495,7 +1658,7 @@ e55c392 tui: context compression</div>
 
   <section class="divider" aria-labelledby="verify-chapter">
     <div class="wrap">
-      <div class="num" aria-hidden="true">die 03</div>
+      <div class="num" aria-hidden="true">die 04</div>
       <div>
         <h2 class="chap" data-motion-text="words" id="verify-chapter">Proof, not a completion claim</h2>
         <p class="sub">Nova records what it ran, what it saw, and what it could not check.</p>
@@ -1587,7 +1750,7 @@ e55c392 tui: context compression</div>
 
   <section class="divider" aria-labelledby="control-chapter">
     <div class="wrap">
-      <div class="num" aria-hidden="true">die 04</div>
+      <div class="num" aria-hidden="true">die 05</div>
       <div>
         <h2 class="chap" data-motion-text="words" id="control-chapter">You set the boundaries</h2>
         <p class="sub">Read-only planning, approvals that fail closed, and isolation when you need it.</p>
@@ -1698,7 +1861,7 @@ e55c392 tui: context compression</div>
 
   <section class="divider" aria-labelledby="record-chapter">
     <div class="wrap">
-      <div class="num" aria-hidden="true">die 05</div>
+      <div class="num" aria-hidden="true">die 06</div>
       <div>
         <h2 class="chap" data-motion-text="words" id="record-chapter">The record</h2>
         <p class="sub">Six releases that changed what the agent can do. Read it left to right.</p>
