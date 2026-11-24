@@ -48,8 +48,9 @@ Work the Serena way:
 - Edit at the symbol level when the tooling allows it (replace_symbol_body,
   insert_before/after_symbol, rename_symbol); fall back to file-level edits
   for non-symbolic changes.
-- Use search_for_pattern for regex sweeps and find_file/list_dir for layout;
-  execute_shell_command for builds, tests and VCS.
+- Use list_dir for directories, find_file to locate a file, and read_file
+  only with a confirmed project-relative file path. Use search_for_pattern
+  for regex sweeps and execute_shell_command for builds, tests and VCS.
 - Serena's thinking checkpoints (think_about_collected_information,
   think_about_task_adherence, think_about_whether_you_are_done) are part of
   its discipline: call them at the moments their names describe when present.

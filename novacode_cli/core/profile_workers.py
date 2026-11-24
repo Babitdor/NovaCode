@@ -38,9 +38,11 @@ async def summon_agent(
 
     Set agent (nova, serena, nora, or ralph) and task to start. Give a self-contained
     brief with the objective, relevant files or sources, constraints, and the
-    deliverable or acceptance check. Use available results as evidence and verify
-    them before acting. Continue independent work while the agent runs. Call again
-    with only worker_id to await and read the result before ending the turn.
+    deliverable or acceptance check. Specify whether edits are allowed. For Ralph,
+    include the success measure and when to stop. For Nora, request sources and
+    evidence. For Serena, give the relevant paths or symbols and the verification
+    needed. Continue independent work while the agent runs. Call again with only
+    worker_id to await and read the result before ending the turn.
     """
     workers = current_workers.get()
     session = active_plan_session.get()

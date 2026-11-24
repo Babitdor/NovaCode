@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from itertools import islice
 from threading import Lock
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pyte
 from rich.text import Text
@@ -90,14 +90,27 @@ class InlineTerminal(Static):
         self._stream = pyte.Stream(self._screen)
         self._scroll_offset = 0
         self._screen_lock = Lock()
+        self._repaint_timer: Any = None
 
     def on_mount(self) -> None:
         """Draw after Textual has attached the widget to an app."""
         self._paint()
 
     def feed(self, output: str) -> None:
-        """Apply terminal control sequences before repainting the visible screen."""
+        """Apply terminal control sequences; repaint at most every 50 ms."""
         self.parse(output)
+        self.schedule_repaint()
+
+    def schedule_repaint(self) -> None:
+        """Request one coalesced repaint (call from the UI loop)."""
+        if not self.is_mounted:
+            # Unit tests and detached widgets: there is no loop to latch on.
+            self.repaint()
+        elif self._repaint_timer is None:
+            self._repaint_timer = self.set_timer(0.05, self._latched_repaint)
+
+    def _latched_repaint(self) -> None:
+        self._repaint_timer = None
         self.repaint()
 
     def parse(self, output: str) -> None:

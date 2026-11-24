@@ -51,6 +51,23 @@ async def test_hidden_output_survives_and_reflows_with_one_pending_paint():
         assert timer is not None
 
 
+async def test_at_capacity_output_reflows_when_a_replacement_line_wraps():
+    class OutputApp(App):
+        def compose(self):
+            yield OutputLog(max_lines=1)
+
+    app = OutputApp()
+    async with app.run_test(size=(40, 24)) as pilot:
+        output = app.query_one(OutputLog)
+        output.write("short")
+        await pilot.pause(0.1)
+        previous_height = output._output_body.size.height
+        output.write("wide line " * 10)
+        await pilot.pause(0.1)
+        assert len(output.lines) == 1
+        assert output._output_body.size.height > previous_height
+
+
 async def test_long_log_only_renders_visible_rows_and_releases_removed_content(monkeypatch):
     from novacode_cli.tui.output_body import OutputBody
 

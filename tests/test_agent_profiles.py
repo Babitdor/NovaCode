@@ -5,11 +5,14 @@ from __future__ import annotations
 import asyncio
 from types import SimpleNamespace
 
-from langchain.agents.middleware.types import ToolCallRequest
+import pytest
+from langchain.agents.middleware.types import ModelRequest, ToolCallRequest
+from langchain_core.messages import SystemMessage
 
 from novacode_cli import ui_events as ev
 from novacode_cli.agents.profiles import (
     AgentProfileMiddleware,
+    autoresearch_playbook,
     current_profile,
     profile_readiness,
     profile_tool_allowed,
@@ -18,6 +21,48 @@ from novacode_cli.config.plan_mode import active_plan_session
 from novacode_cli.core.profile_workers import ProfileWorkers, current_workers, summon_agent
 from novacode_cli.core.subagent_tasks import format_context, panel_body
 from novacode_cli.mcp.generic import MCPInput, build_mcp_tool, resolve_target
+
+
+@pytest.mark.parametrize(
+    ("profile", "planning", "has_tool", "can_summon"),
+    [
+        (None, False, True, True),
+        ("nova", False, True, True),
+        ("nora", False, True, True),
+        ("serena", False, True, True),
+        ("ralph", False, True, False),
+        ("nova", True, True, False),
+        ("nora", False, False, False),
+    ],
+)
+def test_delegation_guidance_matches_profile_and_mode(profile, planning, has_tool, can_summon):
+    from tests.test_prime import Model
+
+    token = active_plan_session.set(
+        SimpleNamespace(agent_profile=profile, plan_mode_enabled=planning)
+    )
+    request = ModelRequest(
+        model=Model(responses=[]),
+        tools=[summon_agent] if has_tool else [],
+        messages=[],
+        system_message=SystemMessage("Base instructions"),
+        state={},
+    )
+    try:
+        prepared = AgentProfileMiddleware._prepare(request)
+    finally:
+        active_plan_session.reset(token)
+    prompt = prepared.system_message.text
+    assert "Base instructions" in prompt
+    assert ("Use summon_agent" in prompt) == can_summon
+    if can_summon:
+        assert "Ralph for autonomous loops or autoresearch" in prompt
+        assert "Nora for web research" in prompt
+        assert "Serena for precise repository navigation" in prompt
+        assert "Nova for broader implementation" in prompt
+    elif profile == "ralph":
+        assert not prepared.tools
+        assert "give the requesting agent a brief" in prompt
 
 
 def test_profile_tools_and_mcp_discovery(monkeypatch):
@@ -68,6 +113,69 @@ def test_profile_tools_and_mcp_discovery(monkeypatch):
     assert not profile_tool_allowed("ralph", "task")
     assert not profile_tool_allowed("ralph", "start_async_task")
     assert not profile_tool_allowed("ralph", "task_create")
+
+
+def test_nora_discovers_trusted_research_tools_and_reads_local_sources(monkeypatch):
+    from novacode_cli.agents.code_mode import _native_tools
+
+    monkeypatch.setattr(
+        "novacode_cli.agents.profiles.trusted_browser_servers",
+        lambda: frozenset({"tavily", "exa", "parallel", "firecrawl"}),
+    )
+    tools = [
+        SimpleNamespace(
+            name=f"{server}_{raw}",
+            metadata={"nova_mcp_server": server, "nova_mcp_tool": raw},
+        )
+        for server, raw in [
+            ("tavily", "tavily_extract"),
+            ("exa", "web_fetch_exa"),
+            ("parallel", "web_search"),
+            ("firecrawl", "firecrawl_extract"),
+            ("tavily", "unknown"),
+            ("untrusted", "web_search"),
+        ]
+    ]
+    mcp = SimpleNamespace(
+        tools=tools,
+        _tools_cache=[
+            {
+                "server": t.metadata["nova_mcp_server"],
+                "skill_alias": t.metadata["nova_mcp_tool"],
+                "name": t.name,
+                "description": t.name,
+            }
+            for t in tools
+        ],
+    )
+    token = current_profile.set("nora")
+    try:
+        catalog = build_mcp_tool(mcp).invoke({"action": "list"})
+        assert [entry["name"] for entry in catalog["tools"]] == [t.name for t in tools[:4]]
+        request = MCPInput(server_name="tavily", tool_name="tavily_extract")
+        assert resolve_target(mcp, request) is tools[0]
+        read_file = autoresearch_playbook.model_copy(update={"name": "read_file"})
+        write_file = autoresearch_playbook.model_copy(update={"name": "write_file"})
+        request = SimpleNamespace(runtime=SimpleNamespace(tools=[read_file, write_file]))
+        assert set(_native_tools(request)) == {"read_file"}
+    finally:
+        current_profile.reset(token)
+
+
+def test_ralph_can_load_packaged_playbook_through_code_mode():
+    from novacode_cli.agents.code_mode import _native_tools
+
+    request = SimpleNamespace(runtime=SimpleNamespace(tools=[autoresearch_playbook, summon_agent]))
+    token = current_profile.set("ralph")
+    try:
+        calls = _native_tools(request)
+        assert set(calls) == {"autoresearch_playbook"}
+        playbook = calls["autoresearch_playbook"].invoke({})
+        assert "baseline" in playbook
+        assert "stopping condition" in playbook
+    finally:
+        current_profile.reset(token)
+    assert not profile_tool_allowed("nora", "autoresearch_playbook")
 
 
 async def test_worker_runs_concurrently_and_reports_its_context(monkeypatch):
@@ -197,7 +305,7 @@ async def test_composer_agent_picker_keeps_draft_and_rejects_locked_profile(monk
     from novacode_cli.tui.screens import PickScreen
     from novacode_cli.tui.widgets import PromptInput
     from novacode_cli.ui.ui_elements import TokenTracker
-    from tests.test_tui_app import _FakeAgent, _SS, _wait_until
+    from tests.test_tui_app import _SS, _FakeAgent, _wait_until
 
     monkeypatch.setattr(
         "novacode_cli.agents.profiles.profile_readiness",

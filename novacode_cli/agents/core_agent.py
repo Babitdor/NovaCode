@@ -2657,9 +2657,10 @@ This file stores your preferences and context that persist across sessions.
     from novacode_cli.agents.serena_mode import SerenaModeMiddleware
 
     agent_middleware.append(SerenaModeMiddleware())
-    from novacode_cli.agents.profiles import AgentProfileMiddleware
+    from novacode_cli.agents.profiles import AgentProfileMiddleware, autoresearch_playbook
 
     agent_middleware.append(AgentProfileMiddleware())
+    tools = [*(tools or []), autoresearch_playbook]
     if sandbox is None and not extra_middleware and team_binding is None:
         from novacode_cli.core.profile_workers import summon_agent
 

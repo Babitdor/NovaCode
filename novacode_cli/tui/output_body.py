@@ -46,15 +46,20 @@ class OutputBody(Widget):
         return Text("\n").join(self._lines)
 
     def replace_lines(self, lines: Iterable[Text]) -> None:
-        """Replace references to logical lines without joining or rendering them."""
+        """Replace references to logical lines without joining or rendering them.
+
+        When the wrapped height stays the same, refresh the paint only.
+        """
+        width = self.size.width
+        previous_height = len(self._rows) if self._wrap and self._row_width == width else None
         self._lines = tuple(lines)
         retained = {id(line) for line in self._lines}
-        self._wrap_cache = {
-            key: rows for key, rows in self._wrap_cache.items() if key in retained
-        }
+        self._wrap_cache = {key: rows for key, rows in self._wrap_cache.items() if key in retained}
         self._rows.clear()
         self._row_width = -1
-        self.refresh(layout=True)
+        if previous_height is not None:
+            self._wrap_rows(width)
+        self.refresh(layout=previous_height != len(self._rows))
 
     def _wrap_rows(self, width: int) -> None:
         width = max(1, width)

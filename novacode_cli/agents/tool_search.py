@@ -93,6 +93,7 @@ CORE_TOOLS = frozenset(
         "enter_plan_mode",
         "exit_plan_mode",
         "summon_agent",
+        "autoresearch_playbook",
         "prime_checkpoint",
         "prime_check",
         "SendMessage",

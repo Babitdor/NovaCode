@@ -42,6 +42,7 @@ import logging
 import json
 import os
 import re
+import sys
 import threading
 import time
 import uuid
@@ -1192,18 +1193,47 @@ def replay_window(messages: list, budget: int) -> list:
     return messages[turn_start:] if turn_start < len(messages) else messages[-1:]
 
 
-def _display_tail(text: str, *, expanded: bool = False) -> str:
+def _prepare_output_chunk(text: str) -> str | Text:
+    """Resolve ANSI escape codes before the chunk reaches the UI thread.
+
+    ``Text.from_ansi`` is pure CPU over the chunk, so producers (the shell
+    background loop, tool threads) can run it; the UI loop then only appends
+    ready-made lines. Chunks without escapes stay strings and take the cheap
+    split path in ``OutputLog.write``.
+    """
+    if "\x1b" not in text and "\r" not in text and "\t" not in text:
+        return text
+    try:
+        parsed = Text.from_ansi(text)
+    except Exception:  # noqa: BLE001 — malformed output stays visible
+        return text
+    parsed.expand_tabs()
+    return parsed
+
+
+def _display_tail(text: str | Text, *, expanded: bool = False) -> str | Text:
     """The part of a live-output batch worth rendering.
 
     With ``expanded`` (ctrl+o), much larger limits apply so an expanded
     session streams near-full output; the tail trim remains as a bound.
+    Accepts pre-parsed ``Text`` (ANSI already resolved on the producer
+    thread) as well as plain strings.
     """
     max_lines = _EXPANDED_OUTPUT_MAX_LINES if expanded else _LIVE_OUTPUT_MAX_LINES
     max_chars = _EXPANDED_OUTPUT_MAX_CHARS if expanded else _LIVE_OUTPUT_MAX_CHARS
+    if isinstance(text, Text):
+        plain = text.plain
+        if len(plain) <= max_chars and plain.count("\n") <= max_lines:
+            return text
+        rich_lines = text[-max_chars:].split("\n")[-max_lines:]
+        trimmed = rich_lines[0]
+        for line in rich_lines[1:]:
+            trimmed = trimmed + "\n" + line
+        return Text("… output trimmed (truncated), showing the tail …\n") + trimmed
     if len(text) <= max_chars and text.count("\n") <= max_lines:
         return text
-    lines = text[-max_chars:].splitlines(keepends=True)[-max_lines:]
-    return "… output trimmed (truncated), showing the tail …\n" + "".join(lines)
+    str_lines = text[-max_chars:].splitlines(keepends=True)[-max_lines:]
+    return "… output trimmed (truncated), showing the tail …\n" + "".join(str_lines)
 
 
 def _retitle(group: Any, title: Any) -> None:
@@ -3167,7 +3197,7 @@ class NovaApp(App):
                     # still arrive through the normal event/session path.
                     self._tool_out_pending.pop(next(iter(self._tool_out_pending)))
                 buffer = self._tool_out_pending[call_id] = OutputTail()
-            buffer.append(text)
+            buffer.append(_prepare_output_chunk(text))
             if self._tool_out_scheduled:
                 return
             self._tool_out_scheduled = True
@@ -3179,15 +3209,15 @@ class NovaApp(App):
             self._tool_out_scheduled = False
         for call_id, buffer in pending.items():
             self._write_tool_output(
-                call_id, _display_tail(buffer.drain(), expanded=self._tools_expanded)
+                call_id, _display_tail(buffer.drain_content(), expanded=self._tools_expanded)
             )
 
-    def _write_tool_output(self, call_id: str, text: str) -> None:
+    def _write_tool_output(self, call_id: str, text: str | Text) -> None:
         """Append live output to the widget showing ``call_id`` (UI thread)."""
         if call_id in self._tool_components:
             comp, body, base = self._tool_components[call_id]
             if isinstance(body, OutputLog):
-                body.write(Text(text))
+                body.write(text)
         elif call_id in self._subagent_tool_to_task:
             subagent_cid = self._subagent_tool_to_task[call_id]
             if subagent_cid in self._subagent_widgets:
@@ -3196,8 +3226,9 @@ class NovaApp(App):
                     log_widget = body.query_one("#subagent-log", OutputLog)
                     if not log_widget.has_class("active"):
                         log_widget.add_class("active")
-                    log_widget.write(Text(text))
-                    comp._log_lines = getattr(comp, "_log_lines", 0) + text.count("\n")
+                    log_widget.write(text)
+                    plain = text.plain if isinstance(text, Text) else text
+                    comp._log_lines = getattr(comp, "_log_lines", 0) + plain.count("\n")
                     self._set_log_height(log_widget, min(max(comp._log_lines + 2, 5), 8))
                 except Exception:
                     pass
@@ -3205,8 +3236,9 @@ class NovaApp(App):
             try:
                 log_widget = self._tool_group_body.query_one("#tool-group-log", OutputLog)
                 if log_widget.has_class("active"):
-                    log_widget.write(Text(text))
-                    self._tool_group_log_lines += text.count("\n")
+                    log_widget.write(text)
+                    plain = text.plain if isinstance(text, Text) else text
+                    self._tool_group_log_lines += plain.count("\n")
                     self._set_log_height(log_widget, min(max(self._tool_group_log_lines + 2, 5), 8))
             except Exception:
                 pass
@@ -12172,7 +12204,7 @@ class NovaApp(App):
                     # pyte parses cell-by-cell in Python. Keep large bursts off
                     # Textual's event loop so input and task controls still run.
                     await asyncio.to_thread(terminal.parse, chunk)
-                    terminal.repaint()
+                    terminal.schedule_repaint()
                 else:
                     terminal.feed(chunk)
                 screen = terminal.snapshot()
@@ -20710,9 +20742,13 @@ async def run_tui(
         sandbox_type=sandbox_type,
         sandbox_meta=sandbox_meta,
     )
+    # Give the UI loop more chances to run while shell worker threads drain output.
+    previous_switch_interval = sys.getswitchinterval()
+    sys.setswitchinterval(0.002)
     try:
         await app.run_async()
     finally:
+        sys.setswitchinterval(previous_switch_interval)
         await app._save_session(
             pane=getattr(app, "_root_pane", None),
             task_status="crashed" if getattr(app, "_exception", None) else "active",

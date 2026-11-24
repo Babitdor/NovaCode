@@ -1250,7 +1250,10 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
                     reg.mark_terminated(job_id, proc.returncode)
                     return
                 try:
-                    chunk = await asyncio.wait_for(proc.stdout.read(1024), timeout=0.5)  # type: ignore[union-attr]
+                    # 16 KB reads keep chatty builds (npm, docker compose) from
+                    # spinning this drain loop thousands of times per second;
+                    # the 0.5 s timeout still ticks kill checks on idle streams.
+                    chunk = await asyncio.wait_for(proc.stdout.read(16384), timeout=0.5)  # type: ignore[union-attr]
                 except (TimeoutError, asyncio.TimeoutError):
                     if proc.returncode is not None:
                         break
