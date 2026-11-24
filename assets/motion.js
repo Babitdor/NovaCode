@@ -213,8 +213,10 @@
   document.addEventListener("viewchange", syncMotionMode);
   syncMotionMode();
   window.addEventListener("load", function () { ST.refresh(); });
-  /* the display serif can swap in after load and move every trigger below it */
-  if (document.fonts && document.fonts.ready) document.fonts.ready.then(function () { ST.refresh(); });
+  /* A refresh once the fonts settle would recompute trigger positions for the serif
+     swap, but it also re-enters the once-only reveals: an above-the-fold [data-draw]
+     that already fired comes back partial or reset, so the strike is left unfinished.
+     The load handler above is the one refresh; it runs before those draws complete. */
 })();
 
 /* ---- the starfield: its own gate, because it must also work without GSAP and

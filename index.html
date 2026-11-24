@@ -67,8 +67,9 @@
    The light theme is the same plate in daylight: identical roles shifted to their print inks. */
 :root{
   --ground:#030E3E; --panel:#131B5D; --ink:#FAD9B6; --muted:rgba(250,217,182,.72);
-  --line:rgba(250,217,182,.28); --accent:#F7B98A; --on-accent:#030E3E; --curtain:#0A1215;
+  --line:rgba(250,217,182,.28); --accent:#F7B98A; --on-accent:#030E3E;
   --proof:#B96F6E; --live:#B3A7AC;
+  --screen:#0A1215; --screen-chrome:#131B5D; --screen-ink:250 217 182; --screen-accent:247 185 138;
   --scroll-thumb:#3D203C; --scroll-track:#030E3E;
   --f-disp:'Instrument Serif',Georgia,'Times New Roman',serif;
   --f-mono:'Geist Mono',ui-monospace,'SF Mono',Menlo,monospace;
@@ -85,16 +86,18 @@
 @media (prefers-color-scheme:light){
   :root:not([data-theme="dark"]){
     --ground:#FAD9B6; --panel:#FFFFFF; --ink:#0A1215; --muted:rgba(10,20,22,.74);
-    --line:rgba(10,20,22,.30); --accent:#7A2F3A; --on-accent:#FAD9B6; --curtain:#0A1215;
+    --line:rgba(10,20,22,.30); --accent:#7A2F3A; --on-accent:#FAD9B6;
     --proof:#7A2F3A; --live:#6B5B7A;
+    --screen:#FFF7EC; --screen-chrome:#F1DFC6; --screen-ink:10 18 21; --screen-accent:122 47 58;
     --scroll-thumb:#817494; --scroll-track:#FAD9B6;
     color-scheme:light;
   }
 }
 :root[data-theme="light"]{
   --ground:#FAD9B6; --panel:#FFFFFF; --ink:#0A1215; --muted:rgba(10,20,22,.74);
-  --line:rgba(10,20,22,.30); --accent:#7A2F3A; --on-accent:#FAD9B6; --curtain:#0A1215;
+  --line:rgba(10,20,22,.30); --accent:#7A2F3A; --on-accent:#FAD9B6;
   --proof:#7A2F3A; --live:#6B5B7A;
+  --screen:#FFF7EC; --screen-chrome:#F1DFC6; --screen-ink:10 18 21; --screen-accent:122 47 58;
   --scroll-thumb:#817494; --scroll-track:#FAD9B6;
   color-scheme:light;
 }
@@ -133,22 +136,30 @@ html{background:var(--ground)}
 .visually-hidden{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 
 /* ---------------------------------------------- the die press (#boot) */
+/* The plate is the page's own ground, so the veil reads as a designed surface in
+   both themes instead of a dark rectangle with invisible ink in daylight. */
 #boot{
   display:none;position:fixed;inset:0;z-index:200;
-  background:var(--curtain);color:var(--ink);
-  place-items:center;text-align:center;
+  background:var(--ground);color:var(--ink);
+  /* place-items centres each row; align-content packs the rows as one lockup
+     instead of stretching them across the viewport */
+  place-items:center;align-content:center;text-align:center;
   transition:opacity .5s var(--ease-out);
 }
+/* the emblem struck large: its own disc is transparent, so it keeps the night
+   ground behind it in both themes, exactly as the bar mark does */
+#boot .boot-iso{width:clamp(104px,20vw,148px);height:auto;border-radius:50%;background:#030E3E;box-shadow:0 0 0 1px var(--line)}
+#boot .boot-word{margin-top:clamp(12px,2vw,18px);font-family:var(--f-disp);font-size:clamp(2.6rem,7.2vw,3.6rem);line-height:.95}
 html.js #boot{display:grid}
 /* entrance only: opacity keeps the exit free for .lift */
 @media (prefers-reduced-motion:no-preference){
   html.js #boot{animation:boot-in .5s var(--ease-out) both}
 }
 @keyframes boot-in{from{opacity:0}to{opacity:1}}
-#boot .boot-strike{position:relative;height:2px;background:var(--line);width:min(260px,52vw);margin:18px auto 0;overflow:hidden}
+#boot .boot-strike{position:relative;height:2px;background:var(--line);width:min(320px,62vw);margin:clamp(18px,2.4vw,26px) auto 0;overflow:hidden}
 #boot .boot-line{position:absolute;left:0;top:0;bottom:0;background:var(--accent);width:0;transition:width .3s linear}
-#boot nav{margin-top:14px;display:flex;gap:18px;justify-content:center;font:400 11px/1 var(--f-mono);letter-spacing:.08em;text-transform:uppercase}
-#boot span[data-step]{opacity:.32;transition:opacity .25s linear}
+#boot nav{margin-top:14px;display:flex;gap:18px;justify-content:center;font:400 12px/1 var(--f-mono);letter-spacing:.08em;text-transform:uppercase}
+#boot span[data-step]{opacity:.40;transition:opacity .25s linear}
 #boot span[data-step].on{opacity:1}
 #boot.lift{opacity:0}
 
@@ -486,7 +497,7 @@ p a:hover,li a:not(.text-link):not(.btn):hover{color:var(--accent);text-decorati
 /* the specimen plate: a struck mount holding a screen built in CSS, not a bitmap */
 .tutorial-screen{
   position:relative;overflow:hidden;border:1px solid var(--line);
-  background-color:#0A1215;padding:clamp(8px,1.4vw,14px);
+  background-color:var(--screen);padding:clamp(8px,1.4vw,14px);
 }
 .tutorial-screen::after{
   content:"";position:absolute;inset:0;pointer-events:none;z-index:3;
@@ -500,46 +511,47 @@ p a:hover,li a:not(.text-link):not(.btn):hover{color:var(--accent);text-decorati
   background-position:left 5px top 5px,right 5px top 5px,left 5px bottom 5px,right 5px bottom 5px;
 }
 
-/* ---- the screen itself: one composition, five states. Monochrome TUI on the
-   screen panel, cyan for what the step points at, red held for the rejection row. */
+/* ---- the screen itself: one composition, five states. The plate stays a screen in
+   both themes - dark terminal at night, paper terminal in daylight - so its ink comes
+   from the --screen tokens; the accent marks the step, red holds the rejection row. */
 .tui{
   --tui-fs:clamp(12px,.8vw + 7.5px,16.5px);
   position:relative;display:flex;flex-direction:column;
-  background:#0A1215;border:1px solid rgb(250 217 182 / .12);color:#FAD9B6;
+  background:var(--screen);border:1px solid rgb(var(--screen-ink) / .12);color:rgb(var(--screen-ink));
   font:400 var(--tui-fs)/1.72 var(--f-mono);letter-spacing:.01em;
   min-height:clamp(300px,24vw,410px);
 }
 /* the tab row: Rooms / 1 · Main / + on the left, the plate's own label on the right */
 .tui-tab.is-on{display:inline-flex;align-items:center;gap:5px}
 .tui-tab i,.tui-line i{width:5px;height:5px;background:var(--accent);display:inline-block;flex:none;vertical-align:middle}
-.tui-line i{background:rgba(250,217,182,.42);margin-right:7px}
+.tui-line i{background:rgb(var(--screen-ink) / .42);margin-right:7px}
 .tui-line.is-run i{background:var(--accent)}
 /* a transcript line: marker and text left, the timing flush right */
 .tui-line{display:flex;align-items:baseline;gap:0;min-width:0}
 .tui-line > p,.tui-line > span:not(.tui-meta){min-width:0;overflow-wrap:anywhere}
 .tui-row .tui-meta,.tui-line .tui-meta{
   margin-left:auto;padding-left:16px;flex:none;
-  color:rgba(250,217,182,.38);font-size:.94em;white-space:nowrap;
+  color:rgb(var(--screen-ink) / .38);font-size:.94em;white-space:nowrap;
 }
-.tui-who{margin-left:7px;color:rgba(250,217,182,.9)}
+.tui-who{margin-left:7px;color:rgb(var(--screen-ink) / .9)}
 .tui-out{
-  margin-left:18px;padding-left:17px;border-left:1px solid rgb(250 217 182 / .1);
-  color:rgba(250,217,182,.5);font-size:.95em;line-height:1.95;
+  margin-left:18px;padding-left:17px;border-left:1px solid rgb(var(--screen-ink) / .1);
+  color:rgb(var(--screen-ink) / .5);font-size:.95em;line-height:1.95;
 }
 /* the thinking line above the prompt */
 .tui-think{
   display:flex;align-items:center;gap:12px;padding:15px 34px;flex-wrap:wrap;
-  border-top:1px solid rgb(250 217 182 / .1);color:rgba(250,217,182,.55);font-size:.94em;
+  border-top:1px solid rgb(var(--screen-ink) / .1);color:rgb(var(--screen-ink) / .55);font-size:.94em;
 }
-.tui-think b{font-weight:400;color:rgba(250,217,182,.85)}
-.tui-think span:last-child{margin-left:auto;color:rgba(250,217,182,.38)}
+.tui-think b{font-weight:400;color:rgb(var(--screen-ink) / .85)}
+.tui-think span:last-child{margin-left:auto;color:rgb(var(--screen-ink) / .38)}
 .tui-body{display:flex;flex:1;min-height:0}
 .tui-side{
-  flex:0 0 clamp(76px,15%,132px);padding:18px 14px;border-right:1px solid rgb(250 217 182 / .10);
-  display:flex;flex-direction:column;gap:5px;color:rgba(250,217,182,.5);font-size:.94em;
+  flex:0 0 clamp(76px,15%,132px);padding:18px 14px;border-right:1px solid rgb(var(--screen-ink) / .10);
+  display:flex;flex-direction:column;gap:5px;color:rgb(var(--screen-ink) / .5);font-size:.94em;
 }
-.tui-side s{text-decoration:none;color:rgba(247,185,138,.92)}
-.tui-side em{margin-top:auto;font-style:normal;color:rgba(250,217,182,.38);font-size:.9em}
+.tui-side s{text-decoration:none;color:rgb(var(--screen-accent) / .92)}
+.tui-side em{margin-top:auto;font-style:normal;color:rgb(var(--screen-ink) / .38);font-size:.9em}
 .tui-main{flex:1;min-width:0;padding:30px 34px;display:flex;flex-direction:column;gap:19px}
 /* a narrow plate has no room for a fixed timing column: the row wraps and the
    timing drops under its text instead of squeezing it to one character a line */
@@ -554,46 +566,46 @@ p a:hover,li a:not(.text-link):not(.btn):hover{color:var(--accent);text-decorati
 .tui-row{display:flex;gap:8px;min-width:0}
 /* the marker and its label read as one transcript entry, not an aligned column */
 /* one label column so transcript text and prose paragraphs share a left edge */
-.tui-tag{flex:0 0 7.4em;display:inline-flex;align-items:center;gap:8px;color:rgba(250,217,182,.9);font-size:1em;margin-right:12px}
+.tui-tag{flex:0 0 7.4em;display:inline-flex;align-items:center;gap:8px;color:rgb(var(--screen-ink) / .9);font-size:1em;margin-right:12px}
 .tui-tag::before{content:"";width:5px;height:5px;background:var(--accent);opacity:.9;flex:none}
-.tui-tag.tui-tag--quiet{color:rgba(250,217,182,.5)}
-.tui-tag.tui-tag--quiet::before{background:rgba(250,217,182,.35)}
+.tui-tag.tui-tag--quiet{color:rgb(var(--screen-ink) / .5)}
+.tui-tag.tui-tag--quiet::before{background:rgb(var(--screen-ink) / .35)}
 .tui-row p{margin:0;min-width:0;overflow-wrap:anywhere}
-.tui-dim{color:rgba(250,217,182,.5)}
-.tui-ok{color:#B3A7AC}
-.tui-bad{color:#B96F6E}
+.tui-dim{color:rgb(var(--screen-ink) / .5)}
+.tui-ok{color:var(--live)}
+.tui-bad{color:var(--proof)}
 .tui-code{
-  border-left:1px solid rgb(247 185 138 / .5);padding:6px 0 6px 14px;
-  color:rgba(250,217,182,.8);white-space:pre-wrap;font-size:.96em;
+  border-left:1px solid rgb(var(--screen-accent) / .5);padding:6px 0 6px 14px;
+  color:rgb(var(--screen-ink) / .8);white-space:pre-wrap;font-size:.96em;
 }
 .tui-prompt{
-  display:flex;align-items:center;gap:10px;padding:15px 34px;border-top:1px solid rgb(250 217 182 / .12);
-  background:#131B5D;color:rgba(250,217,182,.45);
+  display:flex;align-items:center;gap:10px;padding:15px 34px;border-top:1px solid rgb(var(--screen-ink) / .12);
+  background:var(--screen-chrome);color:rgb(var(--screen-ink) / .45);
 }
 .tui-prompt b{color:var(--accent);font-weight:400}
 .tui-cards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}
-.tui-card{border:1px solid rgb(250 217 182 / .14);padding:12px 14px;text-align:center;color:rgba(250,217,182,.78)}
+.tui-card{border:1px solid rgb(var(--screen-ink) / .14);padding:12px 14px;text-align:center;color:rgb(var(--screen-ink) / .78)}
 /* the rooms variant: a tab strip, running tasks, a status row and the footnote rails */
 .tui--rooms .tui-main{gap:16px;padding-block:26px}
 .tui-tabs{
   display:flex;align-items:center;gap:6px;padding:9px 24px 0;
-  border-bottom:1px solid rgb(250 217 182 / .12);background:#131B5D;font-size:.92em;
+  border-bottom:1px solid rgb(var(--screen-ink) / .12);background:var(--screen-chrome);font-size:.92em;
 }
 .tui-tab{
   display:inline-flex;align-items:center;gap:7px;
-  padding:6px 13px;border:1px solid transparent;border-bottom:0;color:rgba(250,217,182,.55);
+  padding:6px 13px;border:1px solid transparent;border-bottom:0;color:rgb(var(--screen-ink) / .55);
 }
-.tui-tab.is-on{border-color:rgb(247 185 138 / .55);color:var(--accent);background:#0A1215}
-.tui-tab--add{color:rgba(250,217,182,.4)}
-.tui-tabs b{margin-left:auto;font-weight:400;color:rgba(250,217,182,.45);letter-spacing:.1em;text-transform:uppercase;font-size:.82em}
+.tui-tab.is-on{border-color:rgb(var(--screen-accent) / .55);color:var(--accent);background:var(--screen)}
+.tui-tab--add{color:rgb(var(--screen-ink) / .4)}
+.tui-tabs b{margin-left:auto;font-weight:400;color:rgb(var(--screen-ink) / .45);letter-spacing:.1em;text-transform:uppercase;font-size:.82em}
 .tui-live{display:inline-block;width:5px;height:5px;background:var(--live);margin-right:7px;vertical-align:middle}
-.tui-status{display:flex;align-items:center;gap:12px;padding:13px 34px;border-top:1px solid rgb(250 217 182 / .12);font-size:.92em;color:rgba(250,217,182,.5)}
+.tui-status{display:flex;align-items:center;gap:12px;padding:13px 34px;border-top:1px solid rgb(var(--screen-ink) / .12);font-size:.92em;color:rgb(var(--screen-ink) / .5)}
 .tui-ready{color:var(--live);letter-spacing:.12em;text-transform:uppercase}
-.tui-meter{flex:0 0 74px;height:3px;background:rgb(250 217 182 / .16);position:relative}
+.tui-meter{flex:0 0 74px;height:3px;background:rgb(var(--screen-ink) / .16);position:relative}
 .tui-meter::after{content:"";position:absolute;inset:0 auto 0 0;width:2px;background:var(--accent)}
-.tui-foot{display:flex;flex-wrap:wrap;gap:7px 22px;padding:13px 34px;border-top:1px solid rgb(250 217 182 / .1);font-size:.86em;color:rgba(250,217,182,.42)}
+.tui-foot{display:flex;flex-wrap:wrap;gap:7px 22px;padding:13px 34px;border-top:1px solid rgb(var(--screen-ink) / .1);font-size:.86em;color:rgb(var(--screen-ink) / .42)}
 .tui-foot--wide span{display:inline-flex;gap:6px}
-.tui-foot--wide b{font-weight:400;color:rgba(247,185,138,.85);text-transform:uppercase;letter-spacing:.09em}
+.tui-foot--wide b{font-weight:400;color:rgb(var(--screen-accent) / .85);text-transform:uppercase;letter-spacing:.09em}
 @media (max-width:640px){.tui-tabs b{display:none}.tui-foot--wide{gap:4px 12px}}
 
 /* the step marks: one element per tutorial step, lit by the same data-step switch */
@@ -605,7 +617,7 @@ p a:hover,li a:not(.text-link):not(.btn):hover{color:var(--accent);text-decorati
 .tutorial-live[data-step="0"] [data-tut="0"]::before,
 .tutorial-live[data-step="1"] [data-tut="1"]::before,
 .tutorial-live[data-step="2"] [data-tut="2"]::before{
-  content:"";position:absolute;inset:-3px -5px;border:1px solid rgb(247 185 138 / .75);pointer-events:none;
+  content:"";position:absolute;inset:-3px -5px;border:1px solid rgb(var(--screen-accent) / .75);pointer-events:none;
 }
 @media (max-width:520px){
   .tui-side{display:none}
@@ -994,7 +1006,8 @@ html[data-view="agent"] .page-progress{display:none !important}
 <a class="skip" href="#main">Skip to content</a>
 
 <div id="boot" aria-hidden="true">
-  <span class="boot-mark">nova &middot; phosphor</span>
+  <img class="boot-iso" src="assets/emblem-128.webp" srcset="assets/emblem-256.png 2x" alt="" width="128" height="128" decoding="async">
+  <span class="boot-word">Nova</span>
   <span class="boot-strike"><span class="boot-line"></span></span>
   <nav><span data-step="fonts">type</span><span data-step="sheet">page</span><span data-step="measure">strike</span></nav>
 </div>

@@ -76,11 +76,33 @@ def main():
                     assert tutorial.locator('.tutorial-figure').evaluate("e => getComputedStyle(e).position") == 'static'
                     fallback.screenshot(path=str(shots / f'{tutorial_id}-{label}.png'))
                 context.close()
+            # The plate is a screen in either theme: its ink stays legible on its own
+            # plate, and the two palettes never collapse onto the same colours.
+            plates = {}
+            for scheme in ('dark', 'light'):
+                context = browser.new_context(viewport={'width': 1440, 'height': 1000}, color_scheme=scheme)
+                themed = context.new_page()
+                themed.goto(base)
+                themed.wait_for_function("!document.querySelector('#boot')")
+                plates[scheme] = themed.evaluate("""() => {
+                    const cs = getComputedStyle(document.querySelector('#walkthrough .tui'));
+                    const chan = c => (c.match(/[0-9.]+/g) || []).slice(0, 3).map(Number);
+                    const lum = v => { const f = x => { x /= 255;
+                      return x <= .03928 ? x / 12.92 : ((x + .055) / 1.055) ** 2.4; };
+                      return .2126 * f(v[0]) + .7152 * f(v[1]) + .0722 * f(v[2]); };
+                    const a = lum(chan(cs.backgroundColor)), b = lum(chan(cs.color));
+                    return {plate: cs.backgroundColor, ink: cs.color,
+                            contrast: (Math.max(a, b) + .05) / (Math.min(a, b) + .05)};
+                }""")
+                assert plates[scheme]['contrast'] >= 4.5, (scheme, plates[scheme])
+                themed.screenshot(path=str(shots / f'plate-{scheme}.png'))
+                context.close()
+            assert plates['dark']['plate'] != plates['light']['plate'], plates
             assert not errors, errors
             browser.close()
     finally:
         server.shutdown()
-    print('PASS: forward/reverse highlights, sticky image, view toggle, mobile, reduced motion, no JS, links.')
+    print('PASS: forward/reverse highlights, sticky image, view toggle, mobile, reduced motion, no JS, links, themed plates.')
 
 
 if __name__ == '__main__':

@@ -53,6 +53,7 @@ in daylight.
 | `--ink` | `#FAD9B6` | `#0A1215` | body, rows |
 | `--muted` | ink @ .72 | ink @ .74 | metadata, captions |
 | `--line` | ink @ .26 | ink @ .22 | rules, plate edges |
+| `--screen` / `--screen-chrome` / `--screen-ink` / `--screen-accent` | `#0A1215` / `#131B5D` / ink / accent | `#FFF7EC` / `#F1DFC6` / ink / accent | the CSS terminal plates: a dark terminal at night, a paper terminal in daylight |
 | `--accent` (cyan) | `#F7B98A` | `#9E4A52` | headlines, die numbers, assay chips |
 | `--proof` (red) | `#B96F6E` | `#9E4A52` | only: revealed answers, alerts |
 | `--live` (mint) | `#B3A7AC` | `#6B5B7A` | live dots only |
@@ -120,7 +121,9 @@ anything: no smooth scroll, no press, no sheen, no clip.
   are designed; neither is a filter over the other.
 - **The boot overlay.** `#boot` is the only overlay: a die press that states real milestones
   (fonts, page, reveal), hidden without JavaScript, removed from the DOM when it finishes,
-  capped by a hard timeout, skipped on return visits (`plot-skip`).
+  capped by a hard timeout, skipped on return visits (`plot-skip`). Its plate is the page's
+  own `--ground`, so it is a designed surface in both themes; the emblem is struck large above
+  the wordmark, keeping its night disc the way the bar mark does.
 - **No-JS.** Documentation and release notes stay readable, the page renders complete, the
   measure degrades to a static hairline rule with its label.
 - **Agent view.** `assets/view.js` keeps the readable mirror; the page chrome hides in agent
