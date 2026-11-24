@@ -18,6 +18,9 @@ pub struct Theme {
     pub warning: Color,
     pub success: Color,
     pub border: Color,
+    pub background: Color,
+    pub surface: Color,
+    pub activity: Color,
     pub code: Color,
 }
 
@@ -31,6 +34,9 @@ impl Default for Theme {
             warning: Color::Rgb(0xff, 0xc8, 0x5f),
             success: Color::Rgb(0x6f, 0xd1, 0x8f),
             border: Color::Rgb(0x4a, 0x4a, 0x4a),
+            background: Color::Reset,
+            surface: Color::Rgb(0x1c, 0x18, 0x25),
+            activity: Color::Rgb(0xff, 0xc8, 0x5f),
             code: Color::Rgb(0x9c, 0xdc, 0xfe),
         }
     }
@@ -86,6 +92,11 @@ impl Theme {
             .add_modifier(Modifier::BOLD)
     }
 
+    /// A speaker's own color, with a theme-aware default.
+    pub fn speaker(&self, color: Option<&String>) -> Style {
+        self.heading().fg(colour(color, self.accent))
+    }
+
     /// Composer and panel borders.
     pub fn border(&self) -> Style {
         Style::default().fg(self.border)
@@ -111,7 +122,7 @@ fn colour(value: Option<&String>, fallback: Color) -> Color {
         return fallback;
     };
     let hex = text.strip_prefix('#').unwrap_or(text);
-    if hex.len() != 6 {
+    if hex.len() != 6 || !hex.is_ascii() {
         return fallback;
     }
     let channel = |range: std::ops::Range<usize>| u8::from_str_radix(&hex[range], 16).ok();
@@ -127,16 +138,21 @@ impl Theme {
     /// Colours the frame omits keep their `base` value, which is what a theme
     /// that defines no `text-muted` or `border` needs.
     pub fn from_palette(palette: &ThemePalette, base: Theme) -> Self {
-        let border = colour(palette.border.as_ref(), base.border);
+        let panel = colour(palette.panel.as_ref(), base.border);
+        let text = colour(palette.foreground.as_ref(), base.text);
+        let warning = colour(palette.warning.as_ref(), base.warning);
         Self {
             accent: colour(palette.primary.as_ref(), base.accent),
-            text: colour(palette.foreground.as_ref(), base.text),
+            text,
             dim: colour(palette.muted.as_ref(), base.dim),
             error: colour(palette.error.as_ref(), base.error),
-            warning: colour(palette.warning.as_ref(), base.warning),
+            warning,
             success: colour(palette.success.as_ref(), base.success),
-            border: colour(palette.panel.as_ref(), border),
-            code: base.code,
+            border: colour(palette.border.as_ref(), panel),
+            background: colour(palette.background.as_ref(), base.background),
+            surface: colour(palette.surface.as_ref(), base.surface),
+            activity: colour(palette.activity.as_ref(), warning),
+            code: if palette.dark { base.code } else { text },
         }
     }
 }
@@ -155,6 +171,7 @@ mod tests {
             surface: None,
             panel: None,
             muted: None,
+            activity: None,
             border: None,
             success: None,
             warning: None,

@@ -133,7 +133,7 @@ async def test_composer_toggles_preserving_draft_and_settings(
             assert NovaConfig().get_compression_mode() == mode
             assert prompt.text == "unfinished draft"
         await app._run_lite_mode("/lite-mode ponytail ultra")
-        assert str(button.label) == "lite" and button.has_class("mode-ponytail")
+        assert str(button.label) == "Lite" and button.has_class("mode-ponytail")
         await app._run_lite_mode("/lite-mode on")
         assert NovaConfig().get_ponytail_level() == "ultra"
         await app._run_lite_mode("/lite-mode settings")
@@ -237,4 +237,4 @@ async def test_settings_save_works_in_narrow_terminal(monkeypatch: pytest.Monkey
         assert NovaConfig().get_compression_mode() == "ponytail"
         assert NovaConfig().get_ponytail_level() == "lite"
         label = str(app.query_one("#caveman-toggle", Button).label)
-        assert label == "lite" and app.query_one("#caveman-toggle", Button).has_class("mode-ponytail")
+        assert label == "Lite" and app.query_one("#caveman-toggle", Button).has_class("mode-ponytail")

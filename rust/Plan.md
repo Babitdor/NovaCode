@@ -14,15 +14,15 @@
 | 2   | Client command surface + generic screen renderer  | **done**                                   | `cargo test -p nova-tui --test screens`                                               |
 | 3   | Wave 2 — command screens, pickers, reports        | **7 of 19 ported**                         | `uv run pytest tests/test_tui_settings_command.py tests/test_tui_preferences_command.py tests/test_tui_theme_command.py -q` |
 | 4   | Wave 3 — sessions, tabs, background tasks         | **spawn + tabs + per-session state**                  | `cargo test -p nova-tui --test screens`                                               |
-| 5   | Wave 4 — agent surface panels                     | **4 of 10 modules**                            | `uv run pytest tests/test_council_view.py -q`                                         |
+| 5   | Wave 4 — agent surface panels                     | **Composer, profiles, worker dock, and interrupt replies landed** | `cargo test -p nova-tui --test frames_replay` |
 | 6   | Wave 5 — visual identity, avatar, matrix          | **avatar, rain and home banner done**      | `uv run python scripts/gen_theme_table.py --check`                                    |
 | 7   | Wave 6 — shell, PTY, platform, providers          | **not started**                            | `uv run pytest tests/test_tui_rust_client.py -q`                                      |
-| 8   | Remaining command handlers (bulk flip)            | **77 of 105 served**, no-Textual gate live | `uv run pytest tests/test_tui_no_textual_in_server.py -q`                             |
+| 8   | Remaining command handlers (bulk flip)            | **106 command routes**, no-Textual gate live | `uv run pytest tests/test_tui_command_catalog.py tests/test_tui_no_textual_in_server.py -q` |
 | 9   | Parity harness: corpora, gates, ledger automation | **6 of 7 corpora**                         | `uv run python scripts/verify_tui.py`                                                 |
 | 10  | Default flip + release                            | **blocked by 3–9**                         | `uv run pytest tests/test_ledger_gate.py -q`                                          |
 
-Command surface right now: **105 TUI table entries — 105 served** (37 through the shared
-handler, 3 client actions, 14 port screens, 51 port commands). Nothing waits. `make` is not available on this workstation: the `make
+The generated catalogue tracks all **106 Textual command routes**. It tracks dispatch coverage.
+The ledger records where a native screen or a command's behavior still differs. `make` is not available on this workstation: the `make
 rust-test` / `make rust-frames` targets map to the cargo commands written out below.
 
 ## Approach (unchanged)
@@ -57,7 +57,7 @@ Landed: `scripts/gen_tui_command_catalog.py` (AST parse, `--check`, emits
 unserved row; `prompt` starts a turn in `server/host.py`; `screen`/`screen_result`/
 `catalogue` frames and their transport branches; `sandbox_id`/`sandbox_type` forwarded.
 
-Evidence: `uv run python scripts/gen_tui_command_catalog.py --check` (105 rows, zero drift),
+Evidence: `uv run python scripts/gen_tui_command_catalog.py --check` (zero drift),
 `uv run pytest tests/test_tui_command_catalog.py tests/test_tui_command_port.py -q`.
 
 ## 2. Client command surface + generic screen renderer — **done**
@@ -140,7 +140,12 @@ two real loopback clients).
 - [ ] `background_tasks` panel — the socket worker does not carry the app-level agent jobs yet.
 - [x] `scripts/record_tui_session.py --scenario tabs` + replay snapshot (`tests/fixtures/tabs.jsonl`, `frames_replay.rs`)
 
-## 5. Wave 4 — agent surface panels — **not started**
+## 5. Wave 4 — agent surface panels
+
+The Rust composer consumes live session mode flags and opens the shared profile picker. Ralph
+uses the socket worker's streamed turn for each iteration. Native subagent rows show progress
+and context usage. Question, plan, tool, and Oracle replies use the backend's interrupt format.
+`/mcp` has a native server/preset picker, and `/browser-use settings` edits the shared trust list.
 
 `oracle_panel`, `prime_panel`, `council_settings_screen`, `council_view`, `proactive`,
 `teammates`, `teammate_updates`, `rooms`, `room_message`, `room_settings` (10 rows).
@@ -201,9 +206,8 @@ tables in `novacode_cli/ui/`.
 
 ## 8. Remaining command handlers (bulk flip)
 
-**Now:** 105 served (37 shared-handler, 3 client actions, 14 port screens, 51 port
-commands).
-**Waiting:** none — the whole table routes.
+All 106 Textual commands have a dispatch route. Screen and behavior differences
+are tracked in the ledger.
 
 - [x] `/loop` — the pure half split into `novacode_cli/ui/loops.py` (instruction text,
       prompt resolution) so both hosts share the wording; the port polls one task a

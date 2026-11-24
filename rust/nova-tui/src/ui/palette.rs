@@ -112,6 +112,9 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &AppState, theme: &Theme) {
         height,
     };
     frame.render_widget(Clear, popup);
+    frame
+        .buffer_mut()
+        .set_style(popup, theme.body().bg(theme.surface));
     let mut lines: Vec<Line<'static>> = Vec::new();
     let matches = &state.palette.matches;
     let first = state.palette.selected.saturating_sub(VISIBLE_ROWS - 1);

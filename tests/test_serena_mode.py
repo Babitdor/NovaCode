@@ -173,9 +173,8 @@ def test_serena_mcp_ready_reports_a_missing_server(monkeypatch) -> None:
     assert "Serena" in message
 
 
-async def test_composer_toggle_flips_serena_mode(monkeypatch) -> None:
-    """The composer button toggles the mode like the Code Mode button does."""
-    from textual.widgets import Button
+async def test_slash_command_still_flips_legacy_serena_mode(monkeypatch) -> None:
+    """The Serena command remains available alongside the agent picker."""
 
     from tests.test_tui_app import _SS, _FakeAgent
 
@@ -195,26 +194,23 @@ async def test_composer_toggle_flips_serena_mode(monkeypatch) -> None:
     async with app.run_test(size=(120, 44)) as pilot:
         app._home_style = "minimal"
         await pilot.pause()
-        button = app.query_one("#serena-toggle", Button)
-        assert button.label == "serena"
+        assert not app.query("#serena-toggle")
 
         # Not ready: the gate refuses and the mode stays off.
         monkeypatch.setattr(
             "novacode_cli.agents.serena_mode.serena_mcp_ready",
             lambda: (False, "No 'serena' server configured. Open /mcp to add it."),
         )
-        button.press()
+        await app._run_serena("/serena on")
         await pilot.pause()
         assert getattr(app.session_state, "serena_mode_enabled", False) is False
-        assert button.label == "serena"
 
-        # Ready: the mode flips on and the button mirrors it.
+        # Ready: the command enables the browser-independent Serena lens.
         monkeypatch.setattr(
             "novacode_cli.agents.serena_mode.serena_mcp_ready",
             lambda: (True, "Serena MCP server 'serena' is connected (3 tools)."),
         )
-        button.press()
+        await app._run_serena("/serena on")
         await pilot.pause()
         assert app.session_state.serena_mode_enabled is True
-        assert button.label == "serena"
-        assert button.has_class("enabled")
+        assert app.screen.has_class("serena-mode")

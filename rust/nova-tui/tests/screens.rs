@@ -811,6 +811,7 @@ fn copy_actions_gather_transcript_text() {
         kind: nova_tui::state::BlockKind::User,
         text: "a question".to_string(),
         agent: "you".to_string(),
+        agent_color: None,
     });
 
     let last = r##"{"t":"command_result","id":"c1","ok":true,"message":"copying","blocks":[],"action":"copy"}"##;
@@ -1021,6 +1022,7 @@ fn a_collapsed_tool_card_hints_at_ctrl_o_and_expand_all_shows_everything() {
         }),
         text: String::new(),
         agent: String::new(),
+        agent_color: None,
     });
 
     // Collapsed: head lines and the final line stay visible, the middle does

@@ -19,7 +19,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -29,7 +29,7 @@ from novacode_cli.server.sessions import SessionCapacityError, SessionRegistry
 from novacode_cli.sessions.supervisor import MAX_SESSIONS
 from novacode_cli.sessions.worker import SessionWorker
 from novacode_cli.ui.home import home_payload
-from novacode_cli.ui.port_server import ServerPort
+from novacode_cli.ui.port_server import ServerPort, saved_theme
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -264,6 +264,8 @@ class SessionHost:
                 ui="ratatui",
                 capacity=SESSION_CAPACITY,
                 home=home_payload(__version__),
+                composer=self._port.composer_state(),
+                theme=saved_theme(),
                 **spec.extra,
             )
         )
@@ -494,10 +496,48 @@ class SessionHost:
         """
         worker = self._require_worker()
         try:
-            await worker._run_turn(prompt_id, text, images, approve)
+            state = worker.session_state
+            if getattr(state, "agent_profile", None) == "ralph" and not state.plan_mode_enabled:
+                await self._run_ralph_profile(prompt_id, text, images, approve=approve)
+            else:
+                await worker._run_turn(prompt_id, text, images, approve)
         finally:
             self._turn = None
             self._drain_queue()
+
+    async def _run_ralph_profile(
+        self, prompt_id: str, text: str, images: list[Any], *, approve: bool,
+    ) -> None:
+        """Stream Ralph's shared iteration loop through the owning socket turn."""
+        from novacode_cli.commands.ralph_events import RalphFinished
+        from novacode_cli.commands.ralph_handler import handle_ralph_command
+
+        worker = self._require_worker()
+        state = worker.session_state
+        finished = None
+
+        def progress(event: Any) -> None:
+            nonlocal finished
+            if isinstance(event, RalphFinished):
+                finished = event
+            self._emit_frame({"t": "ralph", "kind": type(event).__name__, **asdict(event)})
+
+        async def execute(prompt: str, *_args, **_kwargs) -> bool:
+            return await worker._run_turn(
+                prompt_id, prompt, images, approve, assistant_id="ralph", intermediate=True,
+            )
+
+        try:
+            await handle_ralph_command(
+                worker.agent, state, worker.assistant_id, getattr(state, "token_tracker", None),
+                [text], execute_fn=execute,
+                emit=lambda message: self._emit_frame(frames.notice(str(message))) if message else None,
+                on_event=progress,
+            )
+        finally:
+            self._emit_frame(frames.turn_done(
+                prompt_id, ok=finished is not None and finished.reason not in {"failed", "stopped"},
+            ))
 
     def _drain_queue(self) -> None:
         """Start the next queued prompt once the current turn is finished."""
@@ -618,13 +658,18 @@ class SessionHost:
             self._emit_frame(frames.error("session is not ready", code="state"))
             return
         result = await port.run(name, args if isinstance(args, str) else None)
+        composer_control = name.lstrip("/") == "ui-composer"
+        if composer_control or name.lstrip("/") in {
+            "serena", "browser-use", "plan", "prime", "passing", "lite-mode", "oracle-mode",
+        }:
+            await self.send_composer()
         self._emit_frame(
             frames.command_result(
                 request_id,
                 ok=result.ok,
                 message=result.message,
                 blocks=result.as_blocks(),
-                action=result.action,
+                action="toast" if composer_control else result.action,
                 prompt=result.prompt,
                 screen=_screen_body(result.screen),
                 attach=result.attach,
@@ -640,18 +685,17 @@ class SessionHost:
             # `_stream_prompt` does: start the turn it asked for.
             await self.prompt(f"{request_id}:prompt", result.prompt)
 
+    async def send_composer(self) -> None:
+        """Publish session controls after a mode change."""
+        if self._port is not None:
+            self._emit_frame(await asyncio.to_thread(self._port.composer_state))
+
     async def list_sessions(self) -> None:
         """Answer a ``sessions`` frame with every session the server holds."""
-        if self._registry is not None and len(self._registry) > 0:
-            self._emit_frame(
-                frames.sessions_frame(self._registry.summary(), active=self.session_id)
-            )
-            return
-        spec = self.spec
-        if spec is None:
-            self._emit_frame(frames.sessions_frame([], active=None))
-            return
-        self._emit_frame(frames.sessions_frame([self.row()], active=self.session_id))
+        response = frames.sessions_frame(self._session_rows(), active=self.session_id)
+        if self._port is not None:
+            response["composer"] = await asyncio.to_thread(self._port.composer_state)
+        self._emit_frame(response)
 
     def _session_rows(self) -> list[dict[str, Any]]:
         """Rows for a session-list screen, from the same registry `sessions` uses."""

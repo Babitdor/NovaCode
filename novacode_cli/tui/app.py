@@ -1293,7 +1293,7 @@ class NovaApp(App):
     }
     Screen.home #home-header {
         display: block; border: none; border-bottom: solid $border 35%;
-        background: $background;
+        background: $panel;
     }
     Screen.classic-home #home-header {
         display: block; height: 1fr; border: solid $primary 15%;
@@ -1410,7 +1410,7 @@ class NovaApp(App):
     Screen.home.dashboard-low #home-header,
     Screen.home.dashboard-low #home-actions { display: none; }
     #home-style-header, #home-composer-meta, #home-shortcuts { display: none; }
-    #home-style-header { height: auto; width: 100%; padding: 1 2; }
+    #home-style-header { height: auto; width: 100%; padding: 1 2; background: $panel; }
     #home-style-art, #home-style-details, #home-style-tip { height: auto; }
     #home-style-details { color: $text-muted; margin-top: 1; }
     #home-style-tip { color: $text-muted; margin-top: 1; }
@@ -1636,8 +1636,8 @@ class NovaApp(App):
        and a 1fr child inside an `auto` parent expands to the whole screen — the
        tab bar then ate ~30 rows and crushed #panes (every session pane, root
        included) to a 1-row sliver, so nothing rendered once the bar appeared. */
-    #session-tab-bar { dock: top; height: 3; width: 100%; }
-    #session-tabs { height: 3; width: 1fr; }
+    #session-tab-bar { dock: top; height: 3; width: 100%; background: $panel; }
+    #session-tabs { height: 3; width: 1fr; background: $panel; }
     #new-session {
         width: 3; min-width: 3; height: 1; min-height: 1;
         padding: 0; margin: 0; border: none;
@@ -1745,63 +1745,45 @@ class NovaApp(App):
     #composer-actions {
         layout: grid;
         grid-size: 7 1;
-        grid-columns: 9 11 9 11 9 15 34;
+        grid-columns: 16 8 11 8 8 13 10;
         grid-rows: 1;
+        grid-gutter: 0 1;
         height: 1;
         padding: 0 1;
         background: $surface;
     }
     #composer-actions.wrapped {
+        grid-size: 4 2; grid-columns: 1fr 1fr 1fr 1fr; grid-rows: 1 1; height: 2;
+    }
+    #composer-actions.compact {
         grid-size: 3 3; grid-columns: 1fr 1fr 1fr; grid-rows: 1 1 1; height: 3;
     }
-    #composer-actions.wrapped > Button { width: 1fr; min-width: 0; }
-    #agent-toggle { width: 15; min-width: 0; height: 1; min-height: 1;
-        border: none; padding: 0 1; background: $surface; }
-    #agent-toggle:focus, #agent-toggle:hover { background: $accent 15%; }
-    #code-oracle-actions { width: 34; height: 1; }
-    #composer-actions.wrapped #code-oracle-actions { column-span: 3; }
-    /* Wrapped (narrow) rows are exact-fit for the original cluster; the Serena
-       button yields there — narrow terminals use /serena. */
-    #composer-actions.wrapped #serena-toggle { display: none; }
-    #oracle-toggle {
-        width: 10; min-width: 10; height: 1; min-height: 1; border: none;
-        padding: 0 1; background: $surface; color: $text-muted;
-    }
-    #oracle-toggle.enabled { color: $accent; text-style: bold; }
-    #oracle-toggle:focus, #oracle-toggle:hover { background: $accent 15%; color: $accent; }
-    #prime-toggle, #passing-toggle, #plan-toggle, #browser-toggle, #caveman-toggle, #code-mode-toggle, #serena-toggle {
-        width: 16;
-        min-width: 16;
+    #composer-gap { display: none; height: 1; }
+    #composer-actions.compact #composer-gap { display: block; }
+    #composer-actions > Button {
+        width: 1fr;
+        min-width: 0;
         height: 1;
         min-height: 1;
-        padding: 0 1;
+        padding: 0;
         border: none;
-        background: $surface;
+        background: $surface-lighten-1;
         color: $text-muted;
     }
-    #prime-toggle { width: 9; min-width: 9; }
-    #passing-toggle { width: 11; min-width: 11; }
-    #plan-toggle { width: 9; min-width: 9; }
-    #browser-toggle { width: 11; min-width: 11; }
-    #caveman-toggle { width: 9; min-width: 9; }
-    #code-mode-toggle { width: 13; min-width: 13; }
-    #serena-toggle { width: 11; min-width: 11; }
-    /* Lite state lives in the colour, not the label: two distinct tints. */
-    #caveman-toggle.mode-caveman.enabled { color: $warning; }
-    #caveman-toggle.mode-ponytail.enabled { color: $success; }
-    #prime-toggle.enabled, #passing-toggle.enabled, #plan-toggle.enabled, #browser-toggle.enabled,
-    #caveman-toggle.enabled, #code-mode-toggle.enabled, #serena-toggle.enabled {
+    #composer-actions > #agent-toggle { background: $primary 18%; color: $text; text-style: bold; }
+    #composer-actions > Button.enabled {
+        background: $accent 18%;
         color: $accent;
         text-style: bold;
     }
-    #prime-toggle:focus, #prime-toggle:hover, #passing-toggle:focus, #passing-toggle:hover,
-    #plan-toggle:focus, #plan-toggle:hover, #browser-toggle:focus, #browser-toggle:hover,
-    #caveman-toggle:focus, #caveman-toggle:hover,
-    #code-mode-toggle:focus, #code-mode-toggle:hover, #serena-toggle:focus, #serena-toggle:hover {
-        background: $accent 15%;
+    #composer-actions > #caveman-toggle.mode-caveman.enabled { background: $warning 18%; color: $warning; }
+    #composer-actions > #caveman-toggle.mode-ponytail.enabled { background: $success 18%; color: $success; }
+    #composer-actions > Button:focus, #composer-actions > Button:hover {
+        background: $accent 32%;
         color: $accent;
         text-style: bold;
     }
+    #composer-actions > #agent-toggle:focus, #composer-actions > #agent-toggle:hover { background: $primary 32%; }
     #prompt {
         width: 1fr;
         background: $panel; color: $text;
@@ -2752,6 +2734,7 @@ class NovaApp(App):
             # tall in normal mode, so it costs nothing until a mode is active.
             yield Static("", id="mode-badge")
             with ComposerActions(id="composer-actions"):
+                yield Button("Nova ▾", id="agent-toggle", tooltip="Choose the speaking agent")
                 yield Button(
                     "Prime",
                     id="prime-toggle",
@@ -2769,17 +2752,12 @@ class NovaApp(App):
                     ),
                 )
                 yield Button(
-                    "plan",
+                    "Plan",
                     id="plan-toggle",
                     tooltip="Toggle read-only planning without submitting your draft.",
                 )
                 yield Button(
-                    "browser",
-                    id="browser-toggle",
-                    tooltip="Toggle browser research; choose trusted MCP servers in /browser-use settings.",
-                )
-                yield Button(
-                    "lite",
+                    "Lite",
                     id="caveman-toggle",
                     tooltip=(
                         "Toggle Lite Mode without sending your draft. "
@@ -2787,31 +2765,17 @@ class NovaApp(App):
                         "saved across launches."
                     ),
                 )
-                yield Button("Agent · Nova", id="agent-toggle", tooltip="Choose the speaking agent")
-                with Horizontal(id="code-oracle-actions"):
-                    yield Button(
-                        "serena",
-                        id="serena-toggle",
-                        tooltip=(
-                            "Toggle Serena mode: MCP-only semantic toolset with a "
-                            "Serena workflow. Needs the Serena MCP server connected "
-                            "(/mcp has a preset); same as /serena."
-                        ),
-                    )
-                    yield Button(
-                        "Code Mode",
-                        id="code-mode-toggle",
-                        tooltip=(
-                            "Compose Nova and MCP tool calls with JavaScript. "
-                            "Applies to the next model call; saved across launches. "
-                            "Calls needing approval or graph controls use the direct tool path."
-                        ),
-                    )
-                    yield Button(
-                        "Oracle",
-                        id="oracle-toggle",
-                        tooltip="Independent scored reviews for subsequent requests",
-                    )
+                yield Static("", id="composer-gap")
+                yield Button(
+                    "Code Mode",
+                    id="code-mode-toggle",
+                    tooltip="Compose Nova and MCP tool calls with JavaScript.",
+                )
+                yield Button(
+                    "Oracle",
+                    id="oracle-toggle",
+                    tooltip="Independent scored reviews for subsequent requests",
+                )
             yield Static("", id="home-composer-meta")
             yield Static(
                 "/ commands   @ files   Shift+Enter new line   /settings styles",
@@ -2870,9 +2834,9 @@ class NovaApp(App):
 
     def _apply_saved_theme(self) -> None:
         """Register Nova's palettes and apply the persisted theme (or default)."""
-        from novacode_cli.tui.themes import NOVA_EXTRA_THEMES
+        from novacode_cli.tui.themes import NOVA_EXTRA_THEMES, NOVA_LIGHT_THEMES
 
-        for theme in (NOVA_TOKYO_NIGHT, NOVA_MATRIX, *NOVA_EXTRA_THEMES):
+        for theme in (NOVA_TOKYO_NIGHT, NOVA_MATRIX, *NOVA_LIGHT_THEMES, *NOVA_EXTRA_THEMES):
             try:
                 self.register_theme(theme)
             except Exception:  # noqa: BLE001
@@ -8092,14 +8056,26 @@ class NovaApp(App):
         elif compact_ui:
             prefix = f"{motion.spinner(self._spinner_frame)} " if self._turn_active else ""
             elapsed = f" · {time.monotonic() - self._turn_start:0.1f}s" if self._turn_active else ""
-            line.append(f"{prefix}{str(self._activity).lower()}{elapsed}", style=pal.muted)
+            line.append(
+                f"{prefix}{str(self._activity).lower()}{elapsed}", style=pal.activity or pal.muted
+            )
         elif self._turn_active:
             elapsed = time.monotonic() - self._turn_start
             # A single-glyph spinner (so the label never jitters) plus a light
             # band sweeping across the words. The motion says "working" without
             # moving the text, which is the difference between polish and noise.
-            line.append(f"{motion.spinner(self._spinner_frame)} ", style=f"bold {pal.accent}")
-            line.append_text(motion.shimmer(str(self._activity).upper(), self._spinner_frame, pal))
+            line.append(
+                f"{motion.spinner(self._spinner_frame)} ",
+                style=f"bold {pal.activity or pal.accent}",
+            )
+            line.append_text(
+                motion.shimmer(
+                    str(self._activity).upper(),
+                    self._spinner_frame,
+                    pal,
+                    base=pal.activity,
+                )
+            )
             line.append(f"  {elapsed:0.1f}s", style=pal.muted)
         else:
             line.append("● ", style=f"bold {pal.success}")
@@ -8367,7 +8343,7 @@ class NovaApp(App):
         name, color = profile_identity(profile)
         with contextlib.suppress(NoMatches):
             self._w("#agent-toggle", Button).label = Text(
-                f"Agent · {name}", style=f"bold {color or pal.accent}"
+                f"{name} ▾", style=f"bold {color or pal.accent}"
             )
         visible = self._composer_strip_visible()
         with contextlib.suppress(NoMatches):
@@ -8707,15 +8683,10 @@ class NovaApp(App):
         prompt.screen.set_class(bool(plan), "planning-mode")
         prompt.screen.set_class(bool(browser), "browsing-mode")
         prompt.screen.set_class(bool(serena), "serena-mode")
-        browser_toggle = self._w("#browser-toggle", Button)
-        browser_toggle.label = "browser"
-        browser_toggle.set_class(bool(browser), "enabled")
-        self._refresh_serena_toggle()
         toggle = self._w("#prime-toggle", Button)
         toggle.label = "Prime"
         toggle.set_class(bool(prime), "enabled")
         plan_toggle = self._w("#plan-toggle", Button)
-        plan_toggle.label = "plan"
         plan_toggle.set_class(bool(plan), "enabled")
         prime_composer = bool(prime) and not (plan or browser or bash or auto)
         prompt.set_class(prime_composer, "prime-composer")
@@ -13083,14 +13054,6 @@ class NovaApp(App):
         toggle.label = "Code Mode"
         toggle.set_class(self._code_mode_enabled, "enabled")
 
-    def _refresh_serena_toggle(self) -> None:
-        """Mirror the live flag onto the composer button (all toggle paths)."""
-        with contextlib.suppress(NoMatches):
-            toggle = self._w("#serena-toggle", Button)
-            enabled = getattr(self.session_state, "serena_mode_enabled", False)
-            toggle.label = "serena"
-            toggle.set_class(enabled, "enabled")
-
     @on(Button.Pressed, "#agent-toggle")
     def _agent_toggle_pressed(self, event: Button.Pressed) -> None:
         event.stop()
@@ -13112,17 +13075,24 @@ class NovaApp(App):
         profiles = tuple(AGENT_COLORS)
         locked = await asyncio.to_thread(lambda: [profile_readiness(p) for p in profiles])
         descriptions = (
-            "Nova tools", "Serena MCP only", "Autonomous work loop", "Web and browser research",
+            "Nova tools",
+            "Serena MCP only",
+            "Autonomous work loop",
+            "Web and browser research",
         )
-        selected = await self.push_screen_wait(PickScreen(
-            "Choose agent",
-            [
-                Text(f"{p.title()} · {description}" + (" · locked" if reason else ""),
-                     style=AGENT_COLORS[p] or self._palette.accent)
-                for p, description, reason in zip(profiles, descriptions, locked, strict=True)
-            ],
-            "Select a locked agent to see its MCP setup.",
-        ))
+        selected = await self.push_screen_wait(
+            PickScreen(
+                "Choose agent",
+                [
+                    Text(
+                        f"{p.title()} · {description}" + (" · locked" if reason else ""),
+                        style=AGENT_COLORS[p] or self._palette.accent,
+                    )
+                    for p, description, reason in zip(profiles, descriptions, locked, strict=True)
+                ],
+                "Select a locked agent to see its MCP setup.",
+            )
+        )
         if selected is None or selected < 0 or self.session_state is not session:
             return
         if self._turn_running() or getattr(self, "_profile_ralph_session", None) is session:
@@ -13139,25 +13109,6 @@ class NovaApp(App):
         self._refresh_status()
         self._refresh_composer_info()
         self._w("#prompt", PromptInput).focus()
-
-    @on(Button.Pressed, "#serena-toggle")
-    async def _serena_toggle_pressed(self, event: Button.Pressed) -> None:
-        from novacode_cli.agents.serena_mode import serena_mcp_ready
-
-        event.stop()
-        if self._turn_running():
-            self.notify("Wait for the active request to finish before changing Serena Mode.")
-            return
-        enabled = not getattr(self.session_state, "serena_mode_enabled", False)
-        if enabled:
-            ready, detail = await asyncio.to_thread(serena_mcp_ready)
-            if not ready:
-                self.notify(detail, severity="warning", timeout=10)
-                return
-        self.session_state.serena_mode_enabled = enabled
-        self._update_mode_badge()
-        self._refresh_status()
-        self.query_one("#prompt", PromptInput).focus()
 
     @on(Button.Pressed, "#code-mode-toggle")
     async def _code_mode_toggle_pressed(self, event: Button.Pressed) -> None:
@@ -13179,7 +13130,6 @@ class NovaApp(App):
         mode = getattr(self, "_compression_mode", "off")
         enabled = mode != "off"
         # State lives in the colour: caveman and ponytail tint differently.
-        toggle.label = "lite"
         toggle.set_class(enabled, "enabled")
         toggle.set_class(mode == "caveman", "mode-caveman")
         toggle.set_class(mode == "ponytail", "mode-ponytail")
@@ -13476,13 +13426,6 @@ class NovaApp(App):
         event.stop()
         enabled = getattr(self.session_state, "plan_mode_enabled", False)
         await self._run_plan("/plan off" if enabled else "/plan")
-        self._w("#prompt", PromptInput).focus()
-
-    @on(Button.Pressed, "#browser-toggle")
-    async def _browser_toggle_pressed(self, event: Button.Pressed) -> None:
-        """Change the browser lens without sending or clearing the current draft."""
-        event.stop()
-        await self._run_browser_use("/browser-use")
         self._w("#prompt", PromptInput).focus()
 
     async def _run_prime(self, text: str) -> None:

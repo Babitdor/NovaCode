@@ -239,7 +239,8 @@ protocol. Everything below is checked by the test named in its row.
 | Declarative screen renderer (list, table, detail, form, markdown, progress, confirm) | `ported` | `rust/nova-tui/src/ui/screen.rs`, `rust/nova-tui/tests/fixtures/screens.jsonl` |
 | Transcript, composer, status bar, approval modal | `ported` | `rust/nova-tui/src/ui/`, `rust/nova-tui/tests/frames_replay.rs` |
 | Golden-frame corpora (`core_chat`, `screens`, `commands`) | `ported` | `rust/nova-tui/tests/fixtures/core_chat.jsonl`, `rust/nova-tui/tests/fixtures/screens.jsonl`, `rust/nova-tui/tests/fixtures/commands.jsonl` |
-| Question and plan modals | `not-started` | The approval modal is ported; the other two interrupts render but their reply payloads are provisional (ADR-008). |
+| Question, plan, tool, and Oracle interrupt replies | `ported` | `rust/nova-tui/src/ui/modal.rs`, `rust/nova-tui/tests/frames_replay.rs` |
+| Agent picker, Ralph progress, composer modes, and subagent context | `ported` | `novacode_cli/ui/port_server.py`, `rust/nova-tui/src/ui/composer.rs`, `rust/nova-tui/src/ui/subagents.rs` |
 | File-op **diff** view | `not-started` | `FileOp` cards show operation + path; the wire carries no before/after text, so the diff lands with the file-op wave (ADR-008). |
 | Cross-language handshake | `ported` | `tests/test_tui_rust_client.py` (real binary against the real server) |
 | Everything else | `not-started` | rows above |

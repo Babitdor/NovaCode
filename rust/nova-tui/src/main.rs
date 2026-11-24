@@ -11,13 +11,16 @@ use std::io::Write;
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use serde_json::json;
+use crossterm::event::{
+    self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+    Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
+};
+use ratatui::layout::Rect;
 
 use nova_tui::client::{Client, ClientEvent};
 use nova_tui::frames::{self, Inbound};
 use nova_tui::server::Supervised;
-use nova_tui::state::{apply, AppState, Effect, Modal};
+use nova_tui::state::{apply, AppState, Effect};
 use nova_tui::theme::Theme;
 use nova_tui::ui;
 
@@ -174,7 +177,13 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    let _ = crossterm::execute!(std::io::stdout(), EnableBracketedPaste, EnableMouseCapture);
     let outcome = run(&mut terminal, &client, &mut state);
+    let _ = crossterm::execute!(
+        std::io::stdout(),
+        DisableMouseCapture,
+        DisableBracketedPaste
+    );
     ratatui::restore();
     match outcome {
         Ok(()) => ExitCode::SUCCESS,
@@ -294,8 +303,11 @@ fn run(
     client: &Client,
     state: &mut AppState,
 ) -> std::io::Result<()> {
-    let mut theme = Theme::default();
     let base = Theme::default();
+    let mut theme = state.pending_theme.take().map_or(base, |palette| {
+        state.status.theme = palette.name.clone();
+        Theme::from_palette(&palette, base)
+    });
     loop {
         state.tick = state.tick.wrapping_add(1);
         // The sprite animates on the client's own clock, so it keeps moving
@@ -310,12 +322,55 @@ fn run(
         terminal.draw(|frame| ui::draw(frame, state, &theme))?;
 
         if event::poll(TICK)? {
-            if let Event::Key(key) = event::read()? {
-                if key.kind == KeyEventKind::Press {
-                    for effect in handle_key(state, &key) {
-                        perform(client, effect)?;
+            let effects = match event::read()? {
+                Event::Key(key)
+                    if matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) =>
+                {
+                    handle_key(state, &key)
+                }
+                Event::Paste(text) => {
+                    if let Some(pty) = state.terminal.as_ref() {
+                        vec![Effect::Send(frames::pty_input(&pty.id, &text))]
+                    } else {
+                        if state.modal.is_none() && state.screen.is_none() && !state.palette.open {
+                            state.composer_control = None;
+                            state
+                                .composer
+                                .push_str(&text.replace("\r\n", "\n").replace('\r', "\n"));
+                        }
+                        Vec::new()
                     }
                 }
+                Event::Mouse(mouse)
+                    if state.modal.is_none()
+                        && state.screen.is_none()
+                        && state.terminal.is_none()
+                        && !state.palette.open =>
+                {
+                    let size = terminal.size()?;
+                    let areas = ui::regions(Rect::new(0, 0, size.width, size.height), state);
+                    state.hovered_control =
+                        ui::composer::control_at(state, areas[3], mouse.column, mouse.row);
+                    match mouse.kind {
+                        MouseEventKind::Down(MouseButton::Left) => state
+                            .hovered_control
+                            .map(|control| vec![ui::composer::activate(state, control)])
+                            .unwrap_or_default(),
+                        MouseEventKind::ScrollUp => {
+                            state.scroll = state.scroll.saturating_add(3);
+                            Vec::new()
+                        }
+                        MouseEventKind::ScrollDown => {
+                            state.scroll = state.scroll.saturating_sub(3);
+                            Vec::new()
+                        }
+                        _ => Vec::new(),
+                    }
+                }
+                _ => Vec::new(),
+            };
+            for effect in effects {
+                perform(client, effect)?;
             }
         }
 
@@ -343,6 +398,7 @@ fn run(
                         },
                         text: reason,
                         agent: "Nova".to_string(),
+                        agent_color: None,
                     });
                     terminal.draw(|frame| ui::draw(frame, state, &theme))?;
                     return Ok(());
@@ -395,23 +451,7 @@ fn handle_key(state: &mut AppState, key: &KeyEvent) -> Vec<Effect> {
     let mut effects = Vec::new();
 
     if state.modal.is_some() {
-        match key.code {
-            KeyCode::Char('y') | KeyCode::Char('Y') => {
-                effects.push(Effect::Send(answer(state, "approve")));
-            }
-            KeyCode::Char('n') | KeyCode::Char('N') => {
-                effects.push(Effect::Send(answer(state, "reject")));
-            }
-            KeyCode::Char('a') | KeyCode::Char('A') => {
-                effects.push(Effect::Send(answer(state, "always")));
-            }
-            KeyCode::Esc => {
-                state.modal = None;
-                effects.push(Effect::Send(frames::cancel()));
-            }
-            _ => {}
-        }
-        return effects;
+        return ui::modal::handle_key(state, key).into_iter().collect();
     }
 
     // A live terminal takes the keyboard: every printable key is the child's,
@@ -437,7 +477,49 @@ fn handle_key(state: &mut AppState, key: &KeyEvent) -> Vec<Effect> {
         return effects;
     }
 
+    if state.status.composer.is_some() {
+        if matches!(key.code, KeyCode::Tab | KeyCode::BackTab) {
+            ui::composer::move_focus(state, key.code == KeyCode::BackTab);
+            return effects;
+        }
+        if let Some(control) = ui::composer::focused(state) {
+            match key.code {
+                KeyCode::Enter | KeyCode::Char(' ') => {
+                    return vec![ui::composer::activate(state, control)]
+                }
+                KeyCode::Esc => {
+                    state.composer_control = None;
+                    return effects;
+                }
+                _ => state.composer_control = None,
+            }
+        }
+    }
+
     match key.code {
+        KeyCode::Char('t') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            effects.push(Effect::Send(frames::sessions()));
+        }
+        KeyCode::Char('a')
+            if key.modifiers.contains(KeyModifiers::ALT) && state.status.composer.is_some() =>
+        {
+            effects.push(ui::composer::activate(state, "agent"));
+        }
+        KeyCode::Char('p')
+            if key.modifiers.contains(KeyModifiers::ALT) && state.status.composer.is_some() =>
+        {
+            let control = if state.ralph.as_ref().is_some_and(|(_, active)| *active) {
+                "ralph-pause"
+            } else {
+                "plan"
+            };
+            effects.push(ui::composer::activate(state, control));
+        }
+        KeyCode::Char('w') if key.modifiers.contains(KeyModifiers::ALT) => {
+            state.workers.expanded = !state.workers.expanded;
+        }
+        KeyCode::PageUp => state.scroll = state.scroll.saturating_add(12),
+        KeyCode::PageDown => state.scroll = state.scroll.saturating_sub(12),
         KeyCode::Char('/') if state.composer.is_empty() => {
             // An empty composer turns '/' into the command palette, so a
             // command is discoverable instead of memorised.
@@ -488,7 +570,10 @@ fn handle_key(state: &mut AppState, key: &KeyEvent) -> Vec<Effect> {
             state.composer.pop();
         }
         KeyCode::Enter => {
-            if key.modifiers.contains(KeyModifiers::ALT) {
+            if key
+                .modifiers
+                .intersects(KeyModifiers::ALT | KeyModifiers::SHIFT)
+            {
                 state.composer.push('\n');
             } else {
                 effects.extend(submit(state));
@@ -509,6 +594,7 @@ fn submit(state: &mut AppState) -> Vec<Effect> {
     state.remember(&text);
     state.scroll = 0;
     state.turn_running = true;
+    state.ralph = None;
     let id = state.next_request_id();
     if let Some(rest) = text.strip_prefix('/') {
         let mut parts = rest.splitn(2, ' ');
@@ -524,25 +610,7 @@ fn submit(state: &mut AppState) -> Vec<Effect> {
         kind: nova_tui::state::BlockKind::User,
         text: text.clone(),
         agent: "you".to_string(),
+        agent_color: None,
     });
     vec![Effect::Send(frames::prompt(&id, &text))]
-}
-
-/// Build the interrupt reply for a decision.
-fn answer(state: &mut AppState, decision: &str) -> String {
-    let Some(Modal::Approval { id, kind, .. }) = state.modal.take() else {
-        return frames::cancel();
-    };
-    let result = match kind.as_str() {
-        "plan" => json!({
-            "response": {"type": if decision == "reject" { "reject" } else { "accept" }},
-            "state_update": {},
-        }),
-        "question" => json!({"answer": if decision == "reject" { "" } else { "continue" }}),
-        _ => json!({
-            "decisions": [decision],
-            "any_rejected": decision == "reject",
-        }),
-    };
-    frames::interrupt_reply(&id, result)
 }

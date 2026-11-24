@@ -1504,8 +1504,8 @@ class ComposerActions(Horizontal):
     """Wrap composer controls using their actual width, including centered layouts."""
 
     def on_resize(self, event: events.Resize) -> None:
-        # The full row includes a 15-column agent selector.
-        self.set_class(event.size.width < 100, "wrapped")
+        self.set_class(event.size.width < 82, "wrapped")
+        self.set_class(event.size.width < 50, "compact")
 
 
 class PromptInput(TextArea):

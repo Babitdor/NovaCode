@@ -1,144 +1,144 @@
 ### assistant
-Plan                                                                                                
-• Read the failing test                                                                             
-• Run pytest -q                                                                                     
-• Report the delta between runs                                                                     
-Nothing is broken yet — verify first.                                                               
-                                                                                                    
-                                                                                                    
-                                                                                                    
-                                                                                                    
-                                                                                                    
-                                                                                                    
-                                                                                                    
-                                                                                                    
-                                                                                                    
-                                                                                                    
-                                                                                                    
-                                                                                                    
-                                                                                                    
-                                                                                                    
-                                                                                                    
-                                                                                                    
-                                                                                                    
-                                                                                                    
-                                                                                                    
-                                                                                                    
-                                                                                                    
-                                                                                                    
-                                                                                                    
-                                                                                                    
-                                                                                                    
-                                                                                                    
-┌ working — Esc cancels ───────────────────────────────────────────────────────────────────────────┐
-│▏ type a prompt, / for commands, Alt+Enter for a newline                                          │
-└──────────────────────────────────────────────────────────────────────────────────────────────────┘
-● recording-model  nova  working                                                                    
+Nova
+Plan
+• Read the failing test
+• Run pytest -q
+• Report the delta between runs
+Nothing is broken yet — verify first.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ ❯ Ask Nova anything…                                                                             │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+● recording-model  nova  working
 ### tool
-Plan                                                                                                
-• Read the failing test                                                                             
-• Run pytest -q                                                                                     
-• Report the delta between runs                                                                     
-Nothing is broken yet — verify first.                                                               
-                                                                                                    
-✓ ⚡  shell: pytest -q                                                                               
-   28 passed                                                                                        
-   collected 28 items                                                                               
-   tests/test_alpha.py .......  [ 25%]                                                              
-   …                                                                                                
-   final line: 28 passed                                                                            
-   [ctrl+o to expand]                                                                               
-                                                                                                    
-                                                                                                    
-                                                                                                    
-                                                                                                    
-                                                                                                    
-                                                                                                    
-                                                                                                    
-                                                                                                    
-                                                                                                    
-                                                                                                    
-                                                                                                    
-                                                                                                    
-                                                                                                    
-                                                                                                    
-                                                                                                    
-                                                                                                    
-                                                                                                    
-                                                                                                    
-┌ working — Esc cancels ───────────────────────────────────────────────────────────────────────────┐
-│▏ type a prompt, / for commands, Alt+Enter for a newline                                          │
-└──────────────────────────────────────────────────────────────────────────────────────────────────┘
-● recording-model  nova  working  todos 1/2                                                         
+Nova
+Plan
+• Read the failing test
+• Run pytest -q
+• Report the delta between runs
+Nothing is broken yet — verify first.
+
+✓ ⚡  shell: pytest -q
+   28 passed
+   collected 28 items
+   tests/test_alpha.py .......  [ 25%]
+   …
+   final line: 28 passed
+   [ctrl+o to expand]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ ❯ Ask Nova anything…                                                                             │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+● recording-model  nova  working  todos 1/2
 ### modal
-Plan                                                                                                
-• Read the failing test                                                                             
-• Run pytest -q                                                                                     
-• Report the delta between runs                                                                     
-Nothing is broken yet — verify first.                                                               
-                                                                                                    
-✓ ⚡  shell: pytest -q                                                                               
-   28 passed┌ approval ────────────────────────────────────────────────────────────────┐            
-   collected│Approve tool call?                                                        │            
-   tests/tes│                                                                          │            
-   …        │shell: pytest -q in the project root                                      │            
-   final lin│                                                                          │            
-   [ctrl+o t│y approve · n reject · a always allow · Esc closes                        │            
-            │                                                                          │            
-            │                                                                          │            
-            │                                                                          │            
-            │                                                                          │            
-            │                                                                          │            
-            │                                                                          │            
-            │                                                                          │            
-            │                                                                          │            
-            │                                                                          │            
-            │                                                                          │            
-            │                                                                          │            
-            │                                                                          │            
-            │                                                                          │            
-            │                                                                          │            
-            └──────────────────────────────────────────────────────────────────────────┘            
-                                                                                                    
-                                                                                                    
-                                                                                                    
-┌ working — Esc cancels ───────────────────────────────────────────────────────────────────────────┐
-│▏ type a prompt, / for commands, Alt+Enter for a newline                                          │
-└──────────────────────────────────────────────────────────────────────────────────────────────────┘
-● recording-model  nova  working  todos 1/2                                                         
+Nova
+Plan
+• Read the failing test
+• Run pytest -q
+• Report the delta between runs
+Nothing is broken yet — verify first.
+
+✓ ⚡  shell: ┌ approval ────────────────────────────────────────────────────────────────┐
+   28 passed│Approve tool call?                                                        │
+   collected│                                                                          │
+   tests/tes│shell: pytest -q in the project root {"command":"pytest -q"}              │
+   …        │                                                                          │
+   final lin│y approve · n reject · Esc rejects remaining                              │
+   [ctrl+o t│                                                                          │
+            │                                                                          │
+            │                                                                          │
+            │                                                                          │
+            │                                                                          │
+            │                                                                          │
+            │                                                                          │
+            │                                                                          │
+            │                                                                          │
+            │                                                                          │
+            │                                                                          │
+            │                                                                          │
+            │                                                                          │
+            │                                                                          │
+            └──────────────────────────────────────────────────────────────────────────┘
+
+
+
+╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ ❯ Ask Nova anything…                                                                             │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+● recording-model  nova  working  todos 1/2
 ### final
-Plan                                                                                                
-• Read the failing test                                                                             
-• Run pytest -q                                                                                     
-• Report the delta between runs                                                                     
-Nothing is broken yet — verify first.                                                               
-                                                                                                    
-✓ ⚡  shell: pytest -q                                                                               
-   28 passed┌ approval ────────────────────────────────────────────────────────────────┐            
-   collected│Approve tool call?                                                        │            
-   tests/tes│                                                                          │            
-   …        │shell: pytest -q in the project root                                      │            
-   final lin│                                                                          │            
-   [ctrl+o t│y approve · n reject · a always allow · Esc closes                        │            
-All green: 2│                                                                          │            
-            │                                                                          │            
-▸ Status    │                                                                          │            
-Session   re│                                                                          │            
-Thread    re│                                                                          │            
-Model     re│                                                                          │            
-Cwd       C:│                                                                          │            
-Approval  ma│                                                                          │            
-Todos     1/│                                                                          │            
-            │                                                                          │            
-            │                                                                          │            
-            │                                                                          │            
-            │                                                                          │            
-            │                                                                          │            
-            └──────────────────────────────────────────────────────────────────────────┘            
-                                                                                                    
-                                                                                                    
-                                                                                                    
-┌ prompt ──────────────────────────────────────────────────────────────────────────────────────────┐
-│▏ type a prompt, / for commands, Alt+Enter for a newline                                          │
-└──────────────────────────────────────────────────────────────────────────────────────────────────┘
-● recording-model  nova  ctx 1k  todos 1/2                                                          
+Nova
+Plan
+• Read the failing test
+• Run pytest -q
+• Report the delta between runs
+Nothing is broken yet — verify first.
+
+✓ ⚡  shell: ┌ approval ────────────────────────────────────────────────────────────────┐
+   28 passed│Approve tool call?                                                        │
+   collected│                                                                          │
+   tests/tes│shell: pytest -q in the project root {"command":"pytest -q"}              │
+   …        │                                                                          │
+   final lin│y approve · n reject · Esc rejects remaining                              │
+   [ctrl+o t│                                                                          │
+Nova        │                                                                          │
+All green: 2│                                                                          │
+            │                                                                          │
+▸ Status    │                                                                          │
+Session   re│                                                                          │
+Thread    re│                                                                          │
+Model     re│                                                                          │
+Cwd       C:│                                                                          │
+Approval  ma│                                                                          │
+Todos     1/│                                                                          │
+            │                                                                          │
+            │                                                                          │
+            │                                                                          │
+            └──────────────────────────────────────────────────────────────────────────┘
+
+
+
+╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ ❯ Ask Nova anything…                                                                             │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+● recording-model  nova  ctx 1k  todos 1/2

@@ -50,6 +50,10 @@ CLIENT_ACTIONS = {"clear": "clear", "quit": "quit"}
 # behaviour lives on the session the socket client cannot reach. `/status` has no
 # `TUI_COMMANDS` row at all; `/auto-approve` exists only as a Textual method.
 PORT_COMMANDS: dict[str, str] = {
+    "ui-composer": "_composer_command",
+    "serena": "_serena_command",
+    "browser-use": "_browser_command",
+    "mcp": "_mcp_command",
     "status": "_status",
     "auto-approve": "_auto_approve",
     "verbose": "_verbose",
@@ -647,6 +651,16 @@ def _picked_id(answer: object) -> str:
     return str(answer.get("id") or "") if isinstance(answer, dict) else ""
 
 
+def saved_theme() -> dict[str, Any] | None:
+    """Return the saved theme palette for the initial native frame."""
+    from dataclasses import asdict
+
+    from novacode_cli.ui.theme_table import BY_NAME
+
+    entry = BY_NAME.get(_persisted_theme() or "")
+    return asdict(entry) if entry is not None else None
+
+
 async def _rewind_rows(
     thread_id: str, messages: list[Any], turns: list[tuple[int, str]]
 ) -> list[tuple[int, str, str]]:
@@ -970,6 +984,218 @@ class ServerPort:
             return not_ported(command)
         return await self._passthrough(command, args)
 
+    def composer_state(self) -> dict[str, Any]:
+        """Expose authoritative session flags to the native composer."""
+        from novacode_cli.agents.profiles import profile_identity, selected_profile
+        from novacode_cli.config.nova_config import NovaConfig
+
+        state = self._worker.session_state
+        name, color = profile_identity(selected_profile(state) or "nova")
+        config = NovaConfig()
+        tracker = getattr(state, "token_tracker", None)
+        return {
+            "t": "composer",
+            "agent": name,
+            "color": color,
+            "prime": getattr(state, "prime_enabled", False) is True,
+            "passing": getattr(state, "handoff_enabled", False) is True,
+            "plan": getattr(state, "plan_mode_enabled", False) is True,
+            "browser": getattr(state, "browser_mode_enabled", False) is True,
+            "serena": getattr(state, "serena_mode_enabled", False) is True,
+            "lite": config.get_compression_mode(),
+            "code": config.get_code_mode_enabled(),
+            "oracle": getattr(state, "oracle_enabled", False) is True,
+            "context_window": getattr(tracker, "context_window_size", 0),
+        }
+
+    async def _composer_command(self, args: str | None) -> CommandResult:
+        """Act on a composer control without submitting its draft."""
+        from novacode_cli.agents.profiles import AGENT_COLORS, profile_readiness
+        from novacode_cli.commands.handoff_handler import handle_passing_command
+        from novacode_cli.commands.lite_mode_handler import handle_lite_mode_command
+        from novacode_cli.commands.prime_handler import handle_prime_command
+        from novacode_cli.config.nova_config import NovaConfig
+
+        state = self._worker.session_state
+        control = args or ""
+        if self._busy() and control in {"agent", "plan", "browser", "serena"}:
+            return CommandResult(False, "Wait for the active request to finish.")
+        if control == "agent":
+            profiles = tuple(AGENT_COLORS)
+            locked = await asyncio.to_thread(lambda: [profile_readiness(p) for p in profiles])
+            descriptions = (
+                "Nova tools", "Serena MCP only", "Autonomous work loop", "Web and browser research",
+            )
+            selected = _picked_id(await self.ask(ScreenSpec("list", {
+                "items": [
+                    {"id": p, "label": p.title(), "detail": reason or description, "color": AGENT_COLORS[p]}
+                    for p, description, reason in zip(profiles, descriptions, locked, strict=True)
+                ],
+            }, "Choose agent")))
+            if selected not in profiles:
+                return CommandResult(True)
+            if self._busy():
+                return CommandResult(False, "Wait for the active request to finish.")
+            if reason := profile_readiness(selected):
+                return CommandResult(False, reason)
+            state.browser_mode_enabled = False
+            state.serena_mode_enabled = False
+            state.agent_profile = selected
+        elif control == "plan":
+            state.plan_mode_enabled = not state.plan_mode_enabled
+        elif control == "passing":
+            handle_passing_command(state, "off" if state.handoff_enabled else "on")
+        elif control == "prime":
+            handle_prime_command(state)
+        elif control == "oracle":
+            state.oracle_enabled = not state.oracle_enabled
+        elif control == "ralph-pause" and getattr(state, "agent_profile", None) == "ralph" and self._busy():
+            state._ralph_checkpoint_requested = True
+        elif control == "lite":
+            mode = await asyncio.to_thread(lambda: NovaConfig().get_compression_mode())
+            await asyncio.to_thread(handle_lite_mode_command, "on" if mode == "off" else "off")
+        elif control == "code":
+            def toggle_code() -> None:
+                config = NovaConfig()
+                config.set_code_mode_enabled(not config.get_code_mode_enabled())
+            try:
+                await asyncio.to_thread(toggle_code)
+            except OSError as exc:
+                return CommandResult(False, f"Could not save Code Mode preference: {exc}")
+        elif control == "browser":
+            return await self._browser_command(None)
+        elif control == "serena":
+            return await self._serena_command(None)
+        else:
+            return CommandResult(False, "Unknown composer control.")
+        return CommandResult(True)
+
+    async def _serena_command(self, args: str | None) -> CommandResult:
+        """Toggle the legacy Serena lens using its live MCP readiness check."""
+        from novacode_cli.agents.serena_mode import serena_mcp_ready
+
+        state = self._worker.session_state
+        action = (args or "").strip().lower()
+        if action == "status":
+            detail = "on" if state.serena_mode_enabled else "off"
+            return CommandResult(True, f"Serena Mode: {detail}")
+        if self._busy():
+            return CommandResult(False, "Wait for the active request to finish.")
+        if action not in {"", "on", "off"}:
+            return CommandResult(False, "Use /serena on, off or status.")
+        enabled = action == "on" if action else not state.serena_mode_enabled
+        if enabled:
+            ready, detail = await asyncio.to_thread(serena_mcp_ready)
+            if not ready:
+                return CommandResult(False, detail)
+        state.serena_mode_enabled = enabled
+        return CommandResult(True)
+
+    async def _browser_command(self, args: str | None) -> CommandResult:
+        """Manage the trusted browser MCP selection and session mode."""
+        from novacode_cli.config.browser_mode import browser_mode_args
+        from novacode_cli.config.nova_config import NovaConfig
+        from novacode_cli.mcp.config import MCPConfig
+
+        state = self._worker.session_state
+        action, task = browser_mode_args(args)
+        if action == "status":
+            detail = "on" if state.browser_mode_enabled else "off"
+            return CommandResult(True, f"Browser Mode: {detail}")
+        if self._busy():
+            return CommandResult(False, "Wait for the active request to finish.")
+        if action == "settings":
+            servers = await asyncio.to_thread(lambda: MCPConfig().list_servers())
+            selected = set(await asyncio.to_thread(lambda: NovaConfig().get_browser_mode_servers()))
+            answer = await self.ask(ScreenSpec("form", {"fields": [
+                {"key": name, "label": name, "toggle": True, "value": "on" if name in selected else "off"}
+                for name, config in servers.items() if not config.disabled
+            ]}, "Trusted browser MCP servers"))
+            if isinstance(answer, dict):
+                if self._busy():
+                    return CommandResult(False, "Wait for the active request to finish.")
+                chosen = [name for name in servers if not servers[name].disabled and answer.get(name) is True]
+                await asyncio.to_thread(lambda: NovaConfig().set_browser_mode_servers(chosen))
+            return CommandResult(True)
+        state.browser_mode_enabled = not state.browser_mode_enabled if action == "toggle" else action == "on"
+        return CommandResult(True, prompt=task or None)
+
+    async def _mcp_command(self, args: str | None) -> CommandResult:
+        """Use the native picker to manage installed servers and install presets."""
+        from novacode_cli.mcp import get_shared_mcp_middleware
+        from novacode_cli.mcp.config import MCPConfig
+        from novacode_cli.mcp.presets import create_config_from_preset, list_presets
+
+        if args and args.strip():
+            return await self._passthrough("mcp", args)
+        config = MCPConfig()
+        servers = await asyncio.to_thread(config.list_servers)
+        middleware = get_shared_mcp_middleware()
+        presets = list_presets()
+        selection = _picked_id(await self.ask(ScreenSpec("list", {"items": [
+            *(
+                {"id": f"server:{name}", "label": name, "detail": (
+                    "disabled" if server.disabled else middleware.server_status.get(name, "configured")
+                )}
+                for name, server in servers.items()
+            ),
+            *(
+                {"id": f"preset:{name}", "label": f"Install {preset['name']}", "detail": preset["description"]}
+                for name, preset in presets.items() if name not in servers
+            ),
+        ]}, "MCP servers")))
+        if not selection:
+            return CommandResult(True)
+        kind, _, name = selection.partition(":")
+        if kind == "server" and name in servers:
+            server = servers[name]
+            items = [{"id": "toggle", "label": "Enable" if server.disabled else "Disable"}]
+            if not server.disabled:
+                items.append({"id": "retry", "label": "Retry connection"})
+            action = _picked_id(await self.ask(ScreenSpec("list", {"items": items}, name)))
+            if action not in ("retry", "toggle"):
+                return CommandResult(True)
+            if self._busy():
+                return CommandResult(False, "Wait for the active request to finish.")
+            if action == "retry" and not server.disabled:
+                connected = await middleware.retry_server(name)
+                return CommandResult(connected, f"{name}: {'connected' if connected else 'connection failed'}")
+            if action != "toggle":
+                return CommandResult(False, "Enable the server before retrying.")
+            server.disabled = not server.disabled
+        elif kind == "preset" and name in presets and name not in servers:
+            preset = presets[name]
+            values = {}
+            if key := preset.get("setup_key"):
+                result = await self.ask(ScreenSpec("form", {"fields": [{
+                    "key": key,
+                    "label": preset["setup_prompt"],
+                    "value": "",
+                    "secret": key in preset.get("env_mapping", {}),
+                }]}, f"Install {preset['name']}"))
+                if not isinstance(result, dict):
+                    return CommandResult(True)
+                value = result.get(key)
+                if not isinstance(value, str) or not value.strip():
+                    return CommandResult(False, "Enter the required setup value.")
+                values[key] = value.strip()
+            if self._busy():
+                return CommandResult(False, "Wait for the active request to finish.")
+            server = create_config_from_preset(name, values)
+            if server is None:
+                return CommandResult(False, "Unknown MCP preset.")
+        else:
+            return CommandResult(False, "Unknown MCP selection.")
+        await config.add_server_async(name, server)
+        reload_servers = getattr(self._worker.session_state, "reload_mcp_servers", None)
+        if reload_servers is None:
+            return CommandResult(True, f"{name}: saved.")
+        try:
+            self._worker.agent, self._worker.backend = await reload_servers()
+        except Exception:  # noqa: BLE001 — the saved configuration applies after restart.
+            return CommandResult(False, f"{name}: saved. Restart the session to apply it.")
+        return CommandResult(True, f"{name}: {'disabled' if server.disabled else 'enabled'}.")
+
     async def _auto_approve(self, args: str | None = None) -> CommandResult:
         """Turn this session's approval preference on, off, or report it.
 
@@ -1225,6 +1451,7 @@ class ServerPort:
                 surface=entry.surface,
                 panel=entry.panel,
                 muted=entry.muted,
+                activity=entry.activity,
                 border=entry.border,
                 success=entry.success,
                 warning=entry.warning,

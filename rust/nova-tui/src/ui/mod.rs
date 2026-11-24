@@ -13,11 +13,14 @@ pub mod modal;
 pub mod palette;
 pub mod screen;
 pub mod statusbar;
+pub mod subagents;
 pub mod tabs;
 pub mod terminal;
 pub mod transcript;
 
-use ratatui::layout::{Constraint, Layout};
+use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::style::Style;
+use ratatui::widgets::Block;
 use ratatui::Frame;
 
 use crate::state::AppState;
@@ -36,20 +39,26 @@ fn home_visible(state: &AppState) -> bool {
             .is_some_and(crate::ui::home::Home::shows_banner)
 }
 
+/// Lay out the transcript, tabs, workers, composer, and status.
+pub fn regions(area: Rect, state: &AppState) -> [Rect; 5] {
+    Layout::vertical([
+        Constraint::Min(1),
+        Constraint::Length(u16::from(tabs::visible(state))),
+        Constraint::Length(subagents::height(state).min(area.height / 3)),
+        Constraint::Length(composer::height(state, area.width).min(area.height.saturating_sub(2))),
+        Constraint::Length(1),
+    ])
+    .areas(area)
+}
+
 /// Draw the whole client into *frame*.
 pub fn draw(frame: &mut Frame, state: &mut AppState, theme: &Theme) {
     let area = frame.area();
-    // The tab bar costs a row only while it exists: one session is a label, not
-    // a choice, and a permanently empty row would be a small lie about the UI.
-    let tab_row = u16::from(tabs::visible(state));
-    let chunks = Layout::vertical([
-        Constraint::Min(1),
-        Constraint::Length(tab_row),
-        Constraint::Length(3),
-        Constraint::Length(1),
-    ])
-    .split(area);
-
+    frame.render_widget(
+        Block::default().style(Style::default().bg(theme.background)),
+        area,
+    );
+    let chunks = regions(area, state);
     transcript::draw(frame, chunks[0], state, theme);
     // The home banner owns an empty conversation, the way the terminal UI's home
     // screen does: art and rain while there is nothing to read.
@@ -58,11 +67,12 @@ pub fn draw(frame: &mut Frame, state: &mut AppState, theme: &Theme) {
             banner.draw(frame, chunks[0], theme);
         }
     }
-    if tab_row == 1 {
+    if chunks[1].height > 0 {
         tabs::draw(frame, chunks[1], state, theme);
     }
-    composer::draw(frame, chunks[2], state, theme);
-    statusbar::draw(frame, chunks[3], state, theme);
+    subagents::draw(frame, chunks[2], state, theme);
+    composer::draw(frame, chunks[3], state, theme);
+    statusbar::draw(frame, chunks[4], state, theme);
     // A running shell command owns the conversation area: its output is what the
     // user asked for, and the transcript is still there when it closes.
     if let Some(terminal) = state.terminal.as_ref() {

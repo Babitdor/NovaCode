@@ -47,12 +47,48 @@ fn render(state: &mut AppState) -> String {
     let buffer = terminal.backend().buffer().clone();
     let mut out = String::new();
     for y in 0..HEIGHT {
+        let mut row = String::new();
         for x in 0..WIDTH {
-            out.push_str(buffer[(x, y)].symbol());
+            row.push_str(buffer[(x, y)].symbol());
         }
+        out.push_str(row.trim_end());
         out.push('\n');
     }
     out
+}
+
+#[test]
+fn the_editorial_theme_paints_a_cream_canvas_and_sand_surfaces() {
+    use ratatui::style::Color;
+
+    let mut state = AppState::new();
+    let ready = frames::decode(
+        r##"{"t":"ready","composer":{"agent":"Nova"},"theme":{"name":"nova-editorial","dark":false,"background":"#fdf6e9","surface":"#efe0c5","border":"#8c3b3b","foreground":"#2b2927","activity":"#5e5473"}}"##,
+    )
+    .expect("ready frame");
+    apply(&mut state, &ready);
+    let palette = state.pending_theme.take().expect("startup palette");
+    let theme = Theme::from_palette(&palette, Theme::default());
+    assert_eq!(theme.activity, Color::Rgb(0x5e, 0x54, 0x73));
+    assert_eq!(theme.border, Color::Rgb(0x8c, 0x3b, 0x3b));
+    let mut terminal = Terminal::new(TestBackend::new(WIDTH, HEIGHT)).expect("terminal");
+    terminal
+        .draw(|frame| ui::draw(frame, &mut state, &theme))
+        .expect("draw");
+    let buffer = terminal.backend().buffer();
+    assert_eq!(buffer[(WIDTH - 1, 1)].bg, Color::Rgb(0xfd, 0xf6, 0xe9));
+    assert_eq!(
+        buffer[(WIDTH - 2, HEIGHT - 4)].bg,
+        Color::Rgb(0xef, 0xe0, 0xc5)
+    );
+
+    state.palette.open = true;
+    terminal
+        .draw(|frame| ui::draw(frame, &mut state, &theme))
+        .expect("draw the command palette");
+    let buffer = terminal.backend().buffer();
+    assert_eq!(buffer[(0, HEIGHT - 4)].symbol(), "└");
+    assert_eq!(buffer[(1, HEIGHT - 5)].bg, Color::Rgb(0xef, 0xe0, 0xc5));
 }
 
 /// The replay report: one rendered frame per checkpoint, labelled.
@@ -134,6 +170,84 @@ fn replay_preserves_message_order_and_text() {
 }
 
 #[test]
+fn composer_picker_and_worker_context_survive_the_wire() {
+    use ratatui::layout::Rect;
+    use serde_json::Value;
+
+    let mut state = AppState::new();
+    for raw in [
+        r##"{"t":"ready","session_id":"one","composer":{"agent":"Nora","color":"#bd9aff","code":true}}"##,
+        r#"{"t":"ev","c":"SubagentTask","d":{"task_id":"w","subagent_type":"Nora","status":"running","label":"Check docs","context_used":129000,"context_window":1000000}}"#,
+        r##"{"t":"ev","c":"AssistantMessage","d":{"text":"Verified","agent_name":"Nora","agent_color":"#bd9aff"}}"##,
+    ] {
+        apply(&mut state, &frames::decode(raw).expect("frame"));
+    }
+    state.composer = "Unsent draft\nSecond line".to_string();
+    let view = render(&mut state);
+    assert!(view.contains("Nora ▾"));
+    assert!(view.contains("ctx 129k/1.0M · 13% · 87% left"));
+    assert!(view.contains("Second line"));
+    assert!(view.contains("Nora"));
+    let area = ui::regions(Rect::new(0, 0, 80, 24), &state)[3];
+    let selected = ui::composer::control_at(&state, area, 6, area.bottom() - 2);
+    assert_eq!(selected, Some("agent"));
+    ui::composer::move_focus(&mut state, false);
+    assert_eq!(ui::composer::focused(&state), Some("agent"));
+    let Effect::Send(line) = ui::composer::activate(&mut state, "agent") else {
+        panic!("expected a command");
+    };
+    let command: Value = serde_json::from_str(&line).expect("command payload");
+    assert_eq!(command["name"], "ui-composer");
+    assert_eq!(command["args"], "agent");
+    assert_eq!(state.composer, "Unsent draft\nSecond line");
+
+    state.turn_running = true;
+    let locked = frames::decode(
+        r#"{"t":"command_result","action":"toast","ok":false,"message":"Agent is locked."}"#,
+    )
+    .expect("composer feedback");
+    apply(&mut state, &locked);
+    assert!(state.turn_running);
+    assert_eq!(
+        state.toast.as_ref().map(|(text, _)| text.as_str()),
+        Some("Agent is locked.")
+    );
+}
+
+#[test]
+fn interactive_answers_match_the_agent_loop() {
+    fn press(state: &mut AppState, key: KeyCode) -> Option<serde_json::Value> {
+        match ui::modal::handle_key(state, &KeyEvent::new(key, KeyModifiers::NONE))? {
+            Effect::Send(line) => Some(serde_json::from_str(&line).expect("interrupt reply")),
+            _ => panic!("expected an interrupt reply"),
+        }
+    }
+    for (raw, keys, expected) in [
+        (
+            r#"{"t":"interrupt","id":"q","kind":"question","payload":{"question":"Where?","options":["Here","There"]}}"#,
+            vec![KeyCode::Down, KeyCode::Enter],
+            serde_json::json!({"answer": "There"}),
+        ),
+        (
+            r#"{"t":"interrupt","id":"p","kind":"plan","payload":{"plan":"Design"}}"#,
+            vec![KeyCode::Char('y')],
+            serde_json::json!({"response":{"approved":true,"action":"approve","feedback":""},"state_update":{"plan_mode_enabled":false}}),
+        ),
+        (
+            r#"{"t":"interrupt","id":"t","kind":"tool","payload":{"action_requests":[{"name":"read"},{"name":"write"}]}}"#,
+            vec![KeyCode::Char('y'), KeyCode::Char('n')],
+            serde_json::json!({"decisions":[{"type":"approve"},{"type":"reject"}],"any_rejected":true}),
+        ),
+    ] {
+        let mut state = AppState::new();
+        apply(&mut state, &frames::decode(raw).expect("request"));
+        let mut answers = keys.into_iter().filter_map(|key| press(&mut state, key));
+        assert_eq!(answers.next().expect("reply")["result"], expected);
+        assert!(answers.next().is_none());
+    }
+}
+
+#[test]
 fn tool_card_keeps_the_final_line_of_its_output() {
     let mut state = AppState::new();
     for frame in fixture() {
@@ -182,10 +296,7 @@ fn interrupt_opens_a_modal_that_occupies_the_screen() {
             modal_frame = render(&mut state);
         }
     }
-    match state.modal {
-        Some(Modal::Approval { .. }) => {}
-        None => panic!("the interrupt must stay open until it is answered"),
-    }
+    assert!(matches!(state.modal, Some(Modal::Approval { .. })));
     assert!(modal_frame.contains("Approve tool call?"));
     assert!(
         modal_frame.contains("y approve"),

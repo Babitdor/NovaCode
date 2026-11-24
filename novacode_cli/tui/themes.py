@@ -1,6 +1,29 @@
 """Nova's additional palettes, available through /themes."""
 
-from textual.theme import Theme
+from dataclasses import replace
+
+from textual.theme import BUILTIN_THEMES, Theme
+
+
+# Keep the saved theme names and their accents, with softer workspace surfaces.
+NOVA_LIGHT_THEMES = tuple(
+    replace(
+        BUILTIN_THEMES[name],
+        background=canvas,
+        surface=surface,
+        panel=panel,
+        foreground=BUILTIN_THEMES[name].foreground or "#302b27",
+        variables={**BUILTIN_THEMES[name].variables, "text-muted": muted},
+    )
+    for name, canvas, surface, panel, muted in (
+        ("textual-light", "#dcd7cf", "#d3ccc2", "#c9c0b5", "#5e564e"),
+        ("catppuccin-latte", "#dde1ea", "#d3d9e5", "#c8cfdf", "#525d76"),
+        ("solarized-light", "#f0e7d2", "#e8dec6", "#e4d7bc", "#536369"),
+        ("rose-pine-dawn", "#f1e8e0", "#eaded6", "#e2d4cc", "#665c72"),
+        ("atom-one-light", "#e9e5dd", "#ded9cf", "#d4cec3", "#5c5851"),
+    )
+    if name in BUILTIN_THEMES
+)
 
 NOVA_EXTRA_THEMES = (
     Theme(
@@ -114,5 +137,37 @@ NOVA_EXTRA_THEMES = (
         boost="#dfd0b8",
         dark=False,
         variables={"text-muted": "#706355", "border": "#ab9478"},
+    ),
+    Theme(
+        name="nova-obsidian",
+        primary="#e3b489",
+        secondary="#6e7781",
+        accent="#e3b489",
+        success="#a9ba9b",
+        warning="#e3b489",
+        error="#e39292",
+        background="#0e1112",
+        foreground="#e8dfd5",
+        surface="#191b42",
+        panel="#191b42",
+        boost="#22244a",
+        dark=True,
+        variables={"text-muted": "#6e7781", "border": "#e3b489"},
+    ),
+    Theme(
+        name="nova-editorial",
+        primary="#8c3b3b",
+        secondary="#5e5473",
+        accent="#8c3b3b",
+        success="#5e5473",
+        warning="#805019",
+        error="#9a3737",
+        background="#fdf6e9",
+        foreground="#2b2927",
+        surface="#efe0c5",
+        panel="#efe0c5",
+        boost="#e7d6b8",
+        dark=False,
+        variables={"text-muted": "#7a736a", "border": "#8c3b3b", "nova-activity": "#5e5473"},
     ),
 )

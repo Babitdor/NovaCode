@@ -252,7 +252,10 @@ class SessionWorker:
                     result if result is not None else default_interrupt_response(event.kind)
                 )
 
-    async def _run_turn(self, prompt_id: str, text: str, images=None, auto_approve=None) -> None:  # noqa: PLR0912
+    async def _run_turn(  # noqa: PLR0912
+        self, prompt_id: str, text: str, images=None, auto_approve=None, *,
+        assistant_id: str | None = None, intermediate: bool = False,
+    ) -> bool:
         """Stream one prompt, emitting every event to the parent."""
         ok = True
         if auto_approve is not None:
@@ -272,10 +275,15 @@ class SessionWorker:
             if text.lstrip().startswith("/") and not images:
                 text = await self._resolve_slash(text, prompt_id=prompt_id)
                 if text is None:
-                    return
+                    return ok
             stream = iterate_agent_events
             goal_options: dict[str, Any] = {}
-            if getattr(self.session_state, "active_goal", None):
+            if getattr(self.session_state, "oracle_enabled", False) is True:
+                from novacode_cli.core.oracle import run_with_oracle
+
+                stream = run_with_oracle
+                goal_options["can_continue"] = lambda: not self._queued
+            elif getattr(self.session_state, "active_goal", None):
                 from novacode_cli.core.autonomous_loop import run_with_goal
 
                 stream = run_with_goal
@@ -283,7 +291,7 @@ class SessionWorker:
             source = stream(
                 text,
                 self.agent,
-                self.assistant_id,
+                assistant_id or self.assistant_id,
                 self.session_state,
                 backend=self.backend,
                 seen_message_ids=self._seen,
@@ -291,6 +299,8 @@ class SessionWorker:
                 **goal_options,
             )
             async for event in source:
+                if intermediate and isinstance(event, ev.Done):
+                    continue
                 if isinstance(event, ev.InterruptRequest):
                     await self._forward_interrupt(event)
                     continue
@@ -332,9 +342,11 @@ class SessionWorker:
                         # A message arriving after the last graph hook still
                         # needs an answer; never silently discard it.
                         self._queued.appendleft((pid, instruction.instruction, [], approval))
-                self._emit({"t": "turn_done", "id": prompt_id, "ok": ok})
+                if not intermediate:
+                    self._emit({"t": "turn_done", "id": prompt_id, "ok": ok})
                 for pid, consumed in reversed(completed):
                     self._emit({"t": "turn_done", "id": pid, "ok": ok, "steered": consumed})
+        return ok
 
     async def _resolve_slash(self, text: str, *, prompt_id: str | None = None) -> str | None:
         """Resolve commands in the child's own workspace, never as raw model input."""

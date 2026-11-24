@@ -143,7 +143,9 @@ async def test_the_rust_client_asks_for_the_command_catalogue() -> None:
 
     catalogue = [frame for frame in frames if frame.get("t") == "catalogue"][-1]
     names = [entry["name"] for entry in catalogue["commands"]]
-    assert len(names) == 105
+    from novacode_cli.server.catalog import CATALOG
+
+    assert set(names) == set(CATALOG)
     assert "help" in names
     entry = catalogue["commands"][names.index("help")]
     assert entry["served"] is True

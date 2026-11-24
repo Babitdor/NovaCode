@@ -97,7 +97,13 @@ pub enum UiEvent {
     AssistantMessage {
         text: String,
         agent_name: String,
+        agent_color: Option<String>,
         is_subagent: bool,
+    },
+    SubagentTask(SubagentTask),
+    SubagentPreview {
+        id: String,
+        text: String,
     },
     ToolCall {
         name: String,
@@ -143,6 +149,35 @@ pub enum UiEvent {
     Other(String),
 }
 
+/// Session-owned state displayed in the prompt composer's controls.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ComposerState {
+    pub agent: String,
+    pub color: Option<String>,
+    pub prime: bool,
+    pub passing: bool,
+    pub plan: bool,
+    pub browser: bool,
+    pub serena: bool,
+    pub lite: String,
+    pub code: bool,
+    pub oracle: bool,
+    pub context_window: u64,
+}
+
+/// A row of the live subagents panel.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SubagentTask {
+    pub id: String,
+    pub name: String,
+    pub label: String,
+    pub status: String,
+    pub phase_kind: String,
+    pub error: String,
+    pub context_used: u64,
+    pub context_window: u64,
+}
+
 /// The palette the server chose, from a `ui_theme` frame.
 ///
 /// Named `ThemePalette` rather than `Palette` because `state::Palette` is the
@@ -157,6 +192,7 @@ pub struct ThemePalette {
     pub surface: Option<String>,
     pub panel: Option<String>,
     pub muted: Option<String>,
+    pub activity: Option<String>,
     pub border: Option<String>,
     pub success: Option<String>,
     pub warning: Option<String>,
@@ -176,6 +212,13 @@ pub enum Inbound {
         assistant_id: Option<String>,
         /// The home banner the server asked for, if it sent one.
         home: Option<HomeConfig>,
+        composer: Option<ComposerState>,
+        theme: Option<Box<ThemePalette>>,
+    },
+    Composer(ComposerState),
+    Ralph {
+        label: String,
+        active: bool,
     },
     Event(UiEvent),
     Interrupt {
@@ -243,6 +286,7 @@ pub enum Inbound {
     Sessions {
         sessions: Vec<SessionInfo>,
         active: Option<String>,
+        composer: Option<ComposerState>,
     },
     Unknown {
         kind: String,
@@ -284,7 +328,24 @@ pub fn decode_ui_event(doc: &Value) -> UiEvent {
         "AssistantMessage" => UiEvent::AssistantMessage {
             text: text(&data, "text"),
             agent_name: text(&data, "agent_name"),
+            agent_color: opt_text(&data, "agent_color"),
             is_subagent: flag(&data, "is_subagent"),
+        },
+        "SubagentTask" => UiEvent::SubagentTask(SubagentTask {
+            id: text(&data, "task_id"),
+            name: text(&data, "subagent_type"),
+            label: opt_text(&data, "label")
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| text(&data, "description")),
+            status: text(&data, "status"),
+            phase_kind: text(&data, "phase_kind"),
+            error: text(&data, "error"),
+            context_used: count(&data, "context_used"),
+            context_window: count(&data, "context_window"),
+        }),
+        "SubagentPreview" => UiEvent::SubagentPreview {
+            id: text(&data, "task_id"),
+            text: text(&data, "text"),
         },
         "ToolCall" => UiEvent::ToolCall {
             name: text(&data, "name"),
@@ -401,6 +462,40 @@ fn decode_command_help(doc: &Value) -> CommandHelp {
     }
 }
 
+fn decode_composer(doc: &Value) -> ComposerState {
+    ComposerState {
+        agent: text(doc, "agent"),
+        color: opt_text(doc, "color"),
+        prime: flag(doc, "prime"),
+        passing: flag(doc, "passing"),
+        plan: flag(doc, "plan"),
+        browser: flag(doc, "browser"),
+        serena: flag(doc, "serena"),
+        lite: text(doc, "lite"),
+        code: flag(doc, "code"),
+        oracle: flag(doc, "oracle"),
+        context_window: count(doc, "context_window"),
+    }
+}
+
+fn decode_theme(doc: &Value) -> ThemePalette {
+    ThemePalette {
+        name: text(doc, "name"),
+        dark: flag(doc, "dark"),
+        primary: opt_text(doc, "primary"),
+        background: opt_text(doc, "background"),
+        foreground: opt_text(doc, "foreground"),
+        surface: opt_text(doc, "surface"),
+        panel: opt_text(doc, "panel"),
+        muted: opt_text(doc, "muted"),
+        activity: opt_text(doc, "activity"),
+        border: opt_text(doc, "border"),
+        success: opt_text(doc, "success"),
+        warning: opt_text(doc, "warning"),
+        error: opt_text(doc, "error"),
+    }
+}
+
 /// Decode one line into an [`Inbound`], or `None` for noise.
 ///
 /// `None` is used for blank lines, non-JSON and JSON that is not an object —
@@ -429,22 +524,30 @@ pub fn decode(line: &str) -> Option<Inbound> {
                 animation: flag(home, "animation"),
                 version: text(home, "version"),
             }),
+            composer: doc.get("composer").map(decode_composer),
+            theme: doc
+                .get("theme")
+                .filter(|value| value.is_object())
+                .map(|value| Box::new(decode_theme(value))),
+        },
+        "composer" => Inbound::Composer(decode_composer(&doc)),
+        "ralph" => Inbound::Ralph {
+            label: match doc["kind"].as_str() {
+                Some("RalphStarted") => text(&doc, "task"),
+                Some("IterationStarted") => format!(
+                    "Iteration {}/{}",
+                    count(&doc, "iteration"),
+                    count(&doc, "max_iterations")
+                ),
+                Some("IterationFinished") => {
+                    format!("Iteration {} finished", count(&doc, "iteration"))
+                }
+                _ => text(&doc, "detail"),
+            },
+            active: doc["kind"].as_str() != Some("RalphFinished"),
         },
         "ev" => Inbound::Event(decode_ui_event(&doc)),
-        "ui_theme" => Inbound::UiTheme(ThemePalette {
-            name: text(&doc, "name"),
-            dark: flag(&doc, "dark"),
-            primary: opt_text(&doc, "primary"),
-            background: opt_text(&doc, "background"),
-            foreground: opt_text(&doc, "foreground"),
-            surface: opt_text(&doc, "surface"),
-            panel: opt_text(&doc, "panel"),
-            muted: opt_text(&doc, "muted"),
-            border: opt_text(&doc, "border"),
-            success: opt_text(&doc, "success"),
-            warning: opt_text(&doc, "warning"),
-            error: opt_text(&doc, "error"),
-        }),
+        "ui_theme" => Inbound::UiTheme(decode_theme(&doc)),
         "interrupt" => Inbound::Interrupt {
             id: text(&doc, "id"),
             kind: text(&doc, "kind"),
@@ -510,6 +613,7 @@ pub fn decode(line: &str) -> Option<Inbound> {
             payload: doc.get("payload").cloned().unwrap_or(Value::Null),
         },
         "sessions" => Inbound::Sessions {
+            composer: doc.get("composer").map(decode_composer),
             sessions: doc
                 .get("sessions")
                 .and_then(Value::as_array)

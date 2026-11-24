@@ -18,8 +18,8 @@ and Evidence is how that was decided:
 
 ## Summary
 
-* 105 commands in the TUI table.
-* **105 served** by the socket port today.
+* 106 commands in the TUI table.
+* **106 served** by the socket port today.
 * **0 waiting**, by evidence - .
 
 ## Worklist
@@ -53,7 +53,7 @@ and Evidence is how that was decided:
 | /agent-server | passthrough | yes | port-command | _run_agent_server | - |
 | /tasks | passthrough | yes | port-command | _run_tasks | - |
 | /cowork | passthrough | yes | port-command | _run_cowork | desktop |
-| /mcp | passthrough | yes | shared-command | _run_mcp | - |
+| /mcp | passthrough | yes | port-command | _run_mcp | - |
 | /skills | passthrough | yes | shared-command | _run_skills | - |
 | /agents | passthrough | yes | shared-command | _run_agents | - |
 | /plan | passthrough | yes | shared-command | _run_plan | - |
@@ -95,7 +95,8 @@ and Evidence is how that was decided:
 | /share | passthrough | yes | port-command | _run_share | - |
 | /rewind | screen | yes | port-screen | _run_rewind | - |
 | /hooks | passthrough | yes | shared-command | _run_hooks | - |
-| /browser-use | passthrough | yes | shared-command | _run_browser_use | - |
+| /browser-use | passthrough | yes | port-command | _run_browser_use | - |
+| /serena | passthrough | yes | port-command | _run_serena | - |
 | /ralph | passthrough | yes | port-command | _run_ralph | - |
 | /trello | passthrough | yes | port-command | _run_trello | - |
 | /create | passthrough | yes | port-command | _run_create | - |

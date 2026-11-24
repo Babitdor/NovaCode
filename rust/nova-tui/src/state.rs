@@ -10,8 +10,8 @@ use std::collections::{HashMap, HashSet};
 use serde_json::Value;
 
 use crate::frames::{
-    Block, CommandHelp, CouncilAgent, CouncilUpdate, Inbound, SessionInfo, ThemePalette, Todo,
-    UiEvent,
+    Block, CommandHelp, ComposerState, CouncilAgent, CouncilUpdate, Inbound, SessionInfo,
+    SubagentTask, ThemePalette, Todo, UiEvent,
 };
 use crate::ui::avatar::Avatar;
 use crate::ui::home::Home;
@@ -103,6 +103,7 @@ impl Terminal {
 /// A rendering-relevant status snapshot, driven by `ready`, `status` and usage.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Status {
+    pub composer: Option<ComposerState>,
     pub session_id: Option<String>,
     pub cwd: Option<String>,
     pub model: Option<String>,
@@ -185,6 +186,7 @@ pub struct Entry {
     pub kind: BlockKind,
     pub text: String,
     pub agent: String,
+    pub agent_color: Option<String>,
 }
 
 /// A modal the client is showing. The three kinds mirror `InterruptRequest`.
@@ -195,6 +197,16 @@ pub enum Modal {
         kind: String,
         headline: String,
         detail: Vec<String>,
+        scroll: usize,
+        decisions: Vec<&'static str>,
+    },
+    Question {
+        id: String,
+        question: String,
+        context: String,
+        options: Vec<String>,
+        selected: usize,
+        input: String,
     },
 }
 
@@ -273,6 +285,7 @@ pub struct ScreenField {
     pub value: String,
     /// A toggle flips with Space instead of accepting typed text.
     pub toggle: bool,
+    pub secret: bool,
     /// A fixed set of values, cycled with the arrow keys; empty for free text.
     pub options: Vec<String>,
 }
@@ -435,6 +448,7 @@ impl ScreenView {
                                 label: body_text(field, "label"),
                                 value: body_text(field, "value"),
                                 toggle: body_flag(field, "toggle"),
+                                secret: body_flag(field, "secret"),
                                 options: field
                                     .get("options")
                                     .and_then(Value::as_array)
@@ -690,6 +704,17 @@ pub struct SessionSnapshot {
     pub turn_running: bool,
     pub last_error: Option<String>,
     pub council: Option<CouncilState>,
+    pub workers: Workers,
+    pub ralph: Option<(String, bool)>,
+}
+
+/// Live tasks and previews belonging to a conversation.
+#[derive(Debug, Clone, Default)]
+pub struct Workers {
+    pub tasks: Vec<SubagentTask>,
+    pub previews: HashMap<String, String>,
+    pub expanded: bool,
+    pub stale: bool,
 }
 
 /// Everything the UI draws, plus the input state behind the composer.
@@ -701,6 +726,8 @@ pub struct AppState {
     pub status: Status,
     pub composer: String,
     pub history: Vec<String>,
+    pub composer_control: Option<usize>,
+    pub hovered_control: Option<&'static str>,
     pub history_cursor: Option<usize>,
     pub modal: Option<Modal>,
     pub todos: Vec<Todo>,
@@ -708,6 +735,9 @@ pub struct AppState {
     pub active_session: Option<String>,
     /// The live council card, if one is running or just finished.
     pub council: Option<CouncilState>,
+    pub workers: Workers,
+    pub ralph: Option<(String, bool)>,
+    pub toast: Option<(String, u64)>,
     /// Transcripts kept for sessions this client has already viewed.
     pub session_views: HashMap<String, SessionSnapshot>,
     /// The command catalogue, as last sent by the server.
@@ -754,6 +784,8 @@ impl AppState {
             turn_running: self.turn_running,
             last_error: self.last_error.clone(),
             council: self.council.clone(),
+            workers: self.workers.clone(),
+            ralph: self.ralph.clone(),
         }
     }
 
@@ -773,6 +805,9 @@ impl AppState {
         self.active_session = id.map(str::to_string);
         self.modal = None;
         self.screen = None;
+        self.toast = None;
+        self.composer_control = None;
+        self.hovered_control = None;
         let Some(id) = id else {
             return;
         };
@@ -791,6 +826,8 @@ impl AppState {
             self.turn_running = snapshot.turn_running;
             self.last_error = snapshot.last_error;
             self.council = snapshot.council;
+            self.workers = snapshot.workers;
+            self.ralph = snapshot.ralph;
         } else {
             self.entries.clear();
             self.streaming.clear();
@@ -801,6 +838,9 @@ impl AppState {
             self.turn_running = false;
             self.last_error = None;
             self.council = None;
+            self.status.composer = None;
+            self.workers = Workers::default();
+            self.ralph = None;
         }
     }
 
@@ -816,6 +856,7 @@ impl AppState {
             kind,
             text: text.into(),
             agent: agent.to_string(),
+            agent_color: None,
         });
     }
 
@@ -901,6 +942,7 @@ fn entry(kind: BlockKind, text: impl Into<String>) -> Entry {
         kind,
         text: text.into(),
         agent: "Nova".to_string(),
+        agent_color: None,
     }
 }
 
@@ -911,7 +953,7 @@ fn copy_source(state: &AppState, all: bool) -> String {
         for entry in &state.entries {
             let who = match entry.kind {
                 BlockKind::User => "You",
-                BlockKind::Assistant => "Nova",
+                BlockKind::Assistant => entry.agent.as_str(),
                 _ => continue,
             };
             parts.push(format!(
@@ -948,6 +990,8 @@ pub fn apply(state: &mut AppState, frame: &Inbound) -> Vec<Effect> {
             model,
             assistant_id,
             home,
+            composer,
+            theme,
         } => {
             state.home = home
                 .as_ref()
@@ -956,23 +1000,54 @@ pub fn apply(state: &mut AppState, frame: &Inbound) -> Vec<Effect> {
             state.status.cwd = cwd.clone();
             state.status.model = model.clone();
             state.status.assistant_id = assistant_id.clone();
+            state.status.composer = composer.clone();
+            state.pending_theme = theme.as_deref().cloned();
             state.status.connected = true;
             if state.active_session.is_none() {
                 state.active_session = session_id.clone();
             }
         }
+        Inbound::Composer(composer) => state.status.composer = Some(composer.clone()),
+        Inbound::Ralph { label, active } => state.ralph = Some((label.clone(), *active)),
         Inbound::Event(event) => apply_event(state, event),
         Inbound::Interrupt { id, kind, payload } => {
+            if kind == "question" {
+                let question = payload.get("request").unwrap_or(payload);
+                state.modal = Some(Modal::Question {
+                    id: id.clone(),
+                    question: body_text(question, "question"),
+                    context: body_text(question, "context"),
+                    options: question["options"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(Value::as_str)
+                        .map(str::to_owned)
+                        .collect(),
+                    selected: 0,
+                    input: String::new(),
+                });
+                return effects;
+            }
             let (headline, detail) = describe_interrupt(kind, payload);
             state.modal = Some(Modal::Approval {
                 id: id.clone(),
                 kind: kind.clone(),
                 headline,
                 detail,
+                scroll: 0,
+                decisions: Vec::new(),
             });
         }
         Inbound::TurnDone { ok, .. } => {
             state.turn_running = false;
+            for task in &mut state.workers.tasks {
+                if task.status == "running" && !matches!(task.phase_kind.as_str(), "async" | "team")
+                {
+                    task.status = "stopped".to_string();
+                }
+            }
+            state.workers.stale = true;
             state.status.activity = None;
             if *ok {
                 flush_streaming(state);
@@ -1036,7 +1111,11 @@ pub fn apply(state: &mut AppState, frame: &Inbound) -> Vec<Effect> {
                 state.entries.clear();
                 effects.push(Effect::ClearTranscript);
             }
-            if !blocks.is_empty() || (!message.is_empty() && !cleared) {
+            if action.as_deref() == Some("toast") {
+                if !message.is_empty() {
+                    state.toast = Some((message.clone(), state.tick + 120));
+                }
+            } else if !blocks.is_empty() || (!message.is_empty() && !cleared) {
                 state.entries.push(entry(
                     BlockKind::Command {
                         ok: *ok,
@@ -1120,19 +1199,28 @@ pub fn apply(state: &mut AppState, frame: &Inbound) -> Vec<Effect> {
                     state.screen = Some(ScreenView::decode("", kind, &title, &payload));
                 }
             }
-            state.turn_running = false;
+            if action.as_deref() != Some("toast") {
+                state.turn_running = false;
+            }
         }
         Inbound::UiTheme(palette) => {
             // The theme is a drawing fact, not transcript content: park it for the
             // render loop and change nothing the user can scroll back to.
             state.pending_theme = Some((*palette).clone());
         }
-        Inbound::Sessions { sessions, active } => {
+        Inbound::Sessions {
+            sessions,
+            active,
+            composer,
+        } => {
             let next = active.clone().or_else(|| state.active_session.clone());
             if next != state.active_session {
                 state.activate(next.as_deref());
             }
             state.sessions = sessions.clone();
+            if let Some(composer) = composer {
+                state.status.composer = Some(composer.clone());
+            }
             if let Some(id) = state.active_session.as_deref() {
                 if let Some(row) = sessions.iter().find(|row| row.id == id) {
                     state.status.session_id = Some(row.id.clone());
@@ -1199,6 +1287,7 @@ fn apply_event(state: &mut AppState, event: &UiEvent) {
         UiEvent::AssistantMessage {
             text,
             agent_name,
+            agent_color,
             is_subagent,
         } => {
             state.streaming.clear();
@@ -1206,6 +1295,7 @@ fn apply_event(state: &mut AppState, event: &UiEvent) {
             if !agent_name.is_empty() {
                 new_entry.agent = agent_name.clone();
             }
+            new_entry.agent_color = agent_color.clone();
             if *is_subagent {
                 new_entry.kind = BlockKind::Context {
                     icon: "•".to_string(),
@@ -1342,6 +1432,38 @@ fn apply_event(state: &mut AppState, event: &UiEvent) {
                 message.clone(),
             ));
         }
+        UiEvent::SubagentTask(task) if !task.id.is_empty() => {
+            let workers = &mut state.workers;
+            if let Some(row) = workers.tasks.iter_mut().find(|row| row.id == task.id) {
+                *row = task.clone();
+            } else {
+                if workers.stale {
+                    workers.tasks.retain(|row| row.status == "running");
+                    workers
+                        .previews
+                        .retain(|id, _| workers.tasks.iter().any(|row| row.id == *id));
+                    workers.stale = false;
+                    workers.expanded = true;
+                }
+                if workers.tasks.len() == 200 {
+                    let removed = workers.tasks.remove(0);
+                    workers.previews.remove(&removed.id);
+                }
+                workers.tasks.push(task.clone());
+                if workers.tasks.len() == 1 {
+                    workers.expanded = true;
+                }
+            }
+        }
+        UiEvent::SubagentTask(_) => {}
+        UiEvent::SubagentPreview { id, text } => {
+            if state.workers.tasks.iter().any(|row| row.id == *id) {
+                state
+                    .workers
+                    .previews
+                    .insert(id.clone(), text.chars().take(500).collect());
+            }
+        }
         UiEvent::Council(update) => {
             state
                 .council
@@ -1364,7 +1486,12 @@ fn apply_event(state: &mut AppState, event: &UiEvent) {
 fn flush_streaming(state: &mut AppState) {
     if !state.streaming.trim().is_empty() {
         let text = std::mem::take(&mut state.streaming);
-        state.entries.push(entry(BlockKind::Assistant, text));
+        let mut reply = entry(BlockKind::Assistant, text);
+        if let Some(composer) = &state.status.composer {
+            reply.agent.clone_from(&composer.agent);
+            reply.agent_color.clone_from(&composer.color);
+        }
+        state.entries.push(reply);
     } else {
         state.streaming.clear();
     }
@@ -1386,7 +1513,12 @@ fn describe_interrupt(kind: &str, payload: &Value) -> (String, Vec<String>) {
                         .get("description")
                         .and_then(Value::as_str)
                         .unwrap_or_default();
-                    detail.push(format!("{name}: {description}"));
+                    let args = request.get("args").map_or(String::new(), Value::to_string);
+                    detail.push(
+                        format!("{name}: {description} {args}")
+                            .trim_end()
+                            .to_owned(),
+                    );
                 }
             }
         }

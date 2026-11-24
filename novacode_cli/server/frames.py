@@ -139,6 +139,7 @@ def ui_theme(
     surface: str = "",
     panel: str = "",
     muted: str = "",
+    activity: str = "",
     border: str = "",
     success: str = "",
     warning: str = "",
@@ -159,6 +160,7 @@ def ui_theme(
         surface: Raised surface colour, `#rrggbb`.
         panel: Panel colour, `#rrggbb`.
         muted: Secondary text colour, empty when the theme defines none.
+        activity: Optional override for the running status.
         border: Border colour, empty when the theme defines none.
         success: Success colour, for tool results.
         warning: Warning colour, for notices.
@@ -174,6 +176,7 @@ def ui_theme(
         "surface": surface,
         "panel": panel,
         "muted": muted,
+        "activity": activity,
         "border": border,
         "success": success,
         "warning": warning,

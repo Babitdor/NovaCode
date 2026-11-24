@@ -101,6 +101,7 @@ class FooterPalette:
     tool_ok: str  # a succeeded call's bullet
     tool_fail: str  # a failed call's bullet
     tool_pending: str  # a still-running call's bullet
+    activity: str | None = None  # Optional override for the foreground turn indicator.
 
 
 def palette_for(theme: Theme) -> FooterPalette:
@@ -120,6 +121,9 @@ def palette_for(theme: Theme) -> FooterPalette:
     boost = getattr(theme, "boost", None)
     surface = _hex(boost, _mix(fg, bg, 0.93), bg) if boost else _mix(fg, bg, 0.93)
 
+    variables = getattr(theme, "variables", {})
+    custom_muted = variables.get("text-muted")
+    activity = variables.get("nova-activity")
     return FooterPalette(
         accent=_hex(getattr(theme, "accent", "") or "#bb9af7"),
         primary=_hex(getattr(theme, "primary", "") or "#7aa2f7"),
@@ -127,7 +131,7 @@ def palette_for(theme: Theme) -> FooterPalette:
         warning=_hex(getattr(theme, "warning", "") or "#e0af68"),
         error=_hex(getattr(theme, "error", "") or "#f7768e"),
         text=fg,
-        muted=_mix(fg, bg, 0.42),
+        muted=_hex(custom_muted, _mix(fg, bg, 0.42), bg) if custom_muted else _mix(fg, bg, 0.42),
         faint=_mix(fg, bg, 0.72),
         dim=_mix(fg, bg, 0.58),
         surface=surface,
@@ -147,6 +151,7 @@ def palette_for(theme: Theme) -> FooterPalette:
         tool_ok=_hex(getattr(theme, "success", "") or "#9ece6a"),
         tool_fail=_hex(getattr(theme, "error", "") or "#f7768e"),
         tool_pending=_hex(getattr(theme, "warning", "") or "#e0af68"),
+        activity=_hex(activity, fg, bg) if activity else None,
     )
 
 
@@ -224,6 +229,7 @@ def cached_palette(theme: TextualTheme) -> FooterPalette:
             "error",
         )
     )
+    key += tuple(theme.variables.get(name) for name in ("text-muted", "nova-activity"))
     hit = _CACHE.get(key)
     if hit is None:
         hit = palette_for(theme)

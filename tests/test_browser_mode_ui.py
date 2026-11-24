@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock
 
 import pytest
-from textual.widgets import Button, SelectionList, Static
+from textual.widgets import SelectionList, Static
 
 from novacode_cli.config.nova_config import NovaConfig
 from novacode_cli.tui.browser_settings_screen import BrowserSettingsScreen
@@ -39,14 +39,11 @@ async def test_toggle_changes_ui_preserves_draft_and_keeps_shared_conversation(
         assert app.screen.has_class("browsing-mode")
         assert prompt.has_class("browser-mode")
         assert "BROWSER MODE" in str(app.query_one("#mode-badge", Static).render())
-        assert app.query_one("#browser-toggle", Button).has_class("enabled")
-        assert app.query_one("#browser-toggle").region.width > 0
-        assert app.query_one("#browser-toggle").region.height == 1
-        assert app.query_one("#browser-toggle").region.bottom <= app.size.height
+        assert not app.query("#browser-toggle")
         assert app._input_pulse_mode == "browser"
         assert prompt.text == "Keep my draft"
         assert marker.is_mounted
-        await pilot.click("#browser-toggle")
+        await app._run_browser_use("/browser-use off")
         await pilot.pause()
         assert not app.screen.has_class("browsing-mode")
         assert not prompt.has_class("browser-mode")

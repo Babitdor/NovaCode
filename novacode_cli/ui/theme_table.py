@@ -29,6 +29,7 @@ class ThemeEntry:
     surface: str
     panel: str
     muted: str
+    activity: str
     border: str
 
 
@@ -47,6 +48,7 @@ THEMES: tuple[ThemeEntry, ...] = (
         surface="ansi_default",
         panel="ansi_default",
         muted="",
+        activity="",
         border="",
     ),
     ThemeEntry(
@@ -63,6 +65,7 @@ THEMES: tuple[ThemeEntry, ...] = (
         surface="ansi_default",
         panel="ansi_default",
         muted="",
+        activity="",
         border="ansi_blue",
     ),
     ThemeEntry(
@@ -79,6 +82,7 @@ THEMES: tuple[ThemeEntry, ...] = (
         surface="#3B414D",
         panel="#4F5666",
         muted="",
+        activity="",
         border="",
     ),
     ThemeEntry(
@@ -90,11 +94,12 @@ THEMES: tuple[ThemeEntry, ...] = (
         success="#6CF23F",
         warning="#D8D938",
         error="#F23F3F",
-        background="#FAFAFA",
+        background="#e9e5dd",
         foreground="#383A42",
-        surface="#E0E0E0",
-        panel="#CCCCCC",
-        muted="",
+        surface="#ded9cf",
+        panel="#d4cec3",
+        muted="#5c5851",
+        activity="",
         border="",
     ),
     ThemeEntry(
@@ -111,6 +116,7 @@ THEMES: tuple[ThemeEntry, ...] = (
         surface="#414559",
         panel="#51576D",
         muted="",
+        activity="",
         border="#BABBF1",
     ),
     ThemeEntry(
@@ -122,11 +128,12 @@ THEMES: tuple[ThemeEntry, ...] = (
         success="#40A02B",
         warning="#DF8E1D",
         error="#D20F39",
-        background="#EFF1F5",
+        background="#dde1ea",
         foreground="#4C4F69",
-        surface="#E6E9EF",
-        panel="#CCD0DA",
-        muted="",
+        surface="#d3d9e5",
+        panel="#c8cfdf",
+        muted="#525d76",
+        activity="",
         border="",
     ),
     ThemeEntry(
@@ -143,6 +150,7 @@ THEMES: tuple[ThemeEntry, ...] = (
         surface="#363A4F",
         panel="#494D64",
         muted="",
+        activity="",
         border="#B7BDF8",
     ),
     ThemeEntry(
@@ -159,6 +167,7 @@ THEMES: tuple[ThemeEntry, ...] = (
         surface="#313244",
         panel="#45475a",
         muted="",
+        activity="",
         border="#b4befe",
     ),
     ThemeEntry(
@@ -175,6 +184,7 @@ THEMES: tuple[ThemeEntry, ...] = (
         surface="#2B2E3B",
         panel="#313442",
         muted="",
+        activity="",
         border="",
     ),
     ThemeEntry(
@@ -191,6 +201,7 @@ THEMES: tuple[ThemeEntry, ...] = (
         surface="#1C1B1A",
         panel="#282726",
         muted="",
+        activity="",
         border="",
     ),
     ThemeEntry(
@@ -207,6 +218,7 @@ THEMES: tuple[ThemeEntry, ...] = (
         surface="#3c3836",
         panel="#504945",
         muted="",
+        activity="",
         border="",
     ),
     ThemeEntry(
@@ -223,6 +235,7 @@ THEMES: tuple[ThemeEntry, ...] = (
         surface="#2e2e2e",
         panel="#3E3D32",
         muted="",
+        activity="",
         border="",
     ),
     ThemeEntry(
@@ -239,6 +252,7 @@ THEMES: tuple[ThemeEntry, ...] = (
         surface="#3B4252",
         panel="#434C5E",
         muted="",
+        activity="",
         border="",
     ),
     ThemeEntry(
@@ -255,6 +269,7 @@ THEMES: tuple[ThemeEntry, ...] = (
         surface="#111f33",
         panel="#192b43",
         muted="#94accb",
+        activity="",
         border="#43628b",
     ),
     ThemeEntry(
@@ -271,6 +286,7 @@ THEMES: tuple[ThemeEntry, ...] = (
         surface="#10272c",
         panel="#16353a",
         muted="#8db9b1",
+        activity="",
         border="#397d79",
     ),
     ThemeEntry(
@@ -287,7 +303,25 @@ THEMES: tuple[ThemeEntry, ...] = (
         surface="#071718",
         panel="#09282b",
         muted="#7dacab",
+        activity="",
         border="#176264",
+    ),
+    ThemeEntry(
+        name="nova-editorial",
+        dark=False,
+        primary="#8c3b3b",
+        secondary="#5e5473",
+        accent="#8c3b3b",
+        success="#5e5473",
+        warning="#805019",
+        error="#9a3737",
+        background="#fdf6e9",
+        foreground="#2b2927",
+        surface="#efe0c5",
+        panel="#efe0c5",
+        muted="#7a736a",
+        activity="#5e5473",
+        border="#8c3b3b",
     ),
     ThemeEntry(
         name="nova-ember",
@@ -303,7 +337,25 @@ THEMES: tuple[ThemeEntry, ...] = (
         surface="#2b1c18",
         panel="#38251f",
         muted="#c6a18e",
+        activity="",
         border="#9c6243",
+    ),
+    ThemeEntry(
+        name="nova-obsidian",
+        dark=True,
+        primary="#e3b489",
+        secondary="#6e7781",
+        accent="#e3b489",
+        success="#a9ba9b",
+        warning="#e3b489",
+        error="#e39292",
+        background="#0e1112",
+        foreground="#e8dfd5",
+        surface="#191b42",
+        panel="#191b42",
+        muted="#6e7781",
+        activity="",
+        border="#e3b489",
     ),
     ThemeEntry(
         name="nova-paper",
@@ -319,6 +371,7 @@ THEMES: tuple[ThemeEntry, ...] = (
         surface="#eee4d3",
         panel="#e7dbc7",
         muted="#706355",
+        activity="",
         border="#ab9478",
     ),
     ThemeEntry(
@@ -335,6 +388,7 @@ THEMES: tuple[ThemeEntry, ...] = (
         surface="#1c1c1c",
         panel="#222222",
         muted="#afa6a0",
+        activity="",
         border="#514b47",
     ),
     ThemeEntry(
@@ -351,6 +405,7 @@ THEMES: tuple[ThemeEntry, ...] = (
         surface="#201431",
         panel="#2b1d42",
         muted="#b7a4cc",
+        activity="",
         border="#7751a8",
     ),
     ThemeEntry(
@@ -367,6 +422,7 @@ THEMES: tuple[ThemeEntry, ...] = (
         surface="#1f1d2e",
         panel="#26233a",
         muted="",
+        activity="",
         border="#524f67",
     ),
     ThemeEntry(
@@ -378,11 +434,12 @@ THEMES: tuple[ThemeEntry, ...] = (
         success="#56949f",
         warning="#ea9d34",
         error="#b4637a",
-        background="#faf4ed",
+        background="#f1e8e0",
         foreground="#575279",
-        surface="#fffaf3",
-        panel="#f2e9e1",
-        muted="",
+        surface="#eaded6",
+        panel="#e2d4cc",
+        muted="#665c72",
+        activity="",
         border="#cecacd",
     ),
     ThemeEntry(
@@ -399,6 +456,7 @@ THEMES: tuple[ThemeEntry, ...] = (
         surface="#2a273f",
         panel="#393552",
         muted="",
+        activity="",
         border="#56526e",
     ),
     ThemeEntry(
@@ -415,6 +473,7 @@ THEMES: tuple[ThemeEntry, ...] = (
         surface="#073642",
         panel="#073642",
         muted="",
+        activity="",
         border="",
     ),
     ThemeEntry(
@@ -426,11 +485,12 @@ THEMES: tuple[ThemeEntry, ...] = (
         success="#859900",
         warning="#cb4b16",
         error="#dc322f",
-        background="#fdf6e3",
+        background="#f0e7d2",
         foreground="#586e75",
-        surface="#eee8d5",
-        panel="#eee8d5",
-        muted="",
+        surface="#e8dec6",
+        panel="#e4d7bc",
+        muted="#536369",
+        activity="",
         border="",
     ),
     ThemeEntry(
@@ -447,6 +507,7 @@ THEMES: tuple[ThemeEntry, ...] = (
         surface="None",
         panel="None",
         muted="",
+        activity="",
         border="",
     ),
     ThemeEntry(
@@ -458,11 +519,12 @@ THEMES: tuple[ThemeEntry, ...] = (
         success="#4EBF71",
         warning="#ffa62b",
         error="#ba3c5b",
-        background="#E0E0E0",
-        foreground="None",
-        surface="#D8D8D8",
-        panel="#D0D0D0",
-        muted="",
+        background="#dcd7cf",
+        foreground="#302b27",
+        surface="#d3ccc2",
+        panel="#c9c0b5",
+        muted="#5e564e",
+        activity="",
         border="",
     ),
     ThemeEntry(
@@ -479,6 +541,7 @@ THEMES: tuple[ThemeEntry, ...] = (
         surface="#24283B",
         panel="#414868",
         muted="",
+        activity="",
         border="",
     ),
 )

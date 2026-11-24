@@ -1,6 +1,7 @@
 //! One line of live facts: model, workspace, context gauge, activity.
 
 use ratatui::layout::Rect;
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
@@ -17,6 +18,14 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &AppState, theme: &Theme) {
 
 /// Build the status line, truncated to *width* so it never wraps.
 pub fn line(state: &AppState, theme: &Theme, width: usize) -> Line<'static> {
+    if let Some((message, deadline)) = &state.toast {
+        if state.tick < *deadline {
+            return Line::from(Span::styled(
+                first_line(message).to_owned(),
+                theme.warning(),
+            ));
+        }
+    }
     let mut spans = vec![
         Span::styled(
             if state.status.connected {
@@ -31,7 +40,10 @@ pub fn line(state: &AppState, theme: &Theme, width: usize) -> Line<'static> {
         Span::styled(state.status.cwd_label(), theme.muted()),
     ];
     if state.turn_running {
-        spans.push(Span::styled("  working", theme.warning()));
+        spans.push(Span::styled(
+            "  working",
+            Style::default().fg(theme.activity),
+        ));
     }
     if !state.status.theme.is_empty() {
         spans.push(Span::styled(
@@ -39,9 +51,14 @@ pub fn line(state: &AppState, theme: &Theme, width: usize) -> Line<'static> {
             theme.muted(),
         ));
     }
-    if state.status.context_tokens > 0 {
+    let window = state
+        .status
+        .composer
+        .as_ref()
+        .map_or(0, |mode| mode.context_window);
+    if window > 0 || state.status.context_tokens > 0 {
         spans.push(Span::styled(
-            format!("  ctx {}", short_tokens(state.status.context_tokens)),
+            format!("  {}", context_summary(state.status.context_tokens, window)),
             theme.muted(),
         ));
     }
@@ -74,6 +91,24 @@ pub fn line(state: &AppState, theme: &Theme, width: usize) -> Line<'static> {
         kept.push(span);
     }
     Line::from(kept)
+}
+
+/// Format the latest model input and the capacity of its context window.
+pub fn context_summary(used: u64, window: u64) -> String {
+    if window == 0 {
+        return if used == 0 {
+            "ctx —".to_string()
+        } else {
+            format!("ctx {}", short_tokens(used))
+        };
+    }
+    let percent = ((used as f64 / window as f64) * 100.0).round().min(100.0) as u8;
+    format!(
+        "ctx {}/{} · {percent}% · {}% left",
+        short_tokens(used),
+        short_tokens(window),
+        100 - percent
+    )
 }
 
 fn short_tokens(tokens: u64) -> String {

@@ -96,6 +96,7 @@ async def test_ready_names_the_session_before_anything_else() -> None:
         assert sent[0]["ui"] == "ratatui"
         # The home banner: the saved layout, whether the rain animates, the version.
         assert set(sent[0]["home"]) == {"style", "animation", "version"}
+        assert sent[0]["composer"]["agent"] == "Nova"
         assert isinstance(sent[0]["home"]["style"], str)
         assert isinstance(sent[0]["home"]["animation"], bool)
         assert sent[0]["home"]["version"]
@@ -225,6 +226,62 @@ async def test_queued_prompt_runs_after_the_running_turn(
         await _drain(host)
 
 
+async def test_agent_picker_rejects_locked_role_and_publishes_the_selected_role(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "novacode_cli.agents.profiles.profile_readiness",
+        lambda profile: "Enable Serena in /mcp." if profile == "serena" else None,
+    )
+    host, sent = await _host()
+    try:
+        for count, profile, expected in [(1, "serena", "Nova"), (2, "nora", "Nora")]:
+            pending = asyncio.create_task(host.command(f"agent-{count}", "ui-composer", "agent"))
+            screen = await _wait_for(sent, "screen", count=count)
+            assert [item["id"] for item in screen["payload"]["items"]] == [
+                "nova", "serena", "ralph", "nora",
+            ]
+            await host.resolve_screen(screen["id"], {"id": profile})
+            await pending
+            update = await _wait_for(sent, "composer", count=count)
+            assert update["agent"] == expected
+            result = await _wait_for(sent, "command_result", count=count)
+            assert result["ok"] is (profile == "nora")
+            assert result["action"] == "toast"
+            assert not result["blocks"]
+    finally:
+        await host.close()
+
+
+async def test_selected_ralph_runs_iterations_through_the_socket_worker(monkeypatch) -> None:
+    from novacode_cli.commands.ralph_events import RalphFinished, RalphStarted
+    from novacode_cli.sessions import worker as worker_module
+
+    async def stream(prompt, _agent, assistant_id, _state, **_kwargs):
+        assert assistant_id == "ralph"
+        yield ev.AssistantMessage(prompt, "Ralph", "#ffad64")
+        yield ev.Done()
+
+    async def run(_agent, _state, _assistant, _tracker, args, *, execute_fn, emit, on_event):
+        assert args == ["Keep the original task text"]
+        on_event(RalphStarted(args[0], 2, False, None))
+        assert await execute_fn("First iteration")
+        assert await execute_fn("Second iteration")
+        on_event(RalphFinished(2, 0, 2, "complete", "Complete"))
+
+    monkeypatch.setattr(worker_module, "iterate_agent_events", stream)
+    monkeypatch.setattr("novacode_cli.commands.ralph_handler.handle_ralph_command", run)
+    host, sent = await _host()
+    try:
+        host.spec.session_state.agent_profile = "ralph"
+        await host.prompt("ralph", "Keep the original task text")
+        assert (await _wait_for(sent, "turn_done"))["ok"]
+        assert [frame["d"]["text"] for frame in sent if frame.get("c") == "AssistantMessage"] == [
+            "First iteration", "Second iteration",
+        ]
+        assert len([frame for frame in sent if frame["t"] == "turn_done"]) == 1
+    finally:
+        await _drain(host)
+
+
 async def test_a_command_that_asks_for_a_screen_waits_for_the_answer() -> None:
     """A `screen` frame out, a `screen_result` back, one answer."""
     host, sent = await _host()
@@ -304,7 +361,9 @@ async def test_the_catalogue_covers_every_tui_command() -> None:
         await host.send_catalogue()
         frame = await _wait_for(sent, "catalogue")
         entries = frame["commands"]
-        assert len(entries) == 105
+        from novacode_cli.server.catalog import CATALOG
+
+        assert [entry["name"] for entry in entries] == list(CATALOG)
         assert "help" in [entry["name"] for entry in entries]
         for entry in entries:
             assert {"name", "help", "aliases", "wants_text", "route", "served"} <= set(entry)

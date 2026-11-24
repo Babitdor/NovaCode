@@ -99,7 +99,24 @@ Every envelope listed as _unchanged_ keeps the exact bytes `sessions/worker.py`
 already emits, so `sessions/supervisor.py`, the Cowork server and headless mode
 are untouched by this protocol.
 
-### 3.3 Optional session tag
+### 3.3 Composer and agent runs
+
+`ready` and `sessions` can include a `composer` object. It identifies the active
+agent and color, current mode flags, Lite style, and model context window.
+`ready` can also include the saved theme palette. A later `composer` frame
+replaces the mode state after a command changes it.
+
+The client sends a `command` with name `ui-composer` and a control name in
+`args`. The Agent control uses the normal list screen and its `{"id": "..."}`
+answer. A `command_result` with action `toast` presents feedback outside the
+transcript. Selected Ralph runs publish `ralph` progress frames and one
+`turn_done` for the entire loop.
+
+Assistant messages carry their speaker name and color. `SubagentTask` events
+update the same dock row by task ID, including optional context usage and
+capacity. `SubagentPreview` events supply an activity excerpt.
+
+### 3.4 Optional session tag
 
 `"s"` may appear on any client → server frame and on `ev`/`interrupt`/
 `turn_done`/error frames when one connection multiplexes several sessions. It is

@@ -6,7 +6,7 @@ from rich.style import Style
 from textual.theme import BUILTIN_THEMES
 
 from novacode_cli.tui.palette import _hex, apply_markdown_theme, markdown_styles, palette_for
-from novacode_cli.tui.themes import NOVA_EXTRA_THEMES
+from novacode_cli.tui.themes import NOVA_EXTRA_THEMES, NOVA_LIGHT_THEMES
 from novacode_cli.tui.widgets import NOVA_MATRIX, NOVA_TOKYO_NIGHT, CachedMarkdown
 from tests.test_tui_app import _disable_live_update_checks  # noqa: F401
 
@@ -19,7 +19,10 @@ def _luminance(color):
 
 @pytest.mark.parametrize(
     "theme",
-    [*BUILTIN_THEMES.values(), NOVA_TOKYO_NIGHT, NOVA_MATRIX, *NOVA_EXTRA_THEMES],
+    [
+        *{**BUILTIN_THEMES, **{theme.name: theme for theme in NOVA_LIGHT_THEMES}}.values(),
+        NOVA_TOKYO_NIGHT, NOVA_MATRIX, *NOVA_EXTRA_THEMES,
+    ],
     ids=lambda t: t.name,
 )
 def test_code_is_readable_and_transcript_content_survives(theme):
@@ -62,7 +65,7 @@ def test_cached_reply_recolors_at_same_width_after_theme_switch():
     assert next(s for s in after if "auth.py" in s.text).style.color == expected.color
 
 
-def test_nova_registers_seven_distinct_extra_themes(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_nova_registers_extra_themes_and_light_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
     from novacode_cli.config.nova_config import NovaConfig
     from novacode_cli.tui.app import NovaApp
 
@@ -74,9 +77,9 @@ def test_nova_registers_seven_distinct_extra_themes(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(NovaApp, "register_theme", lambda self, theme: registered.append(theme))
     monkeypatch.setattr(NovaApp, "theme", "tokyo-night")
     app._apply_saved_theme()
-    assert len(NOVA_EXTRA_THEMES) == 7
-    assert all(theme in registered for theme in NOVA_EXTRA_THEMES)
-    assert len({theme.background for theme in NOVA_EXTRA_THEMES}) == 7
+    assert {"nova-obsidian", "nova-editorial"} <= {theme.name for theme in NOVA_EXTRA_THEMES}
+    assert all(theme in registered for theme in (*NOVA_EXTRA_THEMES, *NOVA_LIGHT_THEMES))
+    assert len({theme.background for theme in NOVA_EXTRA_THEMES}) == len(NOVA_EXTRA_THEMES)
 
 
 @pytest.mark.asyncio
@@ -99,7 +102,7 @@ async def test_extra_themes_apply_in_the_live_tui_and_persist(tmp_path):
     )
     async with app.run_test(size=(120, 40)) as pilot:
         assert app.theme == "nova-paper"
-        for theme in NOVA_EXTRA_THEMES:
+        for theme in (*NOVA_EXTRA_THEMES, *NOVA_LIGHT_THEMES):
             app.theme = theme.name
             await pilot.pause()
             assert app.screen.styles.background.hex.lower() == theme.background

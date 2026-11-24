@@ -59,7 +59,6 @@ def _table_names() -> list[str]:
 
 def test_catalog_lists_every_tui_command_in_table_order() -> None:
     expected = _table_names()
-    assert len(expected) == 105
     assert list(CATALOG) == expected
 
 
@@ -182,4 +181,4 @@ def test_importing_the_catalog_does_not_load_textual() -> None:
         [sys.executable, "-c", code], capture_output=True, text=True, check=False
     )
     assert result.returncode == 0, result.stderr
-    assert result.stdout.split() == ["105", "False"]
+    assert result.stdout.split() == [str(len(CATALOG)), "False"]

@@ -239,6 +239,9 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &AppState, theme: &Theme) {
     };
     let popup = centered(area, 84, 70);
     frame.render_widget(Clear, popup);
+    frame
+        .buffer_mut()
+        .set_style(popup, theme.body().bg(theme.surface));
     if view.kind == ScreenKind::Split {
         draw_split(frame, popup, view, theme);
         return;
@@ -288,7 +291,12 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &AppState, theme: &Theme) {
                     let box_mark = if field.value == "off" { "[ ]" } else { "[x]" };
                     format!("{box_mark} {}", field.label)
                 } else if field.options.is_empty() {
-                    format!("{}: {}", field.label, field.value)
+                    let value = if field.secret {
+                        "•".repeat(field.value.chars().count())
+                    } else {
+                        field.value.clone()
+                    };
+                    format!("{}: {value}", field.label)
                 } else {
                     // A choice shows that it is a choice: the arrows are the hint.
                     format!("{}: ◂ {} ▸", field.label, field.value)

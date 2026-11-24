@@ -126,6 +126,18 @@ async def test_an_unknown_theme_fails_and_lists_the_real_names(persisted: list[s
     assert not [frame for frame in sent if frame["t"] == "ui_theme"]
 
 
+async def test_editorial_palette_sends_the_canvas_bar_and_activity_color(
+    persisted: list[str],
+) -> None:
+    port, sent, _ = _port()
+    assert (await port.run("theme", "nova-editorial")).ok
+    assert persisted == ["nova-editorial"]
+    frame = sent[0]
+    assert (frame["background"], frame["surface"], frame["activity"]) == (
+        "#fdf6e9", "#efe0c5", "#5e5473",
+    )
+
+
 async def test_bare_theme_asks_and_applies_the_answer(persisted: list[str]) -> None:
     port, sent, asked = _port(answer={"id": "nova-classic"})
     result = await port.run("theme", None)

@@ -31,6 +31,10 @@ pub fn lines(state: &AppState, theme: &Theme) -> Vec<Line<'static>> {
                 out.push(Line::from(""));
             }
             BlockKind::Assistant => {
+                out.push(Line::from(Span::styled(
+                    entry.agent.clone(),
+                    theme.speaker(entry.agent_color.as_ref()),
+                )));
                 out.extend(markdown::render(&entry.text, theme));
                 out.push(Line::from(""));
             }
@@ -81,6 +85,12 @@ pub fn lines(state: &AppState, theme: &Theme) -> Vec<Line<'static>> {
     }
     out.extend(crate::ui::council::lines(state, theme));
     if !state.streaming.is_empty() {
+        let composer = state.status.composer.as_ref();
+        let name = composer.map_or("Nova", |mode| mode.agent.as_str());
+        out.push(Line::from(Span::styled(
+            name.to_owned(),
+            theme.speaker(composer.and_then(|mode| mode.color.as_ref())),
+        )));
         out.extend(markdown::render(&state.streaming, theme));
     }
     if let Some(activity) = &state.status.activity {

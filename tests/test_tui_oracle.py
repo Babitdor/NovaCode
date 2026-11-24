@@ -39,7 +39,7 @@ async def test_toggle_strip_settings_and_threads_preserve_draft(size, design):
         oracle_toggle = app.query_one("#oracle-toggle", Button)
         assert code_toggle.parent is oracle_toggle.parent
         assert code_toggle.region.y == oracle_toggle.region.y
-        assert code_toggle.region.right == oracle_toggle.region.x
+        assert code_toggle.region.right + 1 == oracle_toggle.region.x
         assert app.screen.region.contains_region(oracle_toggle.region), (
             app.query_one("#composer-actions").classes,
             app.query_one("#composer-actions").region,

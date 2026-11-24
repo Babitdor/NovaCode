@@ -27,7 +27,8 @@ pub fn visible(state: &AppState) -> bool {
 /// Draw the tab bar into *area*.
 pub fn draw(frame: &mut Frame, area: Rect, state: &AppState, theme: &Theme) {
     frame.render_widget(
-        Paragraph::new(line(state, theme, area.width as usize)),
+        Paragraph::new(line(state, theme, area.width as usize))
+            .style(theme.body().bg(theme.surface)),
         area,
     );
 }

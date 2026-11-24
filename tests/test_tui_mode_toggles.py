@@ -13,7 +13,7 @@ from novacode_cli.tui.themes import NOVA_EXTRA_THEMES
 @pytest.mark.asyncio
 @pytest.mark.parametrize("theme", ["nova-classic", "nova-synthwave", "textual-light"])
 async def test_mode_toggle_hover_and_focus_use_readable_theme_colors(theme: str):
-    ids = ("prime", "passing", "plan", "browser", "caveman", "code-mode")
+    ids = ("prime", "passing", "plan", "caveman", "code-mode", "oracle")
 
     class Toggles(App):
         CSS = NovaApp.CSS
@@ -38,11 +38,11 @@ async def test_mode_toggle_hover_and_focus_use_readable_theme_colors(theme: str)
                 await pilot.hover(button)
                 await pilot.pause()
                 assert button.mouse_hover
-                assert button.styles.background == accent.with_alpha(0.15)
+                assert button.styles.background == accent.with_alpha(0.32)
                 assert button.styles.color == accent
                 await pilot.hover(offset=(0, 0))
                 button.focus()
                 await pilot.pause()
                 assert button.has_focus
-                assert button.styles.background == accent.with_alpha(0.15)
+                assert button.styles.background == accent.with_alpha(0.32)
                 assert button.styles.color == accent

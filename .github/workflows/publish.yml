@@ -106,7 +106,7 @@ jobs:
         id: protocol
         shell: bash
         run: |
-          version=$(grep -m1 'PROTOCOL_VERSION: u64 =' rust/nova-tui/src/frames.rs | tr -dc '0-9')
+          version=$(sed -nE 's/^pub const PROTOCOL_VERSION: u64 = ([0-9]+);$/\1/p' rust/nova-tui/src/frames.rs)
           test -n "$version"
           echo "version=$version" >> "$GITHUB_OUTPUT"
       - name: Build the client
