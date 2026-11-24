@@ -228,9 +228,13 @@ async def test_blocked_review_explains_file_and_keeps_decisions_readable(size):
         await app._run_oracle_mode("/oracle-mode on")
         app.query_one("#prompt").text = "unfinished draft"
         run = OracleRun(
-            OracleSettings(), ".", app.session_state.thread_id, round=1, status="waiting",
+            OracleSettings(),
+            ".",
+            app.session_state.thread_id,
+            round=1,
+            status="waiting",
             error="Oracle cannot inspect binary changes made during this task: assets/nova.png. "
-                  "Review them manually.",
+            "Review them manually.",
         )
         run.decision = asyncio.get_running_loop().create_future()
         app.session_state.oracle_run = run
@@ -239,15 +243,22 @@ async def test_blocked_review_explains_file_and_keeps_decisions_readable(size):
         panel = app.query_one(OraclePanel)
         assert "blocked" in str(panel.query_one("#oracle-strip", Button).label)
         assert "assets/nova.png" in str(panel.query_one("#oracle-error", Static).content)
-        assert "without a passing review" in str(panel.query_one("#oracle-guidance", Static).content)
+        assert "without a passing review" in str(
+            panel.query_one("#oracle-guidance", Static).content
+        )
         assert panel.query_one("#oracle-extend", Button).label.plain == "Retry review"
-        buttons = [button for button in panel.query_one("#oracle-actions").query(Button)
-                   if button.display]
-        assert {button.id for button in buttons} == {"oracle-extend", "oracle-accept", "oracle-pause"}
+        buttons = [
+            button for button in panel.query_one("#oracle-actions").query(Button) if button.display
+        ]
+        assert {button.id for button in buttons} == {
+            "oracle-extend",
+            "oracle-accept",
+            "oracle-pause",
+        }
         for index, button in enumerate(buttons):
             assert button.content_region.width >= len(str(button.label))
             assert panel.region.contains_region(button.region)
-            for other in buttons[index + 1:]:
+            for other in buttons[index + 1 :]:
                 assert not button.region.overlaps(other.region)
         run.error = "Unreviewed assets: " + ", ".join(f"assets/image-{i}.png" for i in range(20))
         app._refresh_oracle()
@@ -300,6 +311,17 @@ async def test_expanded_oracle_keeps_tabs_and_composer_visible_on_short_home():
 async def test_reviewers_refresh_independently_with_live_and_frozen_timers(size):
     from novacode_cli.core.oracle import review_round
 
+    async def wait_for(pilot, predicate, timeout: float = 6.0) -> bool:
+        """Poll a panel repaint: the refresh tick is 1 s and CI runners lag."""
+        import time as _time
+
+        deadline = _time.monotonic() + timeout
+        while _time.monotonic() < deadline:
+            if predicate():
+                return True
+            await pilot.pause(0.2)
+        return False
+
     started = asyncio.Event()
     release = [asyncio.Event(), asyncio.Event()]
     finished = [asyncio.Event(), asyncio.Event()]
@@ -349,9 +371,10 @@ async def test_reviewers_refresh_independently_with_live_and_frozen_timers(size)
             # A completed review appears while the other call is still blocked.
             release[0].set()
             await asyncio.wait_for(finished[0].wait(), 2)
-            await pilot.pause(1.1)
+            assert await wait_for(pilot, lambda: "1/2 finished" in str(progress.content)), str(
+                progress.content
+            )
             assert not task.done()
-            assert "1/2 finished" in str(progress.content)
             assert "complete" in str(panel.query_one("#oracle-row-1").title)
             assert "Result 1" in str(panel.query_one("#oracle-result-1", Static).content)
             frozen = run.latest[0].elapsed
@@ -364,7 +387,15 @@ async def test_reviewers_refresh_independently_with_live_and_frozen_timers(size)
             assert result.content == "Waiting for model response"
             release[1].set()
             await asyncio.wait_for(task, 2)
-            await pilot.pause(1.1)
+            assert await wait_for(
+                pilot,
+                lambda: (
+                    "complete"
+                    in str(
+                        app.screen.query_one(f"#oracle-thread-status-{identity}", Static).content
+                    )
+                ),
+            )
             status = app.screen.query_one(f"#oracle-thread-status-{identity}", Static)
             assert "complete" in str(status.content)
             output = io.StringIO()
