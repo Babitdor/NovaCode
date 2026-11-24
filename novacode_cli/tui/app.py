@@ -7175,6 +7175,8 @@ class NovaApp(App):
             title = Text()
             title.append(f"{subagent_tasks.status_glyph(row.status)} ", style="cyan")
             title.append_text(label)
+            if row.phase_id == subagent_tasks.PROFILE_PHASE:
+                title.append(f" · {task_id[:8]}", style="dim")
             elapsed = subagent_tasks.format_elapsed(subagent_tasks.elapsed_for(row))
             title.append(f"  {row.status} · {elapsed} · {row.model or '—'}", style="dim")
             # An async row's description is its thread id, not a prompt.

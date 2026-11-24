@@ -25,6 +25,8 @@ if TYPE_CHECKING:
 current_workers: ContextVar[ProfileWorkers | None] = ContextVar(
     "nova_profile_workers", default=None
 )
+_RESULT_PAGE_CHARS = 16000
+_MAX_RESULT_CHARS = 8 * _RESULT_PAGE_CHARS
 
 
 @tool
@@ -33,6 +35,7 @@ async def summon_agent(
     agent: AgentProfile | None = None,
     task: Annotated[str, Field(max_length=16000)] = "",
     worker_id: str = "",
+    result_offset: Annotated[int, Field(ge=0)] = 0,
 ) -> dict:
     """Start an agent in a separate background conversation, or collect its result.
 
@@ -41,8 +44,10 @@ async def summon_agent(
     deliverable or acceptance check. Specify whether edits are allowed. For Ralph,
     include the success measure and when to stop. For Nora, request sources and
     evidence. For Serena, give the relevant paths or symbols and the verification
-    needed. Continue independent work while the agent runs. Call again with only
-    worker_id to await and read the result before ending the turn.
+    needed. Continue independent work while the agent runs. Call again with
+    worker_id to await the result before ending the turn. If it includes
+    next_offset, call with the same worker_id and result_offset=next_offset to
+    read the next page.
     """
     workers = current_workers.get()
     session = active_plan_session.get()
@@ -54,11 +59,19 @@ async def summon_agent(
         return {"error": "Agent workers are unavailable in this mode."}
     if worker_id:
         if agent or task:
-            return {"error": "Use only worker_id when collecting a result."}
+            return {"error": "Use worker_id and optionally result_offset when collecting a result."}
         worker = workers.tasks.get(worker_id)
         if worker is None:
             return {"error": "Unknown worker for this turn."}
-        return await asyncio.shield(worker)
+        result = await asyncio.shield(worker)
+        text = result["result"]
+        end = result_offset + _RESULT_PAGE_CHARS
+        page = {**result, "result": text[result_offset:end]}
+        if end < len(text):
+            page["next_offset"] = end
+        return page
+    if result_offset:
+        return {"error": "Provide worker_id to read a result page."}
     if agent is None or not task.strip():
         return {"error": "Choose an agent and provide a task."}
     if reason := profile_readiness(agent):
@@ -113,6 +126,8 @@ class ProfileWorkers:
 
         status, error = "failed", ""
         replies: list[str] = []
+        reply_chars = 0
+        result_truncated = False
         child = SessionState(auto_approve=self.session.auto_approve, no_splash=True)
         child.agent_profile = profile
         child.workspace_root = getattr(self.session, "workspace_root", None)
@@ -124,7 +139,7 @@ class ProfileWorkers:
         usage = 0
 
         async def execute(text, *_args, **_kwargs) -> bool:
-            nonlocal usage, error
+            nonlocal usage, error, reply_chars, result_truncated
             # Each call inherits the owner's current approval mode.
             child.auto_approve = self.session.auto_approve
             stream = iterate_agent_events(
@@ -137,17 +152,41 @@ class ProfileWorkers:
             )
             async with aclosing(stream):
                 async for event in stream:
-                    if isinstance(
-                        event, (ev.InterruptRequest, ev.SubagentTask, ev.SubagentPreview)
-                    ):
+                    if isinstance(event, ev.InterruptRequest):
+                        emit(ev.SubagentPreview(row.task_id, "status", "Waiting for your input."))
                         emit(event)
+                    elif isinstance(event, (ev.SubagentTask, ev.SubagentPreview)):
+                        emit(event)
+                    elif isinstance(event, ev.ToolCall) and event.is_main_agent:
+                        emit(
+                            ev.SubagentPreview(
+                                row.task_id,
+                                "tool",
+                                event.display_str or event.name,
+                                event.call_id or "",
+                            )
+                        )
+                    elif isinstance(event, ev.ToolResult):
+                        emit(
+                            ev.SubagentPreview(
+                                row.task_id,
+                                "error" if event.is_error else "result",
+                                event.preview[:500],
+                                event.call_id or "",
+                            )
+                        )
+                    elif isinstance(event, ev.ErrorOutput):
+                        emit(ev.SubagentPreview(row.task_id, "error", event.text[:500]))
                     elif isinstance(event, ev.ContextUsage):
                         usage = event.input_tokens
                         emit(replace(row, context_used=usage, context_window=window))
                     elif isinstance(event, ev.AssistantMessage) and not event.is_subagent:
-                        replies.append(event.text[-16000:])
-                        if len(replies) > 8:
-                            replies.pop(0)
+                        part = ("\n\n" if replies else "") + event.text
+                        remaining = _MAX_RESULT_CHARS - reply_chars
+                        if remaining:
+                            replies.append(part[:remaining])
+                            reply_chars += min(len(part), remaining)
+                        result_truncated = result_truncated or len(part) > remaining
                         emit(ev.SubagentPreview(row.task_id, "text", event.text[-2000:]))
                     elif isinstance(event, (ev.Error, ev.ContextOverflow, ev.Cancelled)):
                         error = getattr(event, "message", "Cancelled")
@@ -157,6 +196,7 @@ class ProfileWorkers:
             return False
 
         try:
+            emit(ev.SubagentPreview(row.task_id, "status", f"{profile.title()} is starting."))
             if profile == "ralph":
                 from novacode_cli.commands import ralph_events as rev
                 from novacode_cli.commands.ralph_handler import handle_ralph_command
@@ -193,6 +233,8 @@ class ProfileWorkers:
         except Exception as exc:  # noqa: BLE001 - report worker failures to the owning turn.
             error = str(exc)[:300]
         finally:
+            if error:
+                emit(ev.SubagentPreview(row.task_id, "error", error[:300]))
             emit(
                 replace(
                     row,
@@ -206,8 +248,10 @@ class ProfileWorkers:
         result = {
             "agent": profile.title(),
             "status": status,
-            "result": "\n\n".join(replies)[-16000:],
+            "result": "".join(replies),
         }
+        if result_truncated:
+            result["truncated"] = True
         if error:
             result["error"] = error[:300]
         return result

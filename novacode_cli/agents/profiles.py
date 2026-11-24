@@ -231,7 +231,9 @@ class AgentProfileMiddleware(AgentMiddleware):
                 "symbol-level coding, and Nova for broader implementation, integration, "
                 "or cross-cutting verification. Handle work in your own specialty directly. "
                 "Keep ownership of the user's request and verify and integrate the worker's "
-                "result. If a specialist is unavailable, continue what you can and report "
+                "result. Collect all result pages from the same worker before deciding "
+                "whether any follow-up work is needed. If a specialist is unavailable, "
+                "continue what you can and report "
                 "the missing prerequisite."
             )
         return request.override(

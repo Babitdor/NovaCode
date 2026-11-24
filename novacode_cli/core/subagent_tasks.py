@@ -542,7 +542,7 @@ def panel_lines(
 # ── preview: what one row is doing ───────────────────────────────────────────
 
 #: One preview item: ``(kind, text, call_id)`` with kind "text" | "tool" |
-#: "result" | "error". ``call_id`` ties a result to its tool call; "" for prose.
+#: "result" | "error" | "status". ``call_id`` ties a result to its tool call.
 PreviewEntry = tuple[str, str, str]
 
 

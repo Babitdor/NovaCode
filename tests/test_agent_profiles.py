@@ -191,6 +191,8 @@ async def test_worker_runs_concurrently_and_reports_its_context(monkeypatch):
         assert prompt == "Read the docs"
         assert child.agent_profile == "nora"
         assert child.thread_id != session.thread_id
+        yield ev.ToolCall("fetch_url", "Read the official docs", "", call_id="fetch")
+        yield ev.ToolResult("200 OK", call_id="fetch")
         started.set()
         await released.wait()
         yield ev.ContextUsage(129000)
@@ -208,6 +210,12 @@ async def test_worker_runs_concurrently_and_reports_its_context(monkeypatch):
         await asyncio.wait_for(started.wait(), 2)
         assert result["status"] == "running"
         assert not workers.tasks[result["worker_id"]].done()
+        previews = [event for event in events if isinstance(event, ev.SubagentPreview)]
+        assert [(p.task_id, p.kind, p.call_id) for p in previews] == [
+            (result["worker_id"], "status", ""),
+            (result["worker_id"], "tool", "fetch"),
+            (result["worker_id"], "result", "fetch"),
+        ]
         released.set()
         result = await summon_agent.coroutine(runtime, worker_id=result["worker_id"])
         assert result == {"agent": "Nora", "status": "done", "result": "Evidence"}
@@ -239,15 +247,18 @@ async def test_summon_tool_and_profile_persist_through_graph():
     from langgraph.checkpoint.memory import InMemorySaver
 
     from novacode_cli.core.agent_loop import iterate_agent_events
+    from novacode_cli.core.profile_workers import _RESULT_PAGE_CHARS
     from novacode_cli.states.Session import SessionState
     from tests.test_prime import Model
+
+    worker_reply = "Start of evidence\n" + ("x" * _RESULT_PAGE_CHARS) + "\nEnd of evidence"
 
     class AgentModel(Model):
         def _generate(self, messages, stop=None, run_manager=None, **kwargs):
             from langchain_core.outputs import ChatGeneration, ChatResult
 
             if messages[-1].text == "Check the documentation":
-                reply = AIMessage("Worker evidence")
+                reply = AIMessage(worker_reply)
             elif isinstance(messages[-1], ToolMessage) and messages[-1].tool_call_id == "start":
                 worker_id = json.loads(messages[-1].text)["worker_id"]
                 reply = AIMessage(
@@ -260,8 +271,30 @@ async def test_summon_tool_and_profile_persist_through_graph():
                         }
                     ],
                 )
+            elif isinstance(messages[-1], ToolMessage) and messages[-1].tool_call_id == "wait":
+                result = json.loads(messages[-1].text)
+                assert result["result"] == worker_reply[:_RESULT_PAGE_CHARS]
+                assert result["next_offset"] == _RESULT_PAGE_CHARS
+                start = next(
+                    m for m in messages if isinstance(m, ToolMessage) and m.tool_call_id == "start"
+                )
+                reply = AIMessage(
+                    "",
+                    tool_calls=[
+                        {
+                            "id": "next-page",
+                            "name": "summon_agent",
+                            "args": {
+                                "worker_id": json.loads(start.text)["worker_id"],
+                                "result_offset": result["next_offset"],
+                            },
+                        }
+                    ],
+                )
             elif isinstance(messages[-1], ToolMessage):
-                assert "Worker evidence" in messages[-1].text
+                result = json.loads(messages[-1].text)
+                assert result["result"] == worker_reply[_RESULT_PAGE_CHARS:]
+                assert "next_offset" not in result
                 reply = AIMessage("Collected evidence")
             else:
                 reply = AIMessage(
