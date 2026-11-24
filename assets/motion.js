@@ -32,7 +32,9 @@
         lenis = null;
       }
     } else if (window.Lenis && !lenis) {
-      lenis = new Lenis({ lerp: 0.08, wheelMultiplier: 0.9 });
+      /* anchors ride the same easing as the wheel; the target's own scroll-margin-top
+         already clears the sticky masthead, so Lenis adds no offset of its own */
+      lenis = new Lenis({ lerp: 0.08, wheelMultiplier: 0.9, anchors: true });
       lenis.on("scroll", ST.update);
       gsap.ticker.add(tickLenis);
       gsap.ticker.lagSmoothing(0);
@@ -211,6 +213,8 @@
   document.addEventListener("viewchange", syncMotionMode);
   syncMotionMode();
   window.addEventListener("load", function () { ST.refresh(); });
+  /* the display serif can swap in after load and move every trigger below it */
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(function () { ST.refresh(); });
 })();
 
 /* ---- the starfield: its own gate, because it must also work without GSAP and
