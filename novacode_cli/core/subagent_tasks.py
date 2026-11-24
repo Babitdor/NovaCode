@@ -39,6 +39,23 @@ TASK_ID_METADATA_KEY = "nova_task_id"
 
 #: The phase id async (remote) tasks are grouped under.
 ASYNC_PHASE = "async"
+PROFILE_PHASE = "profile-workers"
+
+
+def format_context(used: int, window: int) -> str:
+    """Show model context used, capacity, and the remaining percentage."""
+    if not window:
+        return "ctx —"
+
+    def tokens(value: int) -> str:
+        if value >= 1_000_000:
+            return f"{value / 1_000_000:.1f}M"
+        if value >= 1_000:
+            return f"{value / 1_000:.0f}k"
+        return str(value)
+
+    percent = min(100, max(0, round(used / window * 100)))
+    return f"ctx {tokens(used)}/{tokens(window)} · {percent}% · {100 - percent}% left"
 
 #: How a row was launched. Drives the phase grouping's fallback label.
 #: ``code`` is a subagent the Code Mode snippet delegated (``task()`` inside
@@ -350,7 +367,12 @@ def task_row(
         "● " if task.status == "running" else status_glyph(task.status) + " ",
         style="cyan" if task.status == "running" else style,
     )
-    row.append(_fit(name, name_width))
+    if task.phase_id == PROFILE_PHASE:
+        from novacode_cli.agents.profiles import AGENT_COLORS
+
+        row.append(_fit(name, name_width), style=AGENT_COLORS.get(task.subagent_type.lower()))
+    else:
+        row.append(_fit(name, name_width))
     row.append("  ")
     row.append(_fit(task.model or "—", model_width), style="dim")
     row.append("  ")
@@ -457,7 +479,7 @@ def panel_body(
                 phase_row(
                     # Numbered, in arrival order: an eval call id's tail ("al_1")
                     # is not something to read a panel by.
-                    "async" if phase_id == ASYNC_PHASE else str(position),
+                    {ASYNC_PHASE: "async", PROFILE_PHASE: "agents"}.get(phase_id, str(position)),
                     members,
                     now=now,
                     expanded=not collapsed,
@@ -473,6 +495,10 @@ def panel_body(
             continue
         right.append(task_row(task, width=right_width, now=now, selected=task.task_id == selected))
         right_tasks.append(task.task_id)
+        if task.phase_id == PROFILE_PHASE:
+            right.append(Text("  " + format_context(task.context_used, task.context_window),
+                              style="dim", overflow="ellipsis", no_wrap=True))
+            right_tasks.append(task.task_id)
 
     lines: list[Text] = []
     row_phases: list[str | None] = []

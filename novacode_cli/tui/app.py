@@ -1744,8 +1744,8 @@ class NovaApp(App):
     }
     #composer-actions {
         layout: grid;
-        grid-size: 6 1;
-        grid-columns: 12 14 10 13 14 54;
+        grid-size: 7 1;
+        grid-columns: 9 11 9 11 9 15 34;
         grid-rows: 1;
         height: 1;
         padding: 0 1;
@@ -1755,24 +1755,20 @@ class NovaApp(App):
         grid-size: 3 3; grid-columns: 1fr 1fr 1fr; grid-rows: 1 1 1; height: 3;
     }
     #composer-actions.wrapped > Button { width: 1fr; min-width: 0; }
-    #composer-actions-spacer { display: none; height: 1; }
-    #composer-actions.wrapped #composer-actions-spacer { display: block; }
-    #code-oracle-actions { width: 54; height: 1; }
+    #agent-toggle { width: 15; min-width: 0; height: 1; min-height: 1;
+        border: none; padding: 0 1; background: $surface; }
+    #agent-toggle:focus, #agent-toggle:hover { background: $accent 15%; }
+    #code-oracle-actions { width: 34; height: 1; }
     #composer-actions.wrapped #code-oracle-actions { column-span: 3; }
     /* Wrapped (narrow) rows are exact-fit for the original cluster; the Serena
        button yields there — narrow terminals use /serena. */
     #composer-actions.wrapped #serena-toggle { display: none; }
     #oracle-toggle {
-        width: 14; min-width: 14; height: 1; min-height: 1; border: none;
+        width: 10; min-width: 10; height: 1; min-height: 1; border: none;
         padding: 0 1; background: $surface; color: $text-muted;
     }
     #oracle-toggle.enabled { color: $accent; text-style: bold; }
     #oracle-toggle:focus, #oracle-toggle:hover { background: $accent 15%; color: $accent; }
-    #oracle-settings {
-        width: 10; min-width: 10; height: 1; min-height: 1; padding: 0;
-        border: none; background: $surface; color: $text-muted;
-    }
-    #oracle-settings:focus, #oracle-settings:hover { background: $accent 15%; color: $accent; }
     #prime-toggle, #passing-toggle, #plan-toggle, #browser-toggle, #caveman-toggle, #code-mode-toggle, #serena-toggle {
         width: 16;
         min-width: 16;
@@ -1783,13 +1779,16 @@ class NovaApp(App):
         background: $surface;
         color: $text-muted;
     }
-    #prime-toggle { width: 12; min-width: 12; }
-    #passing-toggle { width: 14; min-width: 14; }
-    #plan-toggle { width: 10; min-width: 10; }
-    #browser-toggle { width: 13; min-width: 13; }
-    #caveman-toggle { width: 14; min-width: 14; }
-    #code-mode-toggle { width: 18; min-width: 18; }
-    #serena-toggle { width: 12; min-width: 12; }
+    #prime-toggle { width: 9; min-width: 9; }
+    #passing-toggle { width: 11; min-width: 11; }
+    #plan-toggle { width: 9; min-width: 9; }
+    #browser-toggle { width: 11; min-width: 11; }
+    #caveman-toggle { width: 9; min-width: 9; }
+    #code-mode-toggle { width: 13; min-width: 13; }
+    #serena-toggle { width: 11; min-width: 11; }
+    /* Lite state lives in the colour, not the label: two distinct tints. */
+    #caveman-toggle.mode-caveman.enabled { color: $warning; }
+    #caveman-toggle.mode-ponytail.enabled { color: $success; }
     #prime-toggle.enabled, #passing-toggle.enabled, #plan-toggle.enabled, #browser-toggle.enabled,
     #caveman-toggle.enabled, #code-mode-toggle.enabled, #serena-toggle.enabled {
         color: $accent;
@@ -2659,9 +2658,16 @@ class NovaApp(App):
         from novacode_cli.config.config import MAIN_AGENT_ID, get_agent_color
 
         aid = self._current_assistant_id or self.assistant_id
+        from novacode_cli.agents.profiles import profile_identity
+
+        profile = getattr(self.session_state, "agent_profile", None)
+        if aid == "ralph":
+            return profile_identity("ralph")
+        if profile is not None:
+            return profile_identity(profile)
         name = get_agent_display_name(aid)
         if not aid or aid == MAIN_AGENT_ID:
-            return name, None
+            return "Nova", None
         return name, get_agent_color(aid)
 
     def compose(self) -> ComposeResult:
@@ -2747,7 +2753,7 @@ class NovaApp(App):
             yield Static("", id="mode-badge")
             with ComposerActions(id="composer-actions"):
                 yield Button(
-                    "Prime: off",
+                    "Prime",
                     id="prime-toggle",
                     tooltip=(
                         "Toggle Nova Prime · Deep Work for subsequent requests. "
@@ -2755,7 +2761,7 @@ class NovaApp(App):
                     ),
                 )
                 yield Button(
-                    "Passing: off",
+                    "Passing",
                     id="passing-toggle",
                     tooltip=(
                         "Automatically save project handoffs during requests. "
@@ -2763,17 +2769,17 @@ class NovaApp(App):
                     ),
                 )
                 yield Button(
-                    "plan:off",
+                    "plan",
                     id="plan-toggle",
                     tooltip="Toggle read-only planning without submitting your draft.",
                 )
                 yield Button(
-                    "browser:off",
+                    "browser",
                     id="browser-toggle",
                     tooltip="Toggle browser research; choose trusted MCP servers in /browser-use settings.",
                 )
                 yield Button(
-                    "lite:off",
+                    "lite",
                     id="caveman-toggle",
                     tooltip=(
                         "Toggle Lite Mode without sending your draft. "
@@ -2781,10 +2787,10 @@ class NovaApp(App):
                         "saved across launches."
                     ),
                 )
-                yield Static("", id="composer-actions-spacer")
+                yield Button("Agent · Nova", id="agent-toggle", tooltip="Choose the speaking agent")
                 with Horizontal(id="code-oracle-actions"):
                     yield Button(
-                        "serena:off",
+                        "serena",
                         id="serena-toggle",
                         tooltip=(
                             "Toggle Serena mode: MCP-only semantic toolset with a "
@@ -2793,7 +2799,7 @@ class NovaApp(App):
                         ),
                     )
                     yield Button(
-                        "Code Mode: on",
+                        "Code Mode",
                         id="code-mode-toggle",
                         tooltip=(
                             "Compose Nova and MCP tool calls with JavaScript. "
@@ -2802,15 +2808,9 @@ class NovaApp(App):
                         ),
                     )
                     yield Button(
-                        "Oracle: off",
+                        "Oracle",
                         id="oracle-toggle",
                         tooltip="Independent scored reviews for subsequent requests",
-                    )
-                    yield Button(
-                        "Settings",
-                        id="oracle-settings",
-                        compact=True,
-                        tooltip="Configure Oracle target, rounds, reviewers and new-thread default",
                     )
             yield Static("", id="home-composer-meta")
             yield Static(
@@ -8359,9 +8359,16 @@ class NovaApp(App):
     def _refresh_composer_info(self) -> None:
         """Line 1 of the composer footer: model · context · cwd · branch · version."""
         from novacode_cli._version import __version__
+        from novacode_cli.agents.profiles import profile_identity
         from novacode_cli.config.config import settings
 
         pal = self._palette
+        profile = getattr(self.session_state, "agent_profile", None) or "nova"
+        name, color = profile_identity(profile)
+        with contextlib.suppress(NoMatches):
+            self._w("#agent-toggle", Button).label = Text(
+                f"Agent · {name}", style=f"bold {color or pal.accent}"
+            )
         visible = self._composer_strip_visible()
         with contextlib.suppress(NoMatches):
             self._w("#info-bar", Horizontal).display = not visible
@@ -8388,14 +8395,7 @@ class NovaApp(App):
             breakdown = self.token_tracker.get_breakdown()
             window = int(getattr(breakdown, "context_window_size", 0) or 0)
             used = int(getattr(breakdown, "total_tokens", 0) or 0)
-        if window:
-            pct = min(100, max(0, round(used / window * 100)))
-            ctx = (
-                f"ctx {self._fmt_tokens(used)}/{self._fmt_tokens(window)}"
-                f" · {pct}% · {max(0, 100 - pct)}% left"
-            )
-        else:
-            ctx = "ctx —"
+        ctx = subagent_tasks.format_context(used, window)
         pane = getattr(self, "_active_pane", None)
         session_label = getattr(pane, "title", None) or self.assistant_id or "Nova"
         workspace = Path(str(settings.get_workspace_root()))
@@ -8690,7 +8690,7 @@ class NovaApp(App):
         auto = bool(getattr(self.session_state, "auto_approve", False))
         handoff = getattr(self.session_state, "handoff_enabled", False) is True
         handoff_toggle = self._w("#passing-toggle", Button)
-        handoff_toggle.label = "Passing: on" if handoff else "Passing: off"
+        handoff_toggle.label = "Passing"
         handoff_toggle.set_class(handoff, "enabled")
         pane = getattr(self, "_active_pane", None)
         handoff_toggle.disabled = pane is not None and pane.kind == "child"
@@ -8708,14 +8708,14 @@ class NovaApp(App):
         prompt.screen.set_class(bool(browser), "browsing-mode")
         prompt.screen.set_class(bool(serena), "serena-mode")
         browser_toggle = self._w("#browser-toggle", Button)
-        browser_toggle.label = "browser:on" if browser else "browser:off"
+        browser_toggle.label = "browser"
         browser_toggle.set_class(bool(browser), "enabled")
         self._refresh_serena_toggle()
         toggle = self._w("#prime-toggle", Button)
-        toggle.label = "Prime: on" if prime else "Prime: off"
+        toggle.label = "Prime"
         toggle.set_class(bool(prime), "enabled")
         plan_toggle = self._w("#plan-toggle", Button)
-        plan_toggle.label = "plan:on" if plan else "plan:off"
+        plan_toggle.label = "plan"
         plan_toggle.set_class(bool(plan), "enabled")
         prime_composer = bool(prime) and not (plan or browser or bash or auto)
         prompt.set_class(prime_composer, "prime-composer")
@@ -10785,6 +10785,18 @@ class NovaApp(App):
 
         if text.startswith("/"):
             await self._run_slash(text)
+            return
+
+        from novacode_cli.agents.profiles import profile_readiness
+
+        profile = getattr(self.session_state, "agent_profile", None)
+        if reason := profile_readiness(profile):
+            self.notify(reason, severity="warning")
+            self._w("#prompt", PromptInput).text = text
+            return
+        if profile == "ralph" and not self.session_state.plan_mode_enabled:
+            await self._add_message(self._user_label(), "user", _user_message_body(text))
+            await self._run_ralph("/ralph", composer_task=text)
             return
 
         launch_intent = self._parse_natural_launch_intent(text)
@@ -13068,7 +13080,7 @@ class NovaApp(App):
 
     def _refresh_code_mode_toggle(self) -> None:
         toggle = self.query_one("#code-mode-toggle", Button)
-        toggle.label = f"Code Mode: {'on' if self._code_mode_enabled else 'off'}"
+        toggle.label = "Code Mode"
         toggle.set_class(self._code_mode_enabled, "enabled")
 
     def _refresh_serena_toggle(self) -> None:
@@ -13076,8 +13088,57 @@ class NovaApp(App):
         with contextlib.suppress(NoMatches):
             toggle = self._w("#serena-toggle", Button)
             enabled = getattr(self.session_state, "serena_mode_enabled", False)
-            toggle.label = f"serena:{'on' if enabled else 'off'}"
+            toggle.label = "serena"
             toggle.set_class(enabled, "enabled")
+
+    @on(Button.Pressed, "#agent-toggle")
+    def _agent_toggle_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._choose_agent_profile()
+
+    @work(exclusive=True, group="agent-picker")
+    async def _choose_agent_profile(self) -> None:
+        from novacode_cli.agents.profiles import AGENT_COLORS, profile_readiness
+        from novacode_cli.tui.screens import PickScreen
+
+        pane = getattr(self, "_active_pane", None)
+        if pane is not None and pane.kind == "child":
+            self.notify("Choose an agent from the main session.")
+            return
+        session = self.session_state
+        if self._turn_running() or getattr(self, "_profile_ralph_session", None) is session:
+            self.notify("Wait for the active agent to finish before switching.")
+            return
+        profiles = tuple(AGENT_COLORS)
+        locked = await asyncio.to_thread(lambda: [profile_readiness(p) for p in profiles])
+        descriptions = (
+            "Nova tools", "Serena MCP only", "Autonomous work loop", "Web and browser research",
+        )
+        selected = await self.push_screen_wait(PickScreen(
+            "Choose agent",
+            [
+                Text(f"{p.title()} · {description}" + (" · locked" if reason else ""),
+                     style=AGENT_COLORS[p] or self._palette.accent)
+                for p, description, reason in zip(profiles, descriptions, locked, strict=True)
+            ],
+            "Select a locked agent to see its MCP setup.",
+        ))
+        if selected is None or selected < 0 or self.session_state is not session:
+            return
+        if self._turn_running() or getattr(self, "_profile_ralph_session", None) is session:
+            self.notify("Wait for the active agent to finish before switching.")
+            return
+        profile = profiles[selected]
+        if reason := profile_readiness(profile):
+            self.notify(reason, severity="warning")
+            return
+        session.browser_mode_enabled = False
+        session.serena_mode_enabled = False
+        session.agent_profile = profile
+        self._update_mode_badge()
+        self._refresh_status()
+        self._refresh_composer_info()
+        self._w("#prompt", PromptInput).focus()
 
     @on(Button.Pressed, "#serena-toggle")
     async def _serena_toggle_pressed(self, event: Button.Pressed) -> None:
@@ -13117,12 +13178,11 @@ class NovaApp(App):
         toggle = self.query_one("#caveman-toggle", Button)
         mode = getattr(self, "_compression_mode", "off")
         enabled = mode != "off"
-        toggle.label = {
-            "off": "lite:off",
-            "caveman": "lite:caveman",
-            "ponytail": "lite:ponytail",
-        }[mode]
+        # State lives in the colour: caveman and ponytail tint differently.
+        toggle.label = "lite"
         toggle.set_class(enabled, "enabled")
+        toggle.set_class(mode == "caveman", "mode-caveman")
+        toggle.set_class(mode == "ponytail", "mode-ponytail")
 
     async def _set_caveman_enabled(self, enabled: bool) -> None:
         await self._set_compression_mode("caveman" if enabled else "off")
@@ -13161,7 +13221,7 @@ class NovaApp(App):
         try:
             toggle = self._w("#oracle-toggle", Button)
             enabled = self.session_state.oracle_enabled
-            label = "Oracle: on" if enabled else "Oracle: off"
+            label = "Oracle"
             if str(toggle.label) != label:
                 toggle.label = label
             toggle.set_class(enabled, "enabled")
@@ -13286,11 +13346,6 @@ class NovaApp(App):
     async def _oracle_toggle_pressed(self, event: Button.Pressed) -> None:
         event.stop()
         await self._run_oracle_mode()
-
-    @on(Button.Pressed, "#oracle-settings")
-    async def _oracle_settings_pressed(self, event: Button.Pressed) -> None:
-        event.stop()
-        await self._run_oracle_mode("/oracle-mode settings")
 
     @on(OraclePanel.Control)
     async def _oracle_control(self, event: OraclePanel.Control) -> None:
@@ -18944,7 +18999,7 @@ class NovaApp(App):
             raise RuntimeError("The active tab changed. Resume Ralph from its original workspace.")
         return await self._stream_prompt(prompt, assistant_id=assistant_id)
 
-    async def _run_ralph(self, text: str) -> None:
+    async def _run_ralph(self, text: str, *, composer_task: str | None = None) -> None:
         """Run Ralph in the transcript while the normal composer stays available."""
         import threading
 
@@ -18952,7 +19007,7 @@ class NovaApp(App):
         from novacode_cli.commands.ralph_handler import handle_ralph_command
         from novacode_cli.tui.ralph import RalphProgress
 
-        args = text.partition(" ")[2].strip()
+        args = [composer_task] if composer_task is not None else text.partition(" ")[2].strip()
         loop_tid = threading.get_ident()
         current = asyncio.current_task()
         session = self.session_state
@@ -18970,7 +19025,7 @@ class NovaApp(App):
                 return
             renderable = Text.from_markup(message)
             if threading.get_ident() == loop_tid:
-                self._log(renderable, transcript=True)
+                self._log(renderable, transcript=composer_task is None)
             else:
                 with suppress(RuntimeError):
                     self.call_from_thread(self._log, renderable, transcript=True)
@@ -18994,16 +19049,20 @@ class NovaApp(App):
                 with suppress(RuntimeError):
                     self.call_from_thread(_paint_event, event)
 
-        await handle_ralph_command(
-            self.agent,
-            session,
-            self.assistant_id,
-            self.token_tracker,
-            args,
-            execute_fn=self._tui_ralph_execute,
-            emit=_emit,
-            on_event=_on_event,
-        )
+        self._profile_ralph_session = session
+        try:
+            await handle_ralph_command(
+                self.agent,
+                session,
+                self.assistant_id,
+                self.token_tracker,
+                args,
+                execute_fn=self._tui_ralph_execute,
+                emit=_emit,
+                on_event=_on_event,
+            )
+        finally:
+            self._profile_ralph_session = None
 
     async def _run_trello(self, text: str) -> None:
         """Run /trello; start the server inline, then watch for tasks in background."""

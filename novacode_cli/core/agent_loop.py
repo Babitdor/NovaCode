@@ -283,8 +283,22 @@ async def iterate_agent_events(
 ) -> AsyncGenerator[Any, None]:
     """Drive one turn with usage attribution shared by every frontend."""
     from novacode_cli.prime_factory.runtime import is_factory_request, iterate_factory_events
+    from novacode_cli.agents.profiles import profile_readiness, selected_profile
+    from novacode_cli.core.profile_workers import current_workers
 
-    if is_factory_request(user_input, session_state):
+    profile = "ralph" if assistant_id == "ralph" else selected_profile(session_state)
+    if reason := profile_readiness(profile):
+        yield ev.Error(reason)
+        return
+    specialist = (
+        profile in {"serena", "nora", "ralph"}
+        or current_workers.get() is not None
+    )
+    if (
+        not specialist
+        and not getattr(session_state, "plan_mode_enabled", False)
+        and is_factory_request(user_input, session_state)
+    ):
         async for event in iterate_factory_events(user_input, session_state, agent=agent):
             yield event
         return
@@ -306,7 +320,7 @@ async def iterate_agent_events(
         image_tracker=image_tracker,
         seen_message_ids=seen_message_ids,
         skip_file_mentions=skip_file_mentions,
-        legacy_prime=False,
+        legacy_prime=specialist,
     )
     try:
         while True:
@@ -446,6 +460,15 @@ async def _iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
         if assistant_id and assistant_id != "nova-agent"
         else (COLORS["success"] if assistant_id == "nova-agent" else COLORS["agent"])
     )
+    if assistant_id in {"nova-agent", "nova"}:
+        agent_display_name = "Nova"
+    from novacode_cli.agents.profiles import profile_identity, selected_profile
+
+    profile = selected_profile(session_state)
+    if assistant_id == "ralph":
+        profile = "ralph"
+    if profile is not None:
+        agent_display_name, agent_colors = profile_identity(profile)
 
     # Pre-flight guardrails: refuse before any model call. ContentFilterMiddleware
     # enforces the same rule inside the graph; this path gives both UIs a clean
@@ -719,9 +742,19 @@ async def _iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
     from novacode_cli.config.plan_mode import active_plan_session
 
     plan_session_token = active_plan_session.set(session_state)
+    from novacode_cli.agents.profiles import current_profile
+    from novacode_cli.core.profile_workers import ProfileWorkers, current_workers
+
+    profile_token = current_profile.set(profile)
+    parent_workers = current_workers.get()
+    workers = ProfileWorkers(agent, backend, assistant_id, session_state, parent_workers)
+    workers_token = current_workers.set(workers)
     from novacode_cli.security.approval_context import current_user_request
 
-    approval_request_token = current_user_request.set(prime_original_input)
+    owner_request = (
+        current_user_request.get() or "" if parent_workers is not None else prime_original_input
+    )
+    approval_request_token = current_user_request.set(owner_request)
     from novacode_cli.core.code_approvals import CodeApprovals, current_code_approvals
 
     code_approvals = CodeApprovals(lambda: session_state.thread_id == thread_id)
@@ -801,6 +834,11 @@ async def _iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
                 _namespace, current_stream_mode, data = chunk
 
                 if current_stream_mode == "custom":
+                    if isinstance(data, dict) and data.get("type") == "nova_profile_worker":
+                        worker_event = data.get("event")
+                        if isinstance(worker_event, (ev.SubagentTask, ev.SubagentPreview, ev.InterruptRequest)):
+                            yield worker_event
+                        continue
                     if isinstance(data, dict) and data.get("type") == "nova_memory_read":
                         name = " ".join(str(data.get("name") or "").split())[:200]
                         path = " ".join(str(data.get("path") or "").split())[:2000]
@@ -1353,7 +1391,7 @@ async def _iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
                                 payload,
                                 session_state,
                                 plan_mode_enabled=getattr(session_state, "plan_mode_enabled", False),
-                                user_request=message_content,
+                                user_request=owner_request if parent_workers is not None else message_content,
                             )
                         except Exception:  # noqa: BLE001 — never break the turn
                             _policy_resolutions = None
@@ -1690,6 +1728,9 @@ async def _iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
         return
     finally:
         code_approvals.close()
+        await workers.close()
+        current_workers.reset(workers_token)
+        current_profile.reset(profile_token)
         current_code_approvals.reset(code_approvals_token)
         _auto_approve_var.reset(token)
         active_plan_session.reset(plan_session_token)

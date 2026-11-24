@@ -34,7 +34,11 @@ class RalphProgress(Vertical):
         self._timer = None
 
     def compose(self):
-        yield Static(Text.assemble(("Ralph", "bold"), "  ·  ", self.run.task))
+        from novacode_cli.agents.profiles import AGENT_COLORS
+
+        yield Static(
+            Text.assemble(("Ralph", f"bold {AGENT_COLORS['ralph']}"), "  ·  ", self.run.task)
+        )
         yield Static(id="ralph-progress", markup=False)
         with Horizontal(id="ralph-controls"):
             yield Button("Pause", id="ralph-pause", compact=True)
@@ -63,12 +67,24 @@ class RalphProgress(Vertical):
         elif self.request:
             status = Text(self.request)
         elif isinstance(event, (rev.IterationStarted, rev.IterationFinished)):
-            count = f"{event.iteration}/{event.max_iterations}" if event.max_iterations else str(event.iteration)
+            count = (
+                f"{event.iteration}/{event.max_iterations}"
+                if event.max_iterations
+                else str(event.iteration)
+            )
             elapsed = time.monotonic() - self.started
             phase = "Running" if isinstance(event, rev.IterationStarted) else "Checking results"
             status = Text(f"Iteration {count} · {phase} · {elapsed:.0f}s")
         else:
             status = Text("Starting…")
+        from novacode_cli.core.subagent_tasks import format_context
+
+        tracker = getattr(self.session, "token_tracker", None)
+        if tracker is not None:
+            status.append(
+                " · " + format_context(tracker.current_context, tracker.context_window_size),
+                style="dim",
+            )
         self.query_one("#ralph-progress", Static).update(status)
 
     @on(Button.Pressed)

@@ -50,6 +50,7 @@ BLOCKED_TOOLS: frozenset[str] = frozenset(
         "move_file",
         "write_memory",
         "task",  # A general implementation subagent cannot bypass planning restrictions.
+        "summon_agent",
         "MCPCode",  # Scripts can compose writes; use individual read-only MCP calls while planning.
         # Server management
         "start_dev_server",

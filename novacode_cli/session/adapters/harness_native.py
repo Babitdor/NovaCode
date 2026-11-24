@@ -92,6 +92,12 @@ def normalize_messages(
                     metadata={
                         **({"call_id": call_id} if call_id else {}),
                         **({"is_error": True} if getattr(message, "status", None) == "error" else {}),
+                        **(
+                            {"nova_agent_profile": profile}
+                            if message.type == "ai"
+                            and (profile := message.additional_kwargs.get("nova_agent_profile"))
+                            else {}
+                        ),
                     },
                 )
             )

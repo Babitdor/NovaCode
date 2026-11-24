@@ -196,7 +196,7 @@ async def test_composer_toggle_flips_serena_mode(monkeypatch) -> None:
         app._home_style = "minimal"
         await pilot.pause()
         button = app.query_one("#serena-toggle", Button)
-        assert button.label == "serena:off"
+        assert button.label == "serena"
 
         # Not ready: the gate refuses and the mode stays off.
         monkeypatch.setattr(
@@ -206,7 +206,7 @@ async def test_composer_toggle_flips_serena_mode(monkeypatch) -> None:
         button.press()
         await pilot.pause()
         assert getattr(app.session_state, "serena_mode_enabled", False) is False
-        assert button.label == "serena:off"
+        assert button.label == "serena"
 
         # Ready: the mode flips on and the button mirrors it.
         monkeypatch.setattr(
@@ -216,5 +216,5 @@ async def test_composer_toggle_flips_serena_mode(monkeypatch) -> None:
         button.press()
         await pilot.pause()
         assert app.session_state.serena_mode_enabled is True
-        assert button.label == "serena:on"
+        assert button.label == "serena"
         assert button.has_class("enabled")

@@ -331,6 +331,9 @@ DIRECT_ONLY_TOOLS = frozenset(
         "search_context",
         "acp_status",
         "handoff_save",  # Owns foreground context; keep on the direct graph tool path.
+        "summon_agent",
+        "prime_checkpoint",
+        "prime_check",
         "schedule_wakeup",  # Session-scoped control stays on its owning graph path.
         "wait_for_task",
         "start_async_task",
@@ -385,9 +388,13 @@ def _native_tools(request: ToolCallRequest) -> dict[str, BaseTool]:
     """Read capabilities from this invocation; never retain another graph's tools."""
     if request.runtime is None:
         raise ValueError("Code Mode requires its owning agent runtime.")
+    from novacode_cli.agents.profiles import active_profile, profile_tool_allowed
+
     available = {}
     for target in request.runtime.tools:
         if target.name in DIRECT_ONLY_TOOLS or (target.metadata or {}).get("nova_mcp_server"):
+            continue
+        if not profile_tool_allowed(active_profile(), target.name, target.metadata):
             continue
         # Most control tools declare Command returns. read_file also declares it
         # for media; ordinary text reads are supported, media falls back to direct.
@@ -1104,6 +1111,11 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
         updates: dict | None = None,
         call_id: str | None = None,
     ) -> Any:
+        from novacode_cli.agents.profiles import active_profile, profile_tool_allowed
+
+        profile = active_profile()
+        if not profile_tool_allowed(profile, target.name, target.metadata):
+            raise ValueError(f"The selected agent cannot call {target.name}.")
         schema = convert_to_openai_tool(target)["function"]["parameters"]
         try:
             _validator(json.dumps(schema, sort_keys=True), close_named=True).validate(arguments)

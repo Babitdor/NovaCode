@@ -131,6 +131,7 @@ class SessionState:
             None  # commands/side_commands.py, core/agent_loop.py, tui/app.py
         )
         self.prime_enabled: bool = False
+        self.agent_profile = None
         self.oracle_settings = None
         self.oracle_enabled = False
         self.oracle_run = None
@@ -556,6 +557,7 @@ class SessionState:
             "active_goal",
             "active_rubric",
             "prime_enabled",
+            "agent_profile",
             "prime_report",
             "cli_prime_override",
             "prime_pending",

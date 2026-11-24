@@ -62,7 +62,7 @@ async def test_composer_toggle_persists_and_supports_keyboard(
     async with app.run_test(size=size) as pilot:
         await pilot.pause()
         button = app.query_one("#code-mode-toggle", Button)
-        assert str(button.label) == "Code Mode: on"
+        assert str(button.label) == "Code Mode"
         assert button.has_class("enabled")
         assert button.region.height == 1
         assert button.region.right <= size[0]
@@ -70,7 +70,7 @@ async def test_composer_toggle_persists_and_supports_keyboard(
         assert await pilot.click(button)
         await pilot.pause()
         assert not NovaConfig().get_code_mode_enabled()
-        assert str(button.label) == "Code Mode: off"
+        assert str(button.label) == "Code Mode"
         assert not button.has_class("enabled")
         assert app.query_one("#prompt").has_focus
         await pilot.pause(0.4)
@@ -85,7 +85,7 @@ async def test_composer_toggle_persists_and_supports_keyboard(
     app = _app()
     async with app.run_test(size=size) as pilot:
         await pilot.pause()
-        assert str(app.query_one("#code-mode-toggle", Button).label) == "Code Mode: off"
+        assert str(app.query_one("#code-mode-toggle", Button).label) == "Code Mode"
 
 
 @pytest.mark.timeout(60)
@@ -100,7 +100,7 @@ async def test_failed_save_preserves_toggle(monkeypatch: pytest.MonkeyPatch):
         await pilot.click("#code-mode-toggle")
         await pilot.pause()
         assert NovaConfig().get_code_mode_enabled()
-        assert str(app.query_one("#code-mode-toggle", Button).label) == "Code Mode: on"
+        assert str(app.query_one("#code-mode-toggle", Button).label) == "Code Mode"
 
 
 async def test_live_graph_hides_and_rejects_code_but_keeps_other_tools(tmp_path: Path):

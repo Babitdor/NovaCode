@@ -37,14 +37,9 @@ async def test_toggle_strip_settings_and_threads_preserve_draft(size, design):
         await pilot.pause()
         code_toggle = app.query_one("#code-mode-toggle", Button)
         oracle_toggle = app.query_one("#oracle-toggle", Button)
-        settings_button = app.query_one("#oracle-settings", Button)
         assert code_toggle.parent is oracle_toggle.parent
-        assert settings_button.parent is oracle_toggle.parent
         assert code_toggle.region.y == oracle_toggle.region.y
-        assert settings_button.region.y == oracle_toggle.region.y
         assert code_toggle.region.right == oracle_toggle.region.x
-        assert settings_button.region.x == oracle_toggle.region.right
-        assert app.screen.region.contains_region(settings_button.region)
         assert app.screen.region.contains_region(oracle_toggle.region), (
             app.query_one("#composer-actions").classes,
             app.query_one("#composer-actions").region,
@@ -61,7 +56,6 @@ async def test_toggle_strip_settings_and_threads_preserve_draft(size, design):
         strip = panel.query_one("#oracle-strip", Button)
         assert strip.display
         assert strip.content_region.height == 1
-        assert settings_button.content_region.height == 1
         assert app.screen.region.contains_region(strip.region)
         run = OracleRun(OracleSettings(), ".", "thread", round=2, status="waiting")
         run.reviewers = [
@@ -126,7 +120,7 @@ async def test_settings_validate_cancel_and_save_without_sending(monkeypatch):
     async with app.run_test(size=(100, 40)) as pilot:
         app.query_one("#prompt").text = "draft"
         await pilot.pause()
-        await pilot.click("#oracle-settings")
+        await app._run_oracle_mode("/oracle-mode settings")
         await pilot.pause()
         assert isinstance(app.screen, OracleSettingsScreen)
         scope = app.screen.query_one("#oracle-scope", Select)
@@ -161,7 +155,7 @@ async def test_settings_validate_cancel_and_save_without_sending(monkeypatch):
         assert app.session_state.oracle_settings.target == 9
         assert app.session_state.oracle_settings.scope == "workspace"
         assert app.query_one("#prompt").text == "draft"
-        await pilot.click("#oracle-settings")
+        await app._run_oracle_mode("/oracle-mode settings")
         await pilot.pause()
         await pilot.press("escape")
         assert len(saved) == 1

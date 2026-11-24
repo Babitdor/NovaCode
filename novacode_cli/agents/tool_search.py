@@ -92,6 +92,9 @@ CORE_TOOLS = frozenset(
         "ask_user_question",
         "enter_plan_mode",
         "exit_plan_mode",
+        "summon_agent",
+        "prime_checkpoint",
+        "prime_check",
         "SendMessage",
         "list_sessions",
         "EnterWorktreeTool",
@@ -348,11 +351,18 @@ class ToolSearchMiddleware(AgentMiddleware):
 
     @staticmethod
     def _discovery_tools(tools, *, browsing: bool) -> list[Any]:
+        from novacode_cli.agents.profiles import active_profile, profile_tool_allowed
+
+        profile = active_profile()
         trusted = trusted_browser_servers() if browsing else frozenset()
         return [
             tool
             for tool in tools
             if _name(tool)
+            and profile_tool_allowed(
+                profile, _name(tool),
+                tool.get("metadata") if isinstance(tool, dict) else getattr(tool, "metadata", None),
+            )
             and (
                 not browsing
                 or browser_tool_allowed(
@@ -697,7 +707,9 @@ class ToolSearchMiddleware(AgentMiddleware):
         # Serena mode binds every remaining schema directly: the mode's whole
         # point is that the MCP toolset IS the toolset, nothing sits behind a
         # search step.
-        serena = serena_mode_enabled()
+        from novacode_cli.agents.profiles import active_profile
+
+        serena = serena_mode_enabled() or active_profile() == "serena"
         if serena:
             keep.update(_name(tool) for tool in request.tools)
         bound: list[Any] = []

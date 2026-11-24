@@ -11,6 +11,7 @@ import asyncio
 import contextlib
 import copy
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, ClassVar
@@ -2241,7 +2242,7 @@ class PickScreen(ModalScreen[int]):
 
     BINDINGS = [("escape", "cancel", "Cancel")]
 
-    def __init__(self, title: str, options: list[str], hint: str | None = None) -> None:
+    def __init__(self, title: str, options: Sequence[str | Text], hint: str | None = None) -> None:
         super().__init__()
         self._title = title
         self._options = options

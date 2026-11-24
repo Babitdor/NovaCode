@@ -326,6 +326,16 @@ def create_plan_agent_with_config(
     from novacode_cli.agents.handoff import HandoffMiddleware
 
     plan_middleware.insert(0, HandoffMiddleware())
+    from novacode_cli.agents.caveman import CavemanMiddleware
+    from novacode_cli.agents.profiles import AgentProfileMiddleware
+    from novacode_cli.mcp import get_shared_mcp_middleware
+    from novacode_cli.mcp.generic import build_mcp_tool
+
+    mcp = get_shared_mcp_middleware()
+    if mcp.server_status or mcp.tools:
+        plan_middleware.insert(0, mcp)
+        tools = [*(tools or []), build_mcp_tool(mcp)]
+    plan_middleware.extend([AgentProfileMiddleware(), CavemanMiddleware()])
     interrupt_on = get_interrupt_configs(extra_tools=tools or [])
     agent = create_deep_agent(
         name=assistant_id,

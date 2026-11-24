@@ -177,6 +177,8 @@ class SubagentTask:
     error: str = ""
     model: str | None = None  # what the task actually ran on
     compacting: bool = False
+    context_used: int = 0
+    context_window: int = 0
 
 
 @dataclass

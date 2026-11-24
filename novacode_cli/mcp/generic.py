@@ -27,6 +27,8 @@ class MCPInput(BaseModel):
 
 def resolve_target(middleware, params: MCPInput):
     """Resolve by recorded server and raw name, never by an ambiguous prefix."""
+    from novacode_cli.agents.profiles import active_profile, profile_tool_allowed
+
     for entry in middleware._tools_cache:
         if entry["server"] == params.server_name and entry["skill_alias"] == params.tool_name:
             return next(
@@ -35,6 +37,7 @@ def resolve_target(middleware, params: MCPInput):
                     for t in middleware.tools
                     if t.name == entry["name"]
                     and (t.metadata or {}).get("nova_mcp_server") == params.server_name
+                    and profile_tool_allowed(active_profile(), t.name, t.metadata)
                 ),
                 None,
             )
@@ -45,8 +48,16 @@ def build_mcp_tool(middleware) -> StructuredTool:
     """Expose metadata; execution must pass through MCPMiddleware's routing hook."""
 
     def inspect_tools(**kwargs):
+        from novacode_cli.agents.profiles import active_profile, profile_tool_allowed
+
         params = MCPInput.model_validate(kwargs)
         if params.action == "list":
+            profile = active_profile()
+            visible = {
+                ((tool.metadata or {}).get("nova_mcp_server"), tool.name)
+                for tool in middleware.tools
+                if profile_tool_allowed(profile, tool.name, tool.metadata)
+            } if profile in {"serena", "nora"} else None
             entries = [
                 {
                     "server_name": e["server"],
@@ -55,7 +66,8 @@ def build_mcp_tool(middleware) -> StructuredTool:
                     "description": e["description"][:300],
                 }
                 for e in middleware._tools_cache
-                if not params.server_name or e["server"] == params.server_name
+                if (not params.server_name or e["server"] == params.server_name)
+                and (visible is None or (e["server"], e["name"]) in visible)
             ]
             return {
                 "tools": entries[params.offset : params.offset + params.limit],

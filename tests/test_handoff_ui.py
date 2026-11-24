@@ -41,7 +41,7 @@ async def test_toggle_and_keyboard_preview_preserve_draft_and_transcript(
         await pilot.press("enter")
         await pilot.pause()
         assert app.session_state.handoff_enabled
-        assert str(toggle.label) == "Passing: on"
+        assert str(toggle.label) == "Passing"
         assert toggle.has_class("enabled")
         assert toggle.region.right <= size[0]
         assert app.session_state.auto_approve is previous_approval

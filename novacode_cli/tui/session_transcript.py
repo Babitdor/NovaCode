@@ -65,8 +65,15 @@ def history_card(
             else (provider.title() if message.role == "assistant" else "System")
         )
         label = str(message.metadata.get("label") or label)
+        color = None
+        if message.role == "assistant":
+            from novacode_cli.agents.profiles import AGENT_COLORS
+
+            profile = message.metadata.get("nova_agent_profile")
+            if isinstance(profile, str) and profile in AGENT_COLORS:
+                label, color = profile.title(), AGENT_COLORS[profile]
         header = label + (f" · {message.timestamp}" if message.timestamp else "")
-        card = ChatMessage(Text(header), "user" if message.role == "user" else "nova")
+        card = ChatMessage(Text(header, style=color), "user" if message.role == "user" else "nova")
         card.update_body(Markdown(content))
         return card
 

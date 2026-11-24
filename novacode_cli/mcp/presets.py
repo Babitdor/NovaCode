@@ -139,6 +139,29 @@ MCP_PRESETS: dict[str, dict[str, Any]] = {
             "env": {},
         },
     },
+    "obscura": {
+        "name": "Obscura MCP",
+        "description": "Headless browser navigation, page inspection, and interaction",
+        "package": "obscura (install separately)",
+        "config": {
+            "transport": "stdio",
+            "command": "{obscura_path}",
+            "args": ["mcp"],
+        },
+        "setup_prompt": "Enter the full path to your installed Obscura executable:",
+        "setup_key": "obscura_path",
+    },
+    "browser-use": {
+        "name": "Browser Use MCP",
+        "description": "Capture screenshots of Browser Use sessions",
+        "package": "browser-use",
+        "config": {
+            "transport": "stdio",
+            "command": "uvx",
+            "args": ["--from", "browser-use==1.0.6", "browser-use", "--cli-mcp"],
+            "tools": ["browser_screenshot"],
+        },
+    },
     "serena": {
         "name": "Serena MCP",
         "description": "Semantic code editing and analysis with LSP integration",
