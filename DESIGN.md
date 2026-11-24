@@ -96,8 +96,9 @@ anything: no smooth scroll, no press, no sheen, no clip.
   gets `layered` only once all four decode, and the flat composite shows until then and under
   reduced motion. The planes start registered at the top, separate on scroll, and ignore touch
   movement as a pointer effect. Wide screens are a split plate: words on the text cell
-  (`min(48%,720px)`), the picture takes the rest undimmed. At ≤900px the picture follows the
-  words as a band — 4:3 on phones, 16:9 above 560px. The four-plane mechanism, its classes and
+  (`min(48%,720px)`), the picture takes the rest undimmed. At ≤900px the picture leads — pic. 01
+  opens the page as a full-width band, then the words follow under it: 4:3 on phones, 16:9 above
+  560px, lifted with `order:-1` rather than by moving it in the markup. The four-plane mechanism, its classes and
   its script are carried over exactly as they shipped with the teletext design.
 - **The emblem coin.** The 3D coin (`.coin-band`) is the page's own seal: same engraved faces
   (`assets/coin.webp`), rim slices, orbiting sparks, drag and arrow-key spin, ring text. Its

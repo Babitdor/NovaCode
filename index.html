@@ -752,13 +752,18 @@ html.js .art.art-ready{opacity:1}
   .hero-actions{gap:8px}
   .hero-actions .btn{flex:1 1 100%;justify-content:center}
 }
-/* Below 900px the picture follows the words as a full-width band — the same drawing, uncropped. */
+/* Below 900px the desk leads: pic. 01 opens the page as a full-width band, then the
+   words follow under it. Same drawing, uncropped, no change to the wide split. */
 @media (max-width:900px){
+  /* Once the plate stacks above the copy, the depth shift slides the copy rows over
+     each other (the zones line drifts 0.11 x scroll into the headline), so the words
+     stop lagging here. The picture planes keep their own drift; they are clipped. */
+  .hero [data-par]{transform:none}
   /* the night field: repeating star points, a violet cool above and a warm
    horizon low on the panel. Pure gradients — no images, no JS, nothing to load,
    and it sits under the text because it is the section's own background. */
 .hero{
-  display:block;padding-bottom:clamp(20px,4vw,36px);min-height:0;
+  display:flex;flex-direction:column;padding-bottom:clamp(20px,4vw,36px);min-height:0;
   background-color:var(--ground);
   background-image:
     radial-gradient(1.4px 1.4px at 18% 24%, rgba(250,217,182,.95), transparent 55%),
@@ -774,7 +779,9 @@ html.js .art.art-ready{opacity:1}
 }
   .hero > .wrap{width:auto;border-right:0;background:none;padding-bottom:clamp(26px,4vw,40px)}
   .hero::after{display:none}
-  .plate{position:static;max-width:1120px;margin-inline:auto;padding-inline:var(--pad)}
+  /* order:-1 lifts the plate above the copy without moving it in the markup; as a
+     flex item it needs an explicit width, or auto margins shrink it to its content */
+  .plate{position:static;order:-1;width:100%;max-width:1120px;margin-inline:auto;margin-bottom:clamp(18px,3vw,26px);padding-inline:var(--pad)}
   .art{position:relative;inset:auto;aspect-ratio:4/3}
   .plate figcaption{position:static;inset:auto;left:auto;margin-top:9px;padding-inline:0}
 }
