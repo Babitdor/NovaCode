@@ -123,8 +123,11 @@ def test_workspace_resolution_maps_virtual_paths(tmp_path: Path) -> None:
     assert resolve_workspace_image("/notes.md", root) is None
 
 
-async def test_tui_mounts_a_clickable_card_and_opens_the_preview(tmp_path: Path) -> None:
+async def test_tui_mounts_a_clickable_card_and_opens_the_preview(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from novacode_cli import ui_events as ev
+    from novacode_cli.config.config import settings
     from novacode_cli.tui.app import NovaApp
     from novacode_cli.tui.screens import ImagePreviewScreen
     from novacode_cli.tui.widgets import ImageReadCard
@@ -165,6 +168,10 @@ async def test_tui_mounts_a_clickable_card_and_opens_the_preview(tmp_path: Path)
         card = app.query_one(ImageReadCard)
         assert "glow-fixed-buttons.png" in str(card.render())
 
+        # The virtual "/.shots/..." path resolves against the workspace root —
+        # without that mapping the preview shows a FileNotFoundError instead
+        # of the image.
+        monkeypatch.setattr(settings, "get_workspace_root", lambda: tmp_path)
         card.action_inspect()
         await pilot.pause()
         assert any(isinstance(screen, ImagePreviewScreen) for screen in app.screen_stack), (
@@ -175,6 +182,9 @@ async def test_tui_mounts_a_clickable_card_and_opens_the_preview(tmp_path: Path)
         )
         body = str(preview.query_one("#image-body").render())
         assert body.strip(), "the half-block fallback renders visible content"
+        assert "Could not load image" not in body, (
+            "the virtual .shots path must resolve to the workspace file"
+        )
 
 
 async def test_execution_hook_sends_the_photo(monkeypatch) -> None:

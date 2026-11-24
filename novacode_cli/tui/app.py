@@ -7145,6 +7145,19 @@ class NovaApp(App):
 
     def _open_image_preview(self, path: str) -> None:
         """Inspect an image the agent read (Sixel/TGP or half-block fallback)."""
+        # Agent-side reads use virtual roots ("/.shots/x.png" lives at
+        # "<workspace>/.shots/x.png"); resolve against the workspace like the
+        # remote bridges do, so a click doesn't hit a nonexistent root path.
+        try:
+            from novacode_cli.config.config import settings
+            from novacode_cli.remote.images import resolve_workspace_image
+
+            root = str(settings.get_workspace_root() or Path.cwd())
+            resolved = resolve_workspace_image(path, root)
+            if resolved is not None:
+                path = str(resolved)
+        except Exception:  # noqa: BLE001 — the preview shows its own load error
+            pass
         self.push_screen(ImagePreviewScreen(path))
 
     def _open_subagent_preview(self, task_id: str) -> None:
