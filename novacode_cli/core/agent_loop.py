@@ -1914,14 +1914,14 @@ async def _handle_tool_message(
                 if start is not None:
                     elapsed = time.time() - start
                 preview = format_tool_result_preview(tool_name, tool_content, tool_status, elapsed)
-            if preview:
-                yield ev.ToolResult(
-                    preview=preview,
-                    is_error=preview.startswith("✗"),
-                    full_output=(tool_content if isinstance(tool_content, str) else ""),
-                    call_id=tool_call_id,
-                    parent_tool_use_id=preview_task_id,
-                )
+                if preview:
+                    yield ev.ToolResult(
+                        preview=preview,
+                        is_error=preview.startswith("✗"),
+                        full_output=(tool_content if isinstance(tool_content, str) else ""),
+                        call_id=tool_call_id,
+                        parent_tool_use_id=preview_task_id,
+                    )
 
 
 async def _handle_tool_call_chunk(
