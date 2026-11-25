@@ -2041,7 +2041,7 @@ class McpCustomModal(ModalScreen[dict | None]):
             try:
                 from novacode_cli.mcp.config import MCPServerConfig
 
-                MCPServerConfig.validate_command(cmd)
+                MCPServerConfig.check_command(cmd)
             except ValueError as ex:
                 hint.update(Text(f"Validation failed: {ex}", style="red"))
                 return

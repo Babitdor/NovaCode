@@ -48,6 +48,7 @@ def _atomic_write_json(path: Path, data: dict) -> None:
     FileExistsError when the target exists; replace overwrites atomically.
     """
     from novacode_cli.security.secret_files import write_secret_json
+
     write_secret_json(path, data)
 
 
@@ -135,25 +136,37 @@ class MCPServerConfig(BaseModel):
     def validate_command(cls, v: str | None, info: ValidationInfo) -> str | None:
         """Reject commands containing shell metacharacters, path traversal, or missing binaries."""
         if v is not None:
-            if any(c in v for c in _SHELL_METACHARACTERS):
-                msg = "Shell metacharacters not allowed in command"
-                raise ValueError(msg)
-            if ".." in v:
-                msg = "Path traversal not allowed in command"
-                raise ValueError(msg)
-            if info.context and info.context.get("saved_config"):
-                # Missing executables are connection failures for individual servers.
-                return v
-            # Validate binary exists: absolute/relative path must be a file;
-            # simple name must be found on PATH.
-            if "/" in v or "\\" in v:
-                if not Path(v).is_file():
-                    msg = f"Command binary not found: {v}"
-                    raise ValueError(msg)
-            elif not shutil.which(v):
-                msg = f"Command not found on PATH: {v}"
-                raise ValueError(msg)
+            cls.check_command(
+                v, saved_config=bool(info.context and info.context.get("saved_config"))
+            )
         return v
+
+    @classmethod
+    def check_command(cls, v: str, *, saved_config: bool = False) -> None:
+        """The command checks behind ``validate_command``, callable directly.
+
+        The TUI's custom-server modal validates a command before building the
+        config; calling the pydantic validator directly needs a ValidationInfo.
+        Raises ValueError on the first problem.
+        """
+        if any(c in v for c in _SHELL_METACHARACTERS):
+            msg = "Shell metacharacters not allowed in command"
+            raise ValueError(msg)
+        if ".." in v:
+            msg = "Path traversal not allowed in command"
+            raise ValueError(msg)
+        if saved_config:
+            # Missing executables are connection failures for individual servers.
+            return
+        # Validate binary exists: absolute/relative path must be a file;
+        # simple name must be found on PATH.
+        if "/" in v or "\\" in v:
+            if not Path(v).is_file():
+                msg = f"Command binary not found: {v}"
+                raise ValueError(msg)
+        elif not shutil.which(v):
+            msg = f"Command not found on PATH: {v}"
+            raise ValueError(msg)
 
     @field_validator("args")
     @classmethod
@@ -257,7 +270,9 @@ class MCPConfig:
                 data = json.loads(self.config_path.read_text(encoding="utf-8"))
             except FileNotFoundError:
                 data = {}
-            if not isinstance(data, dict) or not isinstance(data.setdefault("mcpServers", {}), dict):
+            if not isinstance(data, dict) or not isinstance(
+                data.setdefault("mcpServers", {}), dict
+            ):
                 logger.warning("Invalid MCP configuration at %s", self.config_path)
                 return
             servers = data["mcpServers"]
