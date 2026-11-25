@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
+from contextlib import asynccontextmanager
 from unittest.mock import Mock
 
 import pytest
@@ -190,6 +191,51 @@ async def test_a_failing_call_drops_the_session_so_the_next_reconnects(factory):
     await proxy.call_tool("ok", {})
     assert len(factory.created) == 2, "did not reconnect after a transport error"
     await pool.aclose()
+
+
+async def test_cancelling_serena_leaves_transport_time_to_stop_its_children(monkeypatch):
+    entered = asyncio.Event()
+    closing = asyncio.Event()
+    release = asyncio.Event()
+    pool = mw._PersistentSessionPool()
+    proxy = mw._SessionProxy(pool, "serena", STDIO)
+    created = []
+
+    async def long_call(*args, **kwargs):
+        entered.set()
+        await asyncio.Future()
+
+    @asynccontextmanager
+    async def make_session(connection):
+        session = _FakeSession(len(created) + 1)
+        created.append(session)
+        if session.ident != 1:
+            yield session
+            return
+        session.call_tool = long_call
+        yield session
+        closing.set()
+        await release.wait()
+
+    monkeypatch.setattr("langchain_mcp_adapters.sessions.create_session", make_session)
+
+    call = asyncio.create_task(proxy.call_tool("execute_shell_command", {}))
+    try:
+        await asyncio.wait_for(entered.wait(), 2)
+        owner = pool._owners["serena"]
+        call.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(call, 1)
+        await asyncio.wait_for(closing.wait(), 2)
+        assert not owner.done()
+        next_call = asyncio.create_task(proxy.call_tool("ok", {}))
+        await asyncio.sleep(0)
+        assert not next_call.done()
+        release.set()
+        assert "session=2" in await asyncio.wait_for(next_call, 2)
+    finally:
+        release.set()
+        await pool.aclose()
 
 
 @pytest.mark.asyncio

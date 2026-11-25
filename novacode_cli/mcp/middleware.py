@@ -145,27 +145,36 @@ class _PersistentSessionPool:
             self._sessions[server] = session
             return session
 
-    async def _stop(self, server: str) -> None:
-        """Tear one session down, tolerating a half-started one."""
-        self._sessions.pop(server, None)
-        closing = self._closers.pop(server, None)
-        if closing is not None:
-            closing.set()
-        task = self._owners.pop(server, None)
-        if task is not None:
-            if not task.done():
-                task.cancel()
-            with contextlib.suppress(BaseException):
-                await task
+    def interrupt(self, server: str, session: ClientSession) -> None:
+        """Retire this transport so its owner can stop the server's process tree."""
+        if self._sessions.get(server) is session:
+            self._sessions.pop(server)
+            self._closers[server].set()
 
-    async def drop(self, server: str) -> None:
+    async def _stop(self, server: str) -> None:
+        """Wait for transport cleanup before a replacement session can start."""
+        task = self._owners.get(server)
+        if task is None:
+            return
+        closing = self._closers[server]
+        if self._sessions.pop(server, None) is not None:
+            closing.set()
+        elif not closing.is_set() and not task.done():
+            task.cancel()  # Initialization has not reached the shutdown signal.
+        # Cancelling the owner during stdio shutdown skips the SDK's process-tree cleanup.
+        await asyncio.shield(asyncio.gather(task, return_exceptions=True))
+        self._owners.pop(server)
+        self._closers.pop(server)
+
+    async def drop(self, server: str, *, session: ClientSession | None = None) -> None:
         """Discard a session so the next call reconnects.
 
         Called when a tool errors: the failure may have been the transport
         dying, and a cached dead session would fail every later call too.
         """
         async with self._lock_for(server):
-            await self._stop(server)
+            if session is None or self._sessions.get(server) is session:
+                await self._stop(server)
 
     async def aclose(self, *, _from_dead_loop: bool = False) -> None:
         """Close every session (process shutdown, or a new event loop)."""
@@ -176,7 +185,7 @@ class _PersistentSessionPool:
                 self._closers.pop(server, None)
                 self._owners.pop(server, None)
             else:
-                await self._stop(server)
+                await self.drop(server)
         self._locks.clear()
 
 
@@ -200,10 +209,13 @@ class _SessionProxy:
         session = await self._pool.get(self._server, self._connection)
         try:
             return await session.call_tool(name, arguments, **kwargs)
+        except asyncio.CancelledError:
+            self._pool.interrupt(self._server, session)
+            raise
         except BaseException:
             # The transport may have died with it; force a reconnect next time
             # rather than pinning every later call to a corpse.
-            await self._pool.drop(self._server)
+            await self._pool.drop(self._server, session=session)
             raise
 
 
