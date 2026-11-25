@@ -6580,37 +6580,55 @@ class ImagePreviewScreen(ModalScreen[None]):
             yield Static(Text("Esc · back to the session", style="dim"), id="image-hint")
 
     def on_mount(self) -> None:
-        body = self.query_one("#image-body", Static)
-        body.update(self._renderable())
-        self.query_one("#image-scroll", VerticalScroll).scroll_home(animate=False)
+        # Decode + downscale off the UI loop: a full-resolution screenshot
+        # froze input for hundreds of milliseconds right when the preview
+        # opened.
+        self.run_worker(self._load_and_show(), exclusive=True, group="image-preview")
 
-    def _renderable(self) -> RenderableType:
-        from PIL import Image as PILImage
-        from rich.style import Style
-        from rich.text import Text as RichText
-
+    async def _load_and_show(self) -> None:
         try:
-            with PILImage.open(self._path) as source:
-                source.load()
-                pil = source.convert("RGB")
+            pil = await asyncio.to_thread(self._load_pil)
         except Exception as exc:  # noqa: BLE001 — a broken image is a message, not a crash
-            return Text(f"  Could not load image: {exc}", style="red")
-
+            with contextlib.suppress(Exception):
+                self.query_one("#image-body", Static).update(
+                    Text(f"  Could not load image: {exc}", style="red")
+                )
+            return
+        if self._closing or not self.is_running:
+            return
         from novacode_cli.tui.avatar import native_image_type
 
-        native = native_image_type()
-        if native is not None:
+        body = self.query_one("#image-body", Static)
+        if native_image_type() is not None:
             try:
                 from textual_image.widget import Image as TextualImage
 
-                self.query_one("#image-body", Static).display = False
-                self.query_one("#image-scroll", VerticalScroll).mount(TextualImage(pil))
-                return Text("")
+                body.display = False
+                await self.query_one("#image-scroll", VerticalScroll).mount(TextualImage(pil))
+                return
             except Exception:  # noqa: BLE001 — fall through to half-blocks
                 pass
+        body.update(self._half_blocks(pil))
 
-        # Half-block fallback: two pixel rows per terminal row, top pixel as
-        # foreground colour, bottom as background.
+    def _load_pil(self):
+        """Decode the image off-loop and downscale it to preview size."""
+        from PIL import Image as PILImage
+
+        with PILImage.open(self._path) as source:
+            source.load()
+            pil = source.convert("RGB")
+        # The preview area is a couple of dozen terminal rows (~100 cells
+        # wide); anything beyond ~1200 px on the long side is wasted work for
+        # the renderer and shows no extra detail.
+        pil.thumbnail((1200, 1200))
+        return pil
+
+    def _half_blocks(self, pil) -> RenderableType:
+        """Half-block fallback: two pixel rows per terminal row, top pixel as
+        foreground colour, bottom as background."""
+        from rich.style import Style
+        from rich.text import Text as RichText
+
         width, height = pil.size
         cols = max(1, min(100, width))
         rows = max(1, round(height / width * cols / 2))

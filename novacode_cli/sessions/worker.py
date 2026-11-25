@@ -379,8 +379,14 @@ class SessionWorker:
             name = cmd.removeprefix("skill:")
             skill = await _try_skill_invocation(name, args, self.session_state, self.assistant_id)
             if skill is not None:
+                # Skill-like objects vary (the TUI passes rich Skills, tests
+                # and remote callers may pass bare namespaces) — never assume
+                # presentation attributes exist.
+                label = getattr(skill, "name", None) or cmd.removeprefix("skill:") or "skill"
+                description = getattr(skill, "description", "") or ""
+                output = f"Invoking skill: {label}" + (f" — {description}" if description else "")
                 return (
-                    f"Invoking skill: {skill.name} — {skill.description}",
+                    output,
                     skill.pinned_prompt or skill.prompt,
                     False,
                 )

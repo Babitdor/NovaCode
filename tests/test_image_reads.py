@@ -180,11 +180,36 @@ async def test_tui_mounts_a_clickable_card_and_opens_the_preview(
         preview = next(
             screen for screen in app.screen_stack if isinstance(screen, ImagePreviewScreen)
         )
+        # The decode runs on a worker; wait for it to finish before judging.
+        for _ in range(50):
+            body = str(preview.query_one("#image-body").render())
+            if "Loading image" not in body:
+                break
+            await pilot.pause(0.05)
         body = str(preview.query_one("#image-body").render())
         assert body.strip(), "the half-block fallback renders visible content"
         assert "Could not load image" not in body, (
             "the virtual .shots path must resolve to the workspace file"
         )
+
+
+def test_preview_downscales_large_images(tmp_path: Path) -> None:
+    """_load_pil caps the preview bitmap so the renderer never sees a 4K frame."""
+    from io import BytesIO
+
+    from PIL import Image as PILImage
+
+    from novacode_cli.tui.screens import ImagePreviewScreen
+
+    wide = PILImage.new("RGB", (3840, 2160), (10, 20, 30))
+    buffer = BytesIO()
+    wide.save(buffer, format="PNG")
+    (tmp_path / "big.png").write_bytes(buffer.getvalue())
+
+    screen = ImagePreviewScreen(str(tmp_path / "big.png"))
+    pil = screen._load_pil()
+    assert max(pil.size) <= 1200
+    assert pil.mode == "RGB"
 
 
 async def test_execution_hook_sends_the_photo(monkeypatch) -> None:
