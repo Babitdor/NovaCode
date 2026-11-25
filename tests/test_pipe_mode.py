@@ -499,7 +499,7 @@ def test_invalid_pipe_cli_modes(monkeypatch, flags):
         (b'{"type":"ping","id":NaN}\n', False),
         (b"[" * 2000 + b"]" * 2000 + b"\n", False),
         (b'{"type":"_input_error"}\n', False),
-        (b"x" * (1024 * 1024 + 1), True),
+        (b"x" * (10 * 1024 * 1024 + 1), True),
     ],
     ids=["bad-json", "bad-utf8", "array", "nan", "deep-json", "reserved", "oversize"],
 )

@@ -124,7 +124,9 @@ def format_interrupt_notification(kind: str, payload: Any) -> str:
                 )
                 if not detail and args:
                     detail = ", ".join(f"{k}={v}" for k, v in list(args.items())[:3])
-                detail = " ".join(str(detail).split()) if detail else ""  # collapse whitespace/newlines
+                detail = (
+                    " ".join(str(detail).split()) if detail else ""
+                )  # collapse whitespace/newlines
                 lines.append(f"{name}: {detail}" if detail else str(name))
             msg = "  •  ".join(lines) or "A tool action needs your approval."
         elif kind == "plan":
@@ -292,10 +294,7 @@ async def iterate_agent_events(
     if reason := profile_readiness(profile):
         yield ev.Error(reason)
         return
-    specialist = (
-        profile in {"serena", "nora", "ralph"}
-        or current_workers.get() is not None
-    )
+    specialist = profile in {"serena", "nora", "ralph"} or current_workers.get() is not None
     if (
         not specialist
         and not getattr(session_state, "plan_mode_enabled", False)
@@ -384,11 +383,7 @@ async def _iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
     # Nova commits the answer from streamed chunks, not from the post-model
     # state. Buffer prose whenever a display guard or the review needs the whole
     # answer, so a refused or partial value is never rendered first.
-    buffer_output = (
-        display_pii is not None
-        or review_enabled
-        or bool(guardrails.blocked_keywords)
-    )
+    buffer_output = display_pii is not None or review_enabled or bool(guardrails.blocked_keywords)
 
     if is_deactivation_command(user_input, compression_config.get_compression_mode()):
         try:
@@ -626,9 +621,7 @@ async def _iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
         text = pending_text.rstrip()
         if display_pii is not None:
             text = display_pii.redact(text)
-        if guardrails.blocked_keywords and blocked_keyword_in(
-            text, guardrails.blocked_keywords
-        ):
+        if guardrails.blocked_keywords and blocked_keyword_in(text, guardrails.blocked_keywords):
             text = OUTPUT_BLOCKED
         msg = ev.AssistantMessage(
             text=text, agent_name=agent_display_name, agent_color=agent_colors
@@ -774,7 +767,10 @@ async def _iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
     try:
         if getattr(session_state, "handoff_enabled", False) is True:
             handoff_run = await asyncio.to_thread(
-                HandoffRun, session_state, prime_original_input, assistant_id or "nova-agent",
+                HandoffRun,
+                session_state,
+                prime_original_input,
+                assistant_id or "nova-agent",
             )
             current_handoff.set(handoff_run)
         if handoff_run is not None and handoff_run.error:
@@ -875,13 +871,17 @@ async def _iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
                                     code_approvals.close()
                                     continue
                                 approval_payload = {
-                                    **payload, "requires_owner_approval": True,
+                                    **payload,
+                                    "requires_owner_approval": True,
                                     "approval_session": runtime_session,
                                 }
                                 notice = session_state.add_notification(
-                                    level="approval", title="Tool action requires approval",
+                                    level="approval",
+                                    title="Tool action requires approval",
                                     message=format_interrupt_notification("tool", approval_payload),
-                                    source="system", action_id=data["id"], action_type="approve",
+                                    source="system",
+                                    action_id=data["id"],
+                                    action_type="approve",
                                 )
                                 session_state.register_pending_approval(data["id"], future)
                                 try:
@@ -1044,10 +1044,13 @@ async def _iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
                             # generic tool HITL interrupt
                             try:
                                 validated = _HITL_REQUEST_ADAPTER.validate_python(interrupt_value)
-                                pending_interrupts.append((
-                                    interrupt_obj.id, "tool",
-                                    {**validated, "approval_session": runtime_session},
-                                ))
+                                pending_interrupts.append(
+                                    (
+                                        interrupt_obj.id,
+                                        "tool",
+                                        {**validated, "approval_session": runtime_session},
+                                    )
+                                )
                                 interrupt_occurred = True
                             except ValidationError as e:
                                 yield ev.Error(f"Invalid HITL request data: {e}")
@@ -1174,9 +1177,9 @@ async def _iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
 
                         from novacode_cli.tracking.usage_tree import _extract_usage
 
-                        usage = _extract_usage(SimpleNamespace(
-                            generations=[[SimpleNamespace(message=message)]]
-                        ))
+                        usage = _extract_usage(
+                            SimpleNamespace(generations=[[SimpleNamespace(message=message)]])
+                        )
                         if usage:
                             cache_read = usage.get("cache_read_tokens", 0)
                             cache_create = usage.get("cache_creation_tokens", 0)
@@ -1265,9 +1268,8 @@ async def _iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
                                 # per block dropped blocks 2+ of the message.
                                 if not _completed_accumulated:
                                     _completed_accumulated = True
-                                    if (
-                                        pending_text
-                                        and current_ai_message_id == getattr(message, "id", None)
+                                    if pending_text and current_ai_message_id == getattr(
+                                        message, "id", None
                                     ):
                                         # Streamed deltas for this id are stale
                                         # duplicates of the full text.
@@ -1289,9 +1291,13 @@ async def _iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
                                             icon="⟳",
                                             color="dim",
                                         )
-                                if not buffer_output and not summary_preview_suppressed and (
-                                    preview_started
-                                    or not _could_be_session_intent_heading(pending_text)
+                                if (
+                                    not buffer_output
+                                    and not summary_preview_suppressed
+                                    and (
+                                        preview_started
+                                        or not _could_be_session_intent_heading(pending_text)
+                                    )
                                 ):
                                     preview_text = text if preview_started else pending_text
                                     preview_started = True
@@ -1392,8 +1398,12 @@ async def _iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
                                 evaluate_tool_actions,
                                 payload,
                                 session_state,
-                                plan_mode_enabled=getattr(session_state, "plan_mode_enabled", False),
-                                user_request=owner_request if parent_workers is not None else message_content,
+                                plan_mode_enabled=getattr(
+                                    session_state, "plan_mode_enabled", False
+                                ),
+                                user_request=owner_request
+                                if parent_workers is not None
+                                else message_content,
                             )
                         except Exception:  # noqa: BLE001 — never break the turn
                             _policy_resolutions = None
@@ -1429,10 +1439,16 @@ async def _iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
                                     if source == "safety_filter":
                                         message = f"Safety filter rejected {action_name}"
                                     elif source == "unavailable":
-                                        message = f"Decision model unavailable; rejected {action_name}"
+                                        message = (
+                                            f"Decision model unavailable; rejected {action_name}"
+                                        )
                                     else:
-                                        model_name = decision.get("decision_model", "Decision model")
-                                        message = f"Decision model {model_name} rejected {action_name}"
+                                        model_name = decision.get(
+                                            "decision_model", "Decision model"
+                                        )
+                                        message = (
+                                            f"Decision model {model_name} rejected {action_name}"
+                                        )
                                     icon, color = "✗", "red"
                                     if decision.get("reason"):
                                         message += f" · {decision['reason']}"
@@ -1537,9 +1553,10 @@ async def _iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
                             plan_approved = True
                             _inline = payload.get("plan") if isinstance(payload, dict) else ""
                             approved_plan = (_inline or "", False)
-                            plan_handoff_required = (
-                                getattr(session_state, "plan_agent", None) is not None
-                                or bool(getattr(session_state, "plan_execution_handoff", False))
+                            plan_handoff_required = getattr(
+                                session_state, "plan_agent", None
+                            ) is not None or bool(
+                                getattr(session_state, "plan_execution_handoff", False)
                             )
 
                 if any_rejected:
@@ -1591,7 +1608,9 @@ async def _iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
                             _save_unresumed_plan, (resolved, auto_approved), session_state
                         )
                         if saved:
-                            yield ev.ContextMessage(f"Plan saved to {saved}", icon="✓", color="green")
+                            yield ev.ContextMessage(
+                                f"Plan saved to {saved}", icon="✓", color="green"
+                            )
                     try:
                         session_state.set_approved_plan(resolved)
                     except Exception:  # noqa: BLE001
@@ -1851,9 +1870,7 @@ async def _handle_tool_message(
             subagent_type=subagent_type,
             description=description,
         )
-        yield ev.StatusUpdate(
-            status_phrases.status_line("synthesizing", agent_display_name)
-        )
+        yield ev.StatusUpdate(status_phrases.status_line("synthesizing", agent_display_name))
         return
 
     if is_main_agent:
@@ -1897,13 +1914,14 @@ async def _handle_tool_message(
                 if start is not None:
                     elapsed = time.time() - start
                 preview = format_tool_result_preview(tool_name, tool_content, tool_status, elapsed)
-                if preview:
-                    yield ev.ToolResult(
-                        preview=preview,
-                        is_error=preview.startswith("✗"),
-                        full_output=(tool_content if isinstance(tool_content, str) else ""),
-                        call_id=tool_call_id,
-                    )
+            if preview:
+                yield ev.ToolResult(
+                    preview=preview,
+                    is_error=preview.startswith("✗"),
+                    full_output=(tool_content if isinstance(tool_content, str) else ""),
+                    call_id=tool_call_id,
+                    parent_tool_use_id=preview_task_id,
+                )
 
 
 async def _handle_tool_call_chunk(
@@ -2041,6 +2059,4 @@ async def _handle_tool_call_chunk(
             )
             # The panel's row for the same dispatch. A blocking task call is its
             # own one-row phase: it has no fan-out to belong to.
-            yield task_from_sync_dispatch(
-                buffer_id, subagent_type, description, time.time()
-            )
+            yield task_from_sync_dispatch(buffer_id, subagent_type, description, time.time())

@@ -93,17 +93,33 @@ class HeadlessOutput:
         self._write(json.dumps({"schema_version": 1, **obj}, ensure_ascii=False) + "\n")
 
     # -- lifecycle --------------------------------------------------------
-    def init(self) -> None:
-        """Emit the stream-json init line (no-op for text/json)."""
+    def init(
+        self,
+        *,
+        tools: list[str] | None = None,
+        mcp_servers: list[dict[str, Any]] | None = None,
+        mcp_server_errors: list[dict[str, Any]] | None = None,
+    ) -> None:
+        """Emit the stream-json init line (no-op for text/json).
+
+        ``tools``/``mcp_servers``/``mcp_server_errors`` are additive,
+        Claude-Code-style metadata: a CI gate fails when ``mcp_server_errors``
+        is non-empty instead of silently running without a server.
+        """
         if self.fmt == "stream-json":
-            self._writeln(
-                {
-                    "type": "system",
-                    "subtype": "init",
-                    "session_id": self.session_id,
-                    "model": self.model_name,
-                }
-            )
+            payload: dict[str, Any] = {
+                "type": "system",
+                "subtype": "init",
+                "session_id": self.session_id,
+                "model": self.model_name,
+            }
+            if tools:
+                payload["tools"] = tools
+            if mcp_servers:
+                payload["mcp_servers"] = mcp_servers
+            if mcp_server_errors:
+                payload["mcp_server_errors"] = mcp_server_errors
+            self._writeln(payload)
 
     def handle_event(self, event: Any) -> None:
         """Render a single agent event (stream-json only; others accumulate).
@@ -135,12 +151,16 @@ class HeadlessOutput:
         exit_code: int = 0,
         command: str | None = None,
         tool_call_count: int | None = None,
+        structured_output: Any | None = None,
+        total_cost_usd: float | None = None,
     ) -> None:
         """Emit the terminal result in the active format.
 
-        ``command`` and ``tool_call_count`` are additive, third-party fields:
-        the slash command that produced this result (subtype ``command``) and
-        the number of main-agent tool calls observed during the run.
+        Additive third-party fields: ``command`` (the slash command behind a
+        ``command`` result), ``tool_call_count`` (main-agent tool calls
+        observed), ``structured_output`` (present only when the final answer
+        validated against ``--output-schema``) and ``total_cost_usd`` (a
+        client-side estimate; omitted when the model's price is unknown).
         """
         if self.fmt == "text":
             # Only the final answer goes to stdout. Errors still print their
@@ -167,6 +187,10 @@ class HeadlessOutput:
             payload["command"] = command
         if tool_call_count is not None:
             payload["tool_call_count"] = tool_call_count
+        if structured_output is not None:
+            payload["structured_output"] = structured_output
+        if total_cost_usd is not None:
+            payload["total_cost_usd"] = total_cost_usd
         self._writeln(payload)
 
     # -- event mapping ----------------------------------------------------
@@ -186,20 +210,26 @@ class HeadlessOutput:
                 "is_subagent": event.is_subagent,
             }
         if isinstance(event, ev.ToolCall):
-            return {
+            line = {
                 "type": "tool_use",
                 "name": event.name,
                 "input": event.args,
                 "id": event.call_id,
                 "display": event.display_str,
             }
+            if event.parent_tool_use_id:
+                line["parent_tool_use_id"] = event.parent_tool_use_id
+            return line
         if isinstance(event, ev.ToolResult):
-            return {
+            line = {
                 "type": "tool_result",
                 "tool_use_id": event.call_id,
                 "is_error": event.is_error,
                 "content": event.full_output or event.preview,
             }
+            if event.parent_tool_use_id:
+                line["parent_tool_use_id"] = event.parent_tool_use_id
+            return line
         if isinstance(event, ev.FileOp):
             record = event.record
             return {

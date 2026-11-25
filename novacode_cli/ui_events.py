@@ -73,6 +73,9 @@ class ToolCall:
     is_main_agent: bool = True
     args: dict[str, Any] = field(default_factory=dict)
     call_id: str | None = None
+    parent_tool_use_id: str | None = None
+    """The task id of the subagent this call belongs to (None on main-agent
+    calls) — Claude-Code-style correlation for stream consumers."""
 
 
 @dataclass
@@ -88,6 +91,9 @@ class ToolResult:
     is_error: bool = False
     full_output: str = ""
     call_id: str | None = None
+    parent_tool_use_id: str | None = None
+    """The task id of the subagent this result belongs to (None on main-agent
+    results) — Claude-Code-style correlation for stream consumers."""
 
 
 @dataclass

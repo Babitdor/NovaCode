@@ -651,6 +651,44 @@ def parse_args() -> argparse.Namespace:  # noqa: PLR0912, PLR0915 — one existi
         action="store_true",
         help="Headless only: explicitly grant folder-only trust to the current directory.",
     )
+    parser.add_argument(
+        "--allowed-tools",
+        default=None,
+        help="Headless only: comma-separated tool names to auto-approve for this "
+        'run, e.g. "read_file,execute" (aliases: Read, Edit, Write, Bash, Glob, '
+        "Grep). Policy denies stay authoritative.",
+    )
+    parser.add_argument(
+        "--output-schema",
+        "--json-schema",
+        dest="output_schema",
+        default=None,
+        help="Headless only: a JSON Schema (inline JSON or a path to a .json "
+        "file). The final answer must validate; the JSON result then carries "
+        "structured_output. Requires --output-format json.",
+    )
+    parser.add_argument(
+        "--max-budget-usd",
+        type=positive_seconds,
+        default=None,
+        help="Headless only: stop the run when the estimated cost (client-side "
+        "USD estimate from token usage) exceeds this amount.",
+    )
+    parser.add_argument(
+        "--image",
+        dest="images",
+        action="append",
+        default=[],
+        metavar="PATH",
+        help="Headless only: attach an image (png/jpeg/webp/gif, max 20MB) to "
+        "the prompt. Repeatable, up to 5.",
+    )
+    parser.add_argument(
+        "--bare",
+        action="store_true",
+        help="Headless only: skip plugins, MCP presets, proactive and memory "
+        "discovery for a fast, deterministic scripted run.",
+    )
     # Internal: how a parent Nova TUI launches a parallel session. The child
     # speaks JSONL on stdio (see novacode_cli.sessions.worker) and is bound to
     # its own git worktree purely by the cwd it is spawned in. Not for humans.
@@ -756,6 +794,30 @@ def parse_args() -> argparse.Namespace:  # noqa: PLR0912, PLR0915 — one existi
         parser.error("--timeout, --trust-workspace, and --include-partial-messages require --print")
     if args.include_partial_messages and args.output_format != "stream-json":
         parser.error("--include-partial-messages requires --output-format stream-json")
+    if (
+        args.print_prompt is None
+        and args.mode != "pipe"
+        and (
+            args.timeout is not None
+            or args.trust_workspace
+            or args.include_partial_messages
+            or args.max_turns is not None
+            or args.deny_tools
+            or args.allowed_tools
+            or args.output_schema
+            or getattr(args, "max_budget_usd", None) is not None
+            or getattr(args, "images", None)
+            or getattr(args, "bare", False)
+        )
+    ):
+        parser.error(
+            "--timeout, --trust-workspace, --include-partial-messages and the"
+            " other headless-only flags require --print"
+        )
+    if args.output_schema and args.output_format != "json":
+        parser.error("--output-schema requires --output-format json")
+    if len(getattr(args, "images", None) or []) > 5:
+        parser.error("--image accepts at most 5 images")
     if args.import_provider:
         if args.resume or args.continue_session:
             parser.error("--import cannot be combined with --resume or --continue")

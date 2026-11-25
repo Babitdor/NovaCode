@@ -32,7 +32,7 @@ def test_bounded_utf8_stdin_and_explicit_empty_prompt():
     assert read_prompt(True, stdin) == "Fix 测试"
     for raw, match in (
         (b"\xff", "UTF-8"),
-        (b"x" * (MAX_PROMPT_SIZE + 1), "1 MiB"),
+        (b"x" * (MAX_PROMPT_SIZE + 1), "10 MiB"),
         (b"  ", "non-empty"),
     ):
         stdin.buffer = io.BytesIO(raw)

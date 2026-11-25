@@ -150,20 +150,26 @@ class PipeSession(SessionWorker):
                     **fields,
                 )
             elif isinstance(event, ev.ToolCall):
+                tool_fields = {**fields}
+                if event.parent_tool_use_id:
+                    tool_fields["parent_tool_use_id"] = event.parent_tool_use_id
                 self.publish(
                     "tool_call",
                     tool=event.name,
                     args=event.args,
                     tool_call_id=event.call_id,
-                    **fields,
+                    **tool_fields,
                 )
             elif isinstance(event, ev.ToolResult):
+                tool_fields = {**fields}
+                if event.parent_tool_use_id:
+                    tool_fields["parent_tool_use_id"] = event.parent_tool_use_id
                 self.publish(
                     "tool_result",
                     output=event.full_output or event.preview,
                     tool_call_id=event.call_id,
                     is_error=event.is_error,
-                    **fields,
+                    **tool_fields,
                 )
             elif isinstance(event, ev.Error):
                 if self._status == "running":

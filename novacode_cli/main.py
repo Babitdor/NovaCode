@@ -1095,7 +1095,10 @@ async def main(
 
     from novacode_cli.mcp.config import MCPConfig
 
-    await asyncio.to_thread(lambda: MCPConfig().provision_startup_servers())
+    # --bare skips the preset discovery for a fast, deterministic scripted run
+    # (servers named explicitly in config still load through the middleware).
+    if not getattr(session_state, "headless_bare", False):
+        await asyncio.to_thread(lambda: MCPConfig().provision_startup_servers())
 
     # Hydrate API keys stored in the OS keychain into the environment so model
     # clients (which read os.environ) can find them — keys may live only in the
@@ -2214,6 +2217,39 @@ def cli_main() -> None:
                 session_state.headless_trust_workspace = args.trust_workspace
                 # --print alone grants no tool permissions.
                 session_state.auto_approve = bool(args.auto_approve and not args.deny_tools)
+                if getattr(args, "allowed_tools", None):
+                    from novacode_cli.headless.input import parse_allowed_tools
+
+                    session_state.headless_allowed_tools = parse_allowed_tools(args.allowed_tools)
+                if getattr(args, "output_schema", None):
+                    session_state.headless_output_schema = args.output_schema
+                if getattr(args, "max_budget_usd", None) is not None:
+                    session_state.headless_max_budget_usd = args.max_budget_usd
+                if getattr(args, "bare", False):
+                    session_state.headless_bare = True
+                if getattr(args, "images", None):
+                    from novacode_cli.headless.input import load_image_attachments
+
+                    # Invalid attachments are a startup error, not a mid-run one.
+                    session_state.headless_images = load_image_attachments(args.images)
+
+                # SIGTERM in an unattended run: stop cleanly with 143 like the
+                # other coding CLIs, killing any running shell process tree.
+                def _on_sigterm(signum, _frame):
+                    import os as _os
+
+                    with contextlib.suppress(Exception):
+                        from novacode_cli.shell import jobs as shell_jobs
+
+                        for job in shell_jobs.get_registry().list_jobs():
+                            if job.status == "running":
+                                shell_jobs.get_registry().terminate(job.id)
+                    _os._exit(143)
+
+                with contextlib.suppress(ValueError, OSError):
+                    import signal as _signal
+
+                    _signal.signal(_signal.SIGTERM, _on_sigterm)
 
             # Ensure the project wiki vault exists from session start, so the user
             # can point Obsidian at .nova/wiki/ without first running a wiki

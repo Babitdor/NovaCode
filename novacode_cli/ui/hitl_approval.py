@@ -63,13 +63,17 @@ def check_plan_mode_blocked(req: dict, plan_mode_enabled: bool) -> tuple[bool, d
         tool_name = ar.get("name", "")
         reason = plan_tool_rejection(tool_name, ar.get("args") or {})
         if reason:
-            decisions.append({
-                "type": "reject", "reason": reason,
-                "message": (
-                    "writes/edits are only allowed inside .nova/plans/ or .nova/ralph/ in plan mode"
-                )
-                if tool_name in {"write_file", "edit_file"} else reason,
-            })
+            decisions.append(
+                {
+                    "type": "reject",
+                    "reason": reason,
+                    "message": (
+                        "writes/edits are only allowed inside .nova/plans/ or .nova/ralph/ in plan mode"
+                    )
+                    if tool_name in {"write_file", "edit_file"}
+                    else reason,
+                }
+            )
             any_rejected = True
         else:
             decisions.append({"type": "approve"})
@@ -110,11 +114,11 @@ def evaluate_tool_actions(
     # Load the approval policy (cached, best-effort)
     try:
         from novacode_cli.security.policy import get_policy
+
         policy = policy or get_policy()
     except Exception:  # noqa: BLE001
         return [
-            {"type": "reject", "reason": "Approval policy unavailable"}
-            for _ in action_requests
+            {"type": "reject", "reason": "Approval policy unavailable"} for _ in action_requests
         ]
 
     for ar in action_requests:
@@ -131,7 +135,7 @@ def evaluate_tool_actions(
         # Policy evaluation: allow → approve, deny → reject, ask → None (HITL)
         try:
             verdict = policy.evaluate(tool_name, args)
-            tier = verdict.tier if hasattr(verdict, 'tier') else verdict
+            tier = verdict.tier if hasattr(verdict, "tier") else verdict
             if tier not in {"allow", "ask", "deny"}:
                 decisions.append({"type": "reject", "reason": "Invalid approval policy verdict"})
                 continue
@@ -157,6 +161,13 @@ def evaluate_tool_actions(
                 continue
         except Exception:  # noqa: BLE001 — A broken policy cannot grant execution.
             decisions.append({"type": "reject", "reason": "Approval policy evaluation failed"})
+            continue
+
+        # Headless --allowed-tools: the operator explicitly allow-listed these
+        # tool names for this run (after policy denies stay authoritative).
+        allowed_tools = getattr(session_state, "headless_allowed_tools", None)
+        if allowed_tools and tool_name in allowed_tools:
+            decisions.append({"type": "approve", "approval_source": "allowed_tools"})
             continue
 
         # Auto-approve keeps hard denials authoritative. Existing policy allows
