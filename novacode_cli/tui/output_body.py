@@ -182,7 +182,10 @@ class OutputBody(Widget):
         The expensive part of a flush was re-wrapping every retained line, and
         that is incremental now — the layout pass itself is cheap. A saturated
         log that evicts one line while appending another keeps its row total,
-        so its steady-state flushes are paint-only.
+        so its steady-state flushes are paint-only. (A gate that also skipped
+        layout while rows exceed the rendered height measured 3x WORSE: the
+        stale scroll geometry made every subsequent scroll/repaint more
+        expensive than the layout it saved.)
         """
         rows = len(self._rows)
         self.refresh(layout=rows != self._last_layout_rows)
