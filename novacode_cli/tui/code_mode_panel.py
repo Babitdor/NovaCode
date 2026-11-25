@@ -18,12 +18,27 @@ if TYPE_CHECKING:
     from textual.widget import Widget
 
 CODE_MODE_TOOLS = frozenset({"eval", "MCPCode"})
-_SHELL_TOOLS = frozenset({
-    "shell", "bash", "execute", "execute_bash", "run_command", "run_tests", "start_dev_server",
-})
-_DIFF_TOOLS = frozenset({
-    "write_file", "edit_file", "create_file", "multi_edit", "str_replace", "apply_patch",
-})
+_SHELL_TOOLS = frozenset(
+    {
+        "shell",
+        "bash",
+        "execute",
+        "execute_bash",
+        "run_command",
+        "run_tests",
+        "start_dev_server",
+    }
+)
+_DIFF_TOOLS = frozenset(
+    {
+        "write_file",
+        "edit_file",
+        "create_file",
+        "multi_edit",
+        "str_replace",
+        "apply_patch",
+    }
+)
 _MAX_TOOL_NAMES = 3
 _PREVIEW_LINES = 3
 _PREVIEW_WIDTH = 160
@@ -241,7 +256,9 @@ class CodeModePanel(Collapsible):
     ) -> None:
         """Keep the exact script and result behind separate disclosure controls."""
         self.status = Static("•", classes="code-mode-status")
-        self.heading = Static(Text(f"Running {display_str or tool_name}"), classes="code-mode-label")
+        self.heading = Static(
+            Text(f"Running {display_str or tool_name}"), classes="code-mode-label"
+        )
         self.timing = timing if timing is not None else ToolTiming()
         self.timing_label = Static("", classes="code-mode-timing", markup=False)
         self._ticker: Timer | None = None
@@ -319,12 +336,18 @@ class CodeModePanel(Collapsible):
         body = None
         if name in _SHELL_TOOLS:
             body = OutputLog(
-                classes="terminal-log", highlight=True, markup=False, max_lines=2_000,
+                classes="terminal-log",
+                highlight=True,
+                markup=False,
+                max_lines=2_000,
             )
         elif name in _DIFF_TOOLS:
             body = DiffPreview(classes="toolbody")
         panel = cls(
-            source, tool_name=name, display_str=display, output_widget=body,
+            source,
+            tool_name=name,
+            display_str=display,
+            output_widget=body,
             streaming=live and isinstance(body, OutputLog),
             # A replayed call has no duration worth reporting; only live rows time.
             timing=timing if timing is not None else ToolTiming(enabled=live),
@@ -334,9 +357,7 @@ class CodeModePanel(Collapsible):
 
     def compose(self) -> ComposeResult:
         """Keep the summary visible while the disclosure hides only full details."""
-        yield Horizontal(
-            self.status, self.heading, self.timing_label, classes="code-mode-heading"
-        )
+        yield Horizontal(self.status, self.heading, self.timing_label, classes="code-mode-heading")
         yield self.preview
         yield self.note
         yield from super().compose()
@@ -392,9 +413,13 @@ class CodeModePanel(Collapsible):
 
     def _refresh_timing(self) -> None:
         """Show this call's duration and the turn's elapsed time, when known."""
+        from novacode_cli.tui.app import _paint
+
         text = self.timing.summary()
         with suppress(Exception):  # noqa: BLE001 — timing must never break a tool row
-            self.timing_label.update(text)
+            # _paint: this fires per running tool per second; Static.update
+            # defaults to layout=True, which re-arranges the whole screen.
+            _paint(self.timing_label, text)
             self.timing_label.display = bool(text)
 
     async def on_collapsible_expanded(self, event: Collapsible.Expanded) -> None:
@@ -408,7 +433,9 @@ class CodeModePanel(Collapsible):
         self.source = Static(Text(self._source_text), classes="code-mode-source")
         drawer = Collapsible(self.source, title=self._source_title, collapsed=True)
         if self.output is None:
-            self.output = Static(self._output_with_blocks(), classes="code-mode-output", markup=False)
+            self.output = Static(
+                self._output_with_blocks(), classes="code-mode-output", markup=False
+            )
         if self.output.parent is contents:
             await contents.mount(drawer, before=self.output)
         else:

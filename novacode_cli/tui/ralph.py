@@ -78,6 +78,7 @@ class RalphProgress(Vertical):
         else:
             status = Text("Starting…")
         from novacode_cli.core.subagent_tasks import format_context
+        from novacode_cli.tui.app import _paint
 
         tracker = getattr(self.session, "token_tracker", None)
         if tracker is not None:
@@ -85,7 +86,8 @@ class RalphProgress(Vertical):
                 " · " + format_context(tracker.current_context, tracker.context_window_size),
                 style="dim",
             )
-        self.query_one("#ralph-progress", Static).update(status)
+        # Fires every second per Ralph card: repaint, not re-layout.
+        _paint(self.query_one("#ralph-progress", Static), status)
 
     @on(Button.Pressed)
     def control(self, event: Button.Pressed) -> None:

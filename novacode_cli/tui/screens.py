@@ -6391,8 +6391,13 @@ class BackgroundTasksScreen(ModalScreen[dict | None]):
             ol.clear_options()
             self._row_signatures.clear()
         running = sum(task.status == "running" for task in self._tasks)
-        self.query_one("#modal-title", Static).update(
-            Text(f"Background Tasks · {running} running", style="bold")
+        from novacode_cli.tui.app import _paint
+
+        # One line whose width almost never changes: skip the full-screen
+        # layout Static.update would schedule every tick.
+        _paint(
+            self.query_one("#modal-title", Static),
+            Text(f"Background Tasks · {running} running", style="bold"),
         )
         if not self._tasks:
             ol.add_option(Option("No background tasks."))
