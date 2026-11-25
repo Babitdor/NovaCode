@@ -6323,6 +6323,7 @@ class BackgroundTasksScreen(ModalScreen[dict | None]):
     def __init__(self, *, extra_tasks=None, clear_extra=None, registry=None) -> None:
         super().__init__()
         self._tasks: list[Any] = []
+        self._row_signatures: dict[int, str] = {}
         self._extra_tasks = extra_tasks or (lambda: [])
         self._clear_extra = clear_extra or (lambda: None)
         self._task_registry = registry
@@ -6388,6 +6389,7 @@ class BackgroundTasksScreen(ModalScreen[dict | None]):
         same_rows = previous_ids == [task.task_id for task in self._tasks] and bool(self._tasks)
         if not same_rows:
             ol.clear_options()
+            self._row_signatures.clear()
         running = sum(task.status == "running" for task in self._tasks)
         self.query_one("#modal-title", Static).update(
             Text(f"Background Tasks · {running} running", style="bold")
@@ -6404,8 +6406,15 @@ class BackgroundTasksScreen(ModalScreen[dict | None]):
                 state = t.status + (f" · exit {t.exit_code}" if t.exit_code is not None else "")
                 line.append(f"\n   {state} · {fmt_runtime(t.runtime())}", style="dim")
                 if same_rows:
+                    # Completed rows never change text: with many retained
+                    # jobs, skipping unchanged prompts keeps the 1 Hz tick at
+                    # near-zero OptionList churn.
+                    if self._row_signatures.get(index) == line.plain:
+                        continue
+                    self._row_signatures[index] = line.plain
                     ol.replace_option_prompt_at_index(index, line)
                 else:
+                    self._row_signatures[index] = line.plain
                     ol.add_option(Option(line))
         if self._tasks and keep is not None:
             ol.highlighted = next(

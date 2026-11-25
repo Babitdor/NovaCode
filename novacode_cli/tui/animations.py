@@ -58,8 +58,10 @@ _FADE_REPAIR_ATTEMPTS = 12
 #: first ~18 frames of a fade that blend is the transparent one — the button
 #: arrives as a black stripe with an invisible label. Re-caching each frame also
 #: makes the fade itself read correctly, since the fill then tracks the opacity
-#: the way every other widget's does. Bounded at ~5 s of fade.
-_FADE_REPAIR_FRAME = 1.0 / 60.0
+#: the way every other widget's does. Bounded at ~5 s of fade. 20 Hz keeps the
+#: blend tracking visually smooth while a repair pass walks the whole subtree —
+#: at 60 Hz that walk cost 3x more for no visible gain.
+_FADE_REPAIR_FRAME = 1.0 / 20.0
 _FADE_REPAIR_FRAMES = 300
 
 
@@ -112,7 +114,6 @@ def _repair_paints_after_fade(
 
     delay = _FADE_REPAIR_FRAME if per_frame else duration + _FADE_REPAIR_MARGIN
     widget.set_timer(delay, repair)
-
 
 
 def _entrances_in_flight(widget: Widget) -> int:
@@ -195,9 +196,7 @@ def animate_modal_screen(screen: Any) -> None:
 # ── Ongoing animated effects (call from on_mount, return a timer ref) ───────
 
 
-def pulse_border(
-    widget: Widget, color: Color | str | None = None, period: float = 1.2
-) -> Any:
+def pulse_border(widget: Widget, color: Color | str | None = None, period: float = 1.2) -> Any:
     """Make the left border of *widget* pulse with a breathing glow.
 
     Returns a ``set_interval`` timer handler that can be stopped via
@@ -308,9 +307,7 @@ def stop_animation(timer: Any) -> None:
 class _BorderPulser:
     """Callable for ``set_interval`` that oscillates border opacity."""
 
-    def __init__(
-        self, widget: Widget, color: Color, peak: float, low: float
-    ) -> None:
+    def __init__(self, widget: Widget, color: Color, peak: float, low: float) -> None:
         self._widget = widget
         self._color = color
         self._peak = peak

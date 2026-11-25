@@ -4942,6 +4942,19 @@ class NovaApp(App):
         from novacode_cli.tui.scrollback import Scrollback
 
         children = [child for child in tr.children if not isinstance(child, Scrollback)]
+        child_ids = {id(child) for child in children}
+        # Fast path: the weight scan below walks every child's whole subtree,
+        # and this runs once per refresh cycle while lines stream. When the
+        # child set is unchanged and we are comfortably under both caps, skip
+        # it — streaming output inside existing children can only drift the
+        # cached total by the margin before the next full scan re-syncs.
+        if (
+            child_ids == getattr(self, "_prune_seen_ids", None)
+            and getattr(self, "_prune_cached_total", 0) < _MAX_TRANSCRIPT_CHARS * 0.9
+            and len(children) <= int(_MAX_TRANSCRIPT_WIDGETS * 0.9)
+        ):
+            return
+        self._prune_seen_ids = child_ids
         # A widget-count cap alone permits hundreds of large output/markdown
         # bodies. Bound display history by content size as well; agent context
         # and persisted session history are independent of these widgets.
@@ -4962,6 +4975,7 @@ class NovaApp(App):
         over_count = len(children) > _MAX_TRANSCRIPT_WIDGETS
         over_chars = total_chars > _MAX_TRANSCRIPT_CHARS
         if not over_count and not over_chars:
+            self._prune_cached_total = total_chars
             return
         protected: set[int] = {
             id(w)
@@ -5006,6 +5020,12 @@ class NovaApp(App):
             tr.remove_children(to_remove)
         except Exception:  # noqa: BLE001 — pruning must never break rendering
             pass
+        # The surviving set is the truth after a removal: record its total so
+        # the fast path resumes from accurate numbers.
+        self._prune_seen_ids = {
+            id(child) for child in children if id(child) not in {id(w) for w in to_remove}
+        }
+        self._prune_cached_total = total_chars
 
     def _scroll_end(self, *, force: bool = False) -> None:
         """Scroll the transcript to the newest content.
@@ -6984,11 +7004,23 @@ class NovaApp(App):
             _paint(title, "")
             _paint(body, "")
             self._subagents_rows_by_line = []
+            self._subagents_body_rendered = False
             self._stop_subagents_tick()
             return
 
         now = time.time()
         _paint(title, subagent_tasks.panel_title(rows, collapsed=self._subagents_collapsed))
+        if self._subagents_collapsed:
+            # The CSS hides the body while collapsed, so its render — O(rows)
+            # per tick — is pure waste. Clear it once; the next expand repaints.
+            self._subagents_rows_by_line = []
+            self._subagents_task_column = 0
+            if getattr(self, "_subagents_body_rendered", True):
+                _paint(body, "")
+                self._subagents_body_rendered = False
+            self._stop_subagents_tick()
+            return
+        self._subagents_body_rendered = True
         rendered = subagent_tasks.panel_body(
             rows,
             width=self._subagents_width(dock),
@@ -16998,6 +17030,27 @@ class NovaApp(App):
             if self.token_tracker
             else None,
         )
+        # The 2 s dashboard tick lands here even when nothing changed. The art
+        # and every detail line are deterministic from (style, size, theme,
+        # identity), so skip the full rebuild unless one of those moved or the
+        # home widgets were remounted (holding the widget in the signature
+        # keeps its identity stable — id() alone could be recycled).
+        signature = (
+            self._home_style,
+            self.size.width,
+            self.size.height,
+            art,
+            self.theme,
+            identity.version,
+            identity.model,
+            identity.provider,
+            identity.workspace,
+            identity.session_id,
+            identity.context_percent,
+        )
+        if signature == getattr(self, "_home_style_signature", None):
+            return
+        self._home_style_signature = signature
         presentation = home_presentation(self._home_style, self.size.width, identity, pal)
         art.configure(self._home_style, presentation.art, pal, time.monotonic())
         art.advance(time.monotonic(), animated=self._home_scene_can_animate())

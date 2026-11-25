@@ -82,13 +82,18 @@ class HomeScene(Static):
 
     def advance(self, now: float, *, animated: bool) -> None:
         """Paint only a changed frame; disabled motion displays complete static art."""
+        from novacode_cli.tui.app import _paint
+
         frame = max(0, int((now - self._started) * HOME_SCENE_FPS)) if animated else -1
         state = (animated, frame)
         if self._palette is None or state == self._shown:
             return
         self._shown = state
-        self.update(
+        # Scene frames keep the base art's rows and width, so they only need a
+        # repaint: _paint skips the full-screen layout Static.update triggers.
+        _paint(
+            self,
             scene_frame(self._scene, self._base, self._palette, frame)
             if animated
-            else self._base.copy()
+            else self._base.copy(),
         )

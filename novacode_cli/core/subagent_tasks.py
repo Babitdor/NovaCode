@@ -57,6 +57,7 @@ def format_context(used: int, window: int) -> str:
     percent = min(100, max(0, round(used / window * 100)))
     return f"ctx {tokens(used)}/{tokens(window)} · {percent}% · {100 - percent}% left"
 
+
 #: How a row was launched. Drives the phase grouping's fallback label.
 #: ``code`` is a subagent the Code Mode snippet delegated (``task()`` inside
 #: a dispatched snippet) — it renders in the dock like an async row instead
@@ -341,7 +342,48 @@ def task_row(
     now: float,
     selected: bool = False,
 ) -> Text:
-    """One table row: glyph, task name (with its error), model, time."""
+    """One table row: glyph, task name (with its error), model, time.
+
+    Finished rows never change (their duration is fixed), so they are cached
+    per (task, width, selection): a dock holding the last 200 rows re-renders
+    every second while anything runs, and rebuilding frozen rows each tick is
+    wasted allocation on the UI thread.
+    """
+    if task.status in {"done", "failed", "stopped"}:
+        global _ROW_CACHE_WIDTH
+        if _ROW_CACHE_WIDTH != width:
+            _ROW_CACHE.clear()
+            _ROW_CACHE_WIDTH = width
+        key = (
+            task.task_id,
+            width,
+            selected,
+            task.status,
+            task.label,
+            task.error,
+            task.compacting,
+        )
+        cached = _ROW_CACHE.get(key)
+        if cached is None:
+            if len(_ROW_CACHE) > 512:
+                _ROW_CACHE.clear()
+            cached = _build_task_row(task, width=width, now=now, selected=selected)
+            _ROW_CACHE[key] = cached
+        return cached
+    return _build_task_row(task, width=width, now=now, selected=selected)
+
+
+_ROW_CACHE: dict[tuple, Text] = {}
+_ROW_CACHE_WIDTH = -1
+
+
+def _build_task_row(
+    task: SubagentTask,
+    *,
+    width: int,
+    now: float,
+    selected: bool = False,
+) -> Text:
     name_width, model_width, _time_width = column_widths(width)
     name = task.label or task.description or task.subagent_type or task.task_id
     # Producers' labels already open with a kind prefix ("research: docling",
@@ -496,8 +538,14 @@ def panel_body(
         right.append(task_row(task, width=right_width, now=now, selected=task.task_id == selected))
         right_tasks.append(task.task_id)
         if task.phase_id == PROFILE_PHASE:
-            right.append(Text("  " + format_context(task.context_used, task.context_window),
-                              style="dim", overflow="ellipsis", no_wrap=True))
+            right.append(
+                Text(
+                    "  " + format_context(task.context_used, task.context_window),
+                    style="dim",
+                    overflow="ellipsis",
+                    no_wrap=True,
+                )
+            )
             right_tasks.append(task.task_id)
 
     lines: list[Text] = []
