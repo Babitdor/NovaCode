@@ -144,7 +144,13 @@ def trusted_browser_servers() -> frozenset[str]:
     global _TRUSTED_CACHE
     from novacode_cli.config.nova_config import NovaConfig
 
-    reader = NovaConfig.get_browser_mode_servers
+    try:
+        reader = NovaConfig.get_browser_mode_servers
+        reader_name = reader.__qualname__
+    except AttributeError:
+        # NovaConfig itself is replaced (tests, embedders): the legacy
+        # uncached call shape is the only thing that works there.
+        return frozenset(NovaConfig().get_browser_mode_servers())
     path = _config_path()
     fingerprint = _config_fingerprint(path)
     cached = _TRUSTED_CACHE
@@ -152,11 +158,11 @@ def trusted_browser_servers() -> frozenset[str]:
         cached is not None
         and cached[0] == path
         and cached[1] == fingerprint
-        and cached[2] == reader.__qualname__
+        and cached[2] == reader_name
     ):
         return cached[3]
     servers = frozenset(reader(NovaConfig()))
-    _TRUSTED_CACHE = (path, fingerprint, reader.__qualname__, servers)
+    _TRUSTED_CACHE = (path, fingerprint, reader_name, servers)
     return servers
 
 
