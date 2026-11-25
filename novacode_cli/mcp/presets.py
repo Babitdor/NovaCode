@@ -172,6 +172,12 @@ MCP_PRESETS: dict[str, dict[str, Any]] = {
             "transport": "stdio",
             "command": "uvx",
             "args": [
+                # Pin the interpreter: without it uvx picks the machine's
+                # newest Python, and Serena pins pyyaml==6.0.2, which has no
+                # wheels for 3.13+/3.14 — uv then attempts a source build that
+                # needs MSVC build tools and the server never starts.
+                "--python",
+                "3.11",
                 "--from",
                 "git+https://github.com/oraios/serena@23c06ff715409b2e9dc9be7ca26b7b2fbf356b7c",
                 "serena",
