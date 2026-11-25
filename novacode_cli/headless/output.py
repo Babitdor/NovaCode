@@ -230,6 +230,54 @@ class HeadlessOutput:
             if event.parent_tool_use_id:
                 line["parent_tool_use_id"] = event.parent_tool_use_id
             return line
+        if isinstance(event, ev.SubagentTask):
+            line = {
+                "type": "subagent_task",
+                "task_id": event.task_id,
+                "status": event.status,
+                "subagent_type": event.subagent_type,
+                "label": event.label,
+                "description": event.description,
+            }
+            if event.phase_id:
+                line["phase_id"] = event.phase_id
+            if event.phase_kind:
+                line["phase_kind"] = event.phase_kind
+            if event.model:
+                line["model"] = event.model
+            if event.error:
+                line["error"] = event.error
+            if event.duration_ms is not None:
+                line["duration_ms"] = event.duration_ms
+            return line
+        if isinstance(event, ev.SubagentPreview):
+            line = {
+                "type": "subagent_preview",
+                "task_id": event.task_id,
+                "kind": event.kind,
+                "text": event.text,
+            }
+            if event.call_id:
+                line["call_id"] = event.call_id
+            return line
+        if isinstance(event, ev.SubagentActivity):
+            line = {
+                "type": "subagent_activity",
+                "kind": event.kind,
+                "subagent_type": event.subagent_type,
+                "message": event.message,
+            }
+            if event.detail:
+                line["detail"] = event.detail
+            if event.call_id:
+                line["call_id"] = event.call_id
+            return line
+        if isinstance(event, ev.SubagentCompaction):
+            return {
+                "type": "subagent_compaction",
+                "task_id": event.task_id,
+                "compacting": event.compacting,
+            }
         if isinstance(event, ev.FileOp):
             record = event.record
             return {

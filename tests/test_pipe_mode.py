@@ -271,6 +271,54 @@ async def test_human_approval_and_expiry(monkeypatch, decision):
 
 
 @pytest.mark.asyncio
+async def test_subagent_observability_frames(monkeypatch):
+    worker, records = make(monkeypatch)
+
+    async def events(text, *args, **kwargs):
+        yield ev.SubagentTask(
+            task_id="ptc_task_ab12",
+            status="running",
+            subagent_type="research",
+            label="research: docling",
+            phase_id="eval_1",
+            phase_kind="eval",
+        )
+        yield ev.SubagentPreview("ptc_task_ab12", "text", "reading papers")
+        yield ev.SubagentTask(
+            task_id="ptc_task_ab12",
+            status="done",
+            duration_ms=42000,
+        )
+        yield ev.SubagentActivity(kind="completed", subagent_type="research")
+        yield ev.Done(True)
+
+    monkeypatch.setattr("novacode_cli.sessions.worker.iterate_agent_events", events)
+    task = asyncio.create_task(worker.run())
+    await wait_for(lambda: records)
+    await worker.inbox.put({"type": "prompt", "id": "p", "content": "fan out"})
+    await wait_for(lambda: any(r["type"] == "done" for r in records))
+
+    task_rows = [r for r in records if r["type"] == "subagent_task"]
+    assert len(task_rows) == 2, "same task_id upserts, both emissions forwarded"
+    assert task_rows[0]["status"] == "running"
+    assert task_rows[0]["phase_kind"] == "eval"
+    assert task_rows[1]["status"] == "done"
+    assert task_rows[1]["duration_ms"] == 42000
+    assert all(r["request_id"] == "p" for r in task_rows)
+
+    previews = [r for r in records if r["type"] == "subagent_preview"]
+    assert previews and previews[0]["text"] == "reading papers"
+    assert previews[0]["task_id"] == "ptc_task_ab12"
+
+    activities = [r for r in records if r["type"] == "subagent_activity"]
+    assert activities and activities[0]["kind"] == "completed"
+    assert activities[0]["subagent_type"] == "research"
+
+    await worker.inbox.put({"type": "shutdown"})
+    assert await task == 0
+
+
+@pytest.mark.asyncio
 async def test_request_deadline_then_next_prompt(monkeypatch):
     async def events(text, *args, **kwargs):
         if text == "slow":

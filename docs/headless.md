@@ -90,6 +90,20 @@ A long-lived JSON-lines child that owns one session. Spawn it, read the
 {"type":"stopped","exit_code":0}
 ```
 
+Subagent observability (Ralph, Nora, Serena, `task` dispatches, Code Mode
+workers) — upsert `subagent_task` rows by `task_id`, live `subagent_preview`
+lines while a row runs, and `subagent_activity` dispatch/completion cards:
+
+```jsonc
+{"type":"subagent_task","request_id":"req-1","task_id":"ptc_task_ab12cd34",
+ "status":"running","subagent_type":"research","label":"research: docling",
+ "phase_id":"eval_1","phase_kind":"eval"}
+{"type":"subagent_preview","request_id":"req-1","task_id":"ptc_task_ab12cd34",
+ "kind":"text","text":"…"}
+{"type":"subagent_task","request_id":"req-1","task_id":"ptc_task_ab12cd34",
+ "status":"done","duration_ms":42000}   // same task_id: upsert, not append
+```
+
 Rules:
 
 - `id` is caller-chosen (max 128 chars); reuse with the same content replays

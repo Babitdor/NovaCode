@@ -111,6 +111,48 @@ def test_invalid_format_raises() -> None:
         HeadlessOutput("yaml", session_id="s", model_name=None)
 
 
+def test_stream_json_surfaces_subagent_lifecycle() -> None:
+    out, buf = _make_output("stream-json")
+    out.init()
+    out.handle_event(
+        ev.SubagentTask(
+            task_id="ptc_task_ab12",
+            status="running",
+            subagent_type="research",
+            label="research: docling",
+            phase_id="eval_1",
+            phase_kind="eval",
+        )
+    )
+    out.handle_event(ev.SubagentPreview("ptc_task_ab12", "text", "reading papers"))
+    out.handle_event(ev.SubagentActivity(kind="completed", subagent_type="research"))
+    out.handle_event(ev.SubagentCompaction("ptc_task_ab12", True))
+    out.result(
+        subtype="success",
+        is_error=False,
+        result_text="done",
+        num_turns=1,
+        duration_ms=1,
+        usage={},
+    )
+    objs = [json.loads(ln) for ln in buf.getvalue().splitlines() if ln.strip()]
+    types = [o["type"] for o in objs]
+    assert "subagent_task" in types
+    assert "subagent_preview" in types
+    assert "subagent_activity" in types
+    assert "subagent_compaction" in types
+
+    task = next(o for o in objs if o["type"] == "subagent_task")
+    assert task["task_id"] == "ptc_task_ab12"
+    assert task["status"] == "running"
+    assert task["subagent_type"] == "research"
+    assert task["phase_kind"] == "eval"
+    preview = next(o for o in objs if o["type"] == "subagent_preview")
+    assert preview["text"] == "reading papers"
+    compaction = next(o for o in objs if o["type"] == "subagent_compaction")
+    assert compaction["compacting"] is True
+
+
 # --------------------------------------------------------------------------- #
 # Interrupt resolution
 # --------------------------------------------------------------------------- #

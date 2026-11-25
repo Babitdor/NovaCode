@@ -171,6 +171,49 @@ class PipeSession(SessionWorker):
                     is_error=event.is_error,
                     **tool_fields,
                 )
+            elif isinstance(event, ev.SubagentTask):
+                sub_fields = {**fields}
+                for name in (
+                    "task_id",
+                    "status",
+                    "phase_id",
+                    "phase_kind",
+                    "subagent_type",
+                    "label",
+                    "description",
+                    "model",
+                    "error",
+                ):
+                    value = getattr(event, name)
+                    if value:
+                        sub_fields[name] = value
+                if event.duration_ms is not None:
+                    sub_fields["duration_ms"] = event.duration_ms
+                self.publish("subagent_task", **sub_fields)
+            elif isinstance(event, ev.SubagentPreview):
+                preview_fields = {**fields}
+                if event.call_id:
+                    preview_fields["call_id"] = event.call_id
+                self.publish(
+                    "subagent_preview",
+                    task_id=event.task_id,
+                    kind=event.kind,
+                    text=event.text,
+                    **preview_fields,
+                )
+            elif isinstance(event, ev.SubagentActivity):
+                activity_fields = {**fields}
+                if event.detail:
+                    activity_fields["detail"] = event.detail
+                if event.call_id:
+                    activity_fields["call_id"] = event.call_id
+                self.publish(
+                    "subagent_activity",
+                    kind=event.kind,
+                    subagent_type=event.subagent_type,
+                    message=event.message,
+                    **activity_fields,
+                )
             elif isinstance(event, ev.Error):
                 if self._status == "running":
                     self._status = "error"
