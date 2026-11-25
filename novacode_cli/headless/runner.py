@@ -92,6 +92,53 @@ async def _resolve_interrupt(
             event.future.set_result(default_interrupt_response(event.kind))
 
 
+async def _dispatch_command(
+    prompt: str,
+    agent,
+    session_state,
+    assistant_id: str | None,
+    model_name: str | None,
+    session_manager,
+) -> tuple[bool, str, str | None, bool]:
+    """Dispatch a `/slash-command` through the shared registry.
+
+    Returns ``(ok, captured_output, kickoff_prompt, wants_exit)``. A handler
+    that returns a string produced a kickoff prompt (e.g. `/goal <objective>`
+    primes the goal and returns what the TUI would send to the agent next);
+    ``exit`` asks the caller to end the run.
+    """
+    from novacode_cli.commands.commands import _get_registry, handle_command
+    from novacode_cli.ui.ui_elements import TokenTracker
+
+    cmd = prompt.strip().lstrip("/").split(maxsplit=1)[0].lower()
+    if _get_registry().get(cmd) is None:
+        return (
+            False,
+            f"Unknown command: /{cmd} — run `nova commands --json` for the available surface",
+            None,
+            False,
+        )
+    try:
+        with console.capture() as capture:
+            result = await handle_command(
+                prompt,
+                agent,
+                TokenTracker(),
+                session_state,
+                assistant_id,
+                session_manager=session_manager,
+                model_name=model_name,
+            )
+        captured = capture.get().strip() or "Command completed."
+        if result == "exit":
+            return True, captured, None, True
+        if isinstance(result, str) and result:
+            return True, captured, result, False
+        return True, captured, None, False
+    except Exception as exc:  # noqa: BLE001 — a broken handler is a command error
+        return False, f"{type(exc).__name__}: {exc}", None, False
+
+
 async def run_headless(  # noqa: PLR0912, PLR0915 — single linear event loop
     *,
     agent,
@@ -125,7 +172,8 @@ async def run_headless(  # noqa: PLR0912, PLR0915 — single linear event loop
         code = EXIT_OK
         try:
             result, restored = await handle_recovery_command(
-                prompt[len("/context recovery"):].strip(), agent=agent,
+                prompt[len("/context recovery") :].strip(),
+                agent=agent,
                 thread=session_state.thread_id,
             )
             if restored:
@@ -144,10 +192,42 @@ async def run_headless(  # noqa: PLR0912, PLR0915 — single linear event loop
         )
         return code
 
+    # A slash command runs through the shared registry without an agent turn.
+    # A handler that returns a kickoff prompt (e.g. /goal <objective>) is
+    # followed by a real agent turn so the caller still gets an answer.
+    command_origin: str | None = None
+    if prompt.lstrip().startswith("/") and not prompt.startswith("/context recovery"):
+        ok, captured, kickoff, wants_exit = await _dispatch_command(
+            prompt, agent, session_state, assistant_id, model_name, session_manager
+        )
+        command_origin = prompt
+        code = EXIT_OK if ok else EXIT_ERROR
+        if wants_exit or kickoff is None:
+            out.result(
+                subtype="command",
+                is_error=not ok,
+                result_text=captured,
+                num_turns=0,
+                duration_ms=0,
+                usage={},
+                exit_code=code,
+                command=prompt,
+            )
+            session_state.headless_result_emitted = True
+            session_state.headless_exit_code = code
+            return code
+        # Kickoff: surface the command output as a stream event, then run the
+        # kickoff through the agent loop so the caller receives an answer.
+        out.handle_event(
+            ev.ContextMessage(message=f"[command {prompt}]\n{captured}", event_type="command")
+        )
+        prompt = kickoff
+
     started = time.monotonic()
     num_turns = 0
     in_tool_round = False
     main_tool_calls = set()
+    tool_call_count = 0
     text_parts: list[str] = []
     usage = {
         "input_tokens": 0,
@@ -188,10 +268,12 @@ async def run_headless(  # noqa: PLR0912, PLR0915 — single linear event loop
 
     async def consume():
         nonlocal num_turns, in_tool_round, is_error, subtype, exit_code, completed, needs_human
+        nonlocal tool_call_count
         out.init()
         async for event in source:
             # --- max-turns accounting (a turn = one model step) ---------
             if isinstance(event, ev.ToolCall) and event.is_main_agent:
+                tool_call_count += 1
                 if not in_tool_round:
                     num_turns += 1
                     in_tool_round = True
@@ -250,8 +332,10 @@ async def run_headless(  # noqa: PLR0912, PLR0915 — single linear event loop
             if isinstance(event, ev.Cancelled):
                 is_error = True
                 outer_budget = getattr(session_state, "headless_bootstrap_budget", None)
-                if budget.expired() or (outer_budget and outer_budget.expired()) or (
-                    deadline is not None and time.monotonic() >= deadline
+                if (
+                    budget.expired()
+                    or (outer_budget and outer_budget.expired())
+                    or (deadline is not None and time.monotonic() >= deadline)
                 ):
                     subtype, exit_code = "error_timeout", EXIT_TIMEOUT
                 else:
@@ -286,8 +370,10 @@ async def run_headless(  # noqa: PLR0912, PLR0915 — single linear event loop
         propagate_cancel = getattr(session_state, "headless_bootstrap_active", False)
         is_error = True
         outer_budget = getattr(session_state, "headless_bootstrap_budget", None)
-        if budget.expired() or (outer_budget and outer_budget.expired()) or (
-            deadline is not None and time.monotonic() >= deadline
+        if (
+            budget.expired()
+            or (outer_budget and outer_budget.expired())
+            or (deadline is not None and time.monotonic() >= deadline)
         ):
             subtype, exit_code = "error_timeout", EXIT_TIMEOUT
         else:
@@ -323,6 +409,8 @@ async def run_headless(  # noqa: PLR0912, PLR0915 — single linear event loop
             duration_ms=duration_ms,
             usage=usage,
             exit_code=exit_code,
+            command=command_origin,
+            tool_call_count=tool_call_count,
         )
         session_state.headless_result_emitted = True
         session_state.headless_exit_code = exit_code
@@ -456,7 +544,8 @@ async def _autosave(
             assistant_id=assistant_id,
             todos=todos,
             model_name=model_name,
-            model_provider=getattr(session_state, "session_model_provider", None) or get_current_provider(),
+            model_provider=getattr(session_state, "session_model_provider", None)
+            or get_current_provider(),
             project_root=settings.project_root or Path.cwd(),
             task_status="failed" if is_error else "completed",
             goal=goal_state_payload(session_state),

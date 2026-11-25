@@ -152,7 +152,7 @@ nova -p "Summarize this repository"
 nova -p "Review the current diff" --output-format json --max-turns 8 --timeout 180
 ```
 
-`--print` supports `text`, `json`, and `stream-json` output. Persistent integrations use `nova --mode pipe` for JSONL communication; `--headless` is an alias for pipe mode, not single-prompt execution. Use `nova --help` for workspace trust, approval, model, and timeout options.
+`--print` supports `text`, `json`, and `stream-json` output. Persistent integrations use `nova --mode pipe` for JSONL communication; `--headless` is an alias for pipe mode, not single-prompt execution. Slash commands work headless (`nova -p "/effort high" --output-format json`), prompts accept base64 images over pipe, and `nova commands --json` lists the whole surface. [Headless and third-party integration details](docs/headless.md). Use `nova --help` for workspace trust, approval, model, and timeout options.
 
 ## Permissions and data
 

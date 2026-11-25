@@ -112,11 +112,13 @@ class PipeSession(SessionWorker):
                 provider=getattr(self.session_state, "session_model_provider", None),
                 capabilities=[
                     "prompt",
+                    "command",
                     "cancel",
                     "approval",
                     "interrupt_reply",
                     "ping",
                     "shutdown",
+                    "images",
                 ],
                 max_pending=self.MAX_PENDING,
             )
@@ -175,6 +177,11 @@ class PipeSession(SessionWorker):
                 self.publish("usage", usage=asdict(event), **fields)
         elif kind == "jobs":
             self.publish("tasks", tasks=msg["jobs"])
+        elif kind == "command_done":
+            fields = {"request_id": msg["id"], "ok": msg["ok"], "output": msg["output"]}
+            if msg.get("kickoff"):
+                fields["kickoff"] = msg["kickoff"]
+            self.publish("command_result", **fields)
         elif kind == "notification":
             self.publish("notification", notification=msg["notification"])
         elif kind == "error":
@@ -246,6 +253,83 @@ class PipeSession(SessionWorker):
     def _reject(self, code, message, request_id=None):
         self.publish("error", code=code, message=message, request_id=request_id)
 
+    MAX_IMAGES = 5
+    _IMAGE_FORMATS = frozenset({"png", "jpeg", "jpg", "webp", "gif"})
+
+    def _validate_images(self, images, pid: str) -> list[dict] | None:
+        """Validate public image attachments; ``None`` means a reject was sent."""
+        if images is None:
+            return []
+        if not isinstance(images, list) or not images:
+            self._reject("invalid_request", "images must be a non-empty list", pid)
+            return None
+        if len(images) > self.MAX_IMAGES:
+            self._reject("invalid_request", f"At most {self.MAX_IMAGES} images per prompt", pid)
+            return None
+        validated = []
+        from novacode_cli.image_utils import MAX_IMAGE_SIZE_BYTES
+
+        for index, image in enumerate(images):
+            if not isinstance(image, dict):
+                self._reject(
+                    "invalid_request",
+                    f"images[{index}] must be an object with base64_data and format",
+                    pid,
+                )
+                return None
+            data = image.get("base64_data")
+            image_format = str(image.get("format", "")).lower()
+            if not isinstance(data, str) or not data or not image_format:
+                self._reject(
+                    "invalid_request",
+                    f"images[{index}] requires non-empty base64_data and format",
+                    pid,
+                )
+                return None
+            if image_format not in self._IMAGE_FORMATS:
+                self._reject(
+                    "invalid_request",
+                    f"images[{index}] format must be one of {sorted(self._IMAGE_FORMATS)}",
+                    pid,
+                )
+                return None
+            # 4 base64 chars encode 3 bytes; reject before decoding.
+            if len(data) * 3 // 4 > MAX_IMAGE_SIZE_BYTES:
+                self._reject(
+                    "invalid_request",
+                    f"images[{index}] exceeds the "
+                    f"{MAX_IMAGE_SIZE_BYTES // (1024 * 1024)}MB size limit",
+                    pid,
+                )
+                return None
+            placeholder = image.get("placeholder") or f"[image {index + 1}]"
+            validated.append(
+                {
+                    "base64_data": data,
+                    "format": "jpeg" if image_format == "jpg" else image_format,
+                    "placeholder": str(placeholder),
+                }
+            )
+        return validated
+
+    def _translate_command(self, msg: dict):
+        """Validate a command frame; it runs in the worker, never as a turn."""
+        pid, content = msg.get("id"), msg.get("content")
+        if not isinstance(pid, str) or not pid.strip() or len(pid) > 128:
+            self._reject("invalid_request", "Command requires a non-empty id (max 128 characters)")
+            return {}
+        try:
+            content.encode("utf-8") if isinstance(content, str) else None
+        except UnicodeError:
+            content = None
+        if not isinstance(content, str) or not content.strip():
+            self._reject("invalid_request", "Command requires non-empty UTF-8 content", pid)
+            return {}
+        if self._turn_running():
+            self._reject("turn_running", "A prompt is running; cancel it before commands", pid)
+            return {}
+        return {"t": "command", "id": pid, "text": content}
+
     def _finish(self, pid, status):
         done = {"request_id": pid, "status": status, "ok": status == "success"}
         entry = self._requests.get(pid)
@@ -285,13 +369,17 @@ class PipeSession(SessionWorker):
                     "invalid_request", "Prompt requires non-empty UTF-8 content (max 1 MiB)", pid
                 )
                 return {}
-            if any(key in msg for key in ("auto_approve", "cwd", "model", "images")):
+            if any(key in msg for key in ("auto_approve", "cwd", "model")):
                 self._reject(
                     "invalid_request",
-                    "Runtime settings are fixed at process startup; image input is not supported yet",
+                    "Runtime settings are fixed at process startup",
                     pid,
                 )
                 return {}
+            images = self._validate_images(msg.get("images"), pid)
+            if images is None and msg.get("images") is not None:
+                return {}
+            images = images or []
             digest = hashlib.sha256(encoded).hexdigest()
             existing = self._requests.get(pid)
             if existing:
@@ -319,8 +407,11 @@ class PipeSession(SessionWorker):
                 "t": "prompt",
                 "id": pid,
                 "text": content,
+                "images": images,
                 "auto_approve": self.session_state.auto_approve,
             }
+        if kind == "command":
+            return self._translate_command(msg)
         if kind in ("approval", "interrupt_reply"):
             iid = msg.get("interrupt_id")
             entry = self._public_interrupts.get(iid) if isinstance(iid, str) else None

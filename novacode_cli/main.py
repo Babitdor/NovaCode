@@ -219,8 +219,6 @@ def check_cli_dependencies() -> None:
         sys.exit(1)
 
 
-
-
 def _stop_agent_server() -> None:
     """Stop the locally launched agent server, if this session started one."""
     from novacode_cli.agents.server_launcher import (
@@ -234,8 +232,6 @@ def _stop_agent_server() -> None:
     # The generated graph config, if any user async agent caused one. Kept out of
     # shutdown_agent_server because the server is also stopped mid-session.
     cleanup_user_config()
-
-
 
 
 def _is_rate_limit_error(e: Exception) -> bool:
@@ -280,7 +276,9 @@ def _is_api_error(e: Exception) -> bool:
 
 
 async def _shutdown_background_services(
-    session_state, *, agent: "CoordinatedGraph | None" = None,
+    session_state,
+    *,
+    agent: "CoordinatedGraph | None" = None,
 ) -> None:
     """Best-effort teardown of background services on exit. Never raises.
 
@@ -400,7 +398,6 @@ def _session_tools(session_state: SessionState) -> list:
         # Refuses outside the overnight window unless forced, so it is safe to
         # leave bound every turn.
         sleep_desktop,
-        
         # Web search (always available, no API key needed)
         duckduckgo_search,
         # Memory management (persist across sessions)
@@ -439,15 +436,17 @@ def _session_tools(session_state: SessionState) -> list:
     )
     from novacode_cli.tools.waiter_tools import list_waiters, wait_for_task
 
-    tools.extend([
-        list_background_tasks,
-        get_task_status,
-        get_task_logs,
-        terminate_task,
-        restart_task,
-        wait_for_task,
-        list_waiters,
-    ])
+    tools.extend(
+        [
+            list_background_tasks,
+            get_task_status,
+            get_task_logs,
+            terminate_task,
+            restart_task,
+            wait_for_task,
+            list_waiters,
+        ]
+    )
 
     # Artifact tools: turn session outputs into live, shareable web pages.
     from novacode_cli.tools.artifact_tools import (
@@ -593,10 +592,7 @@ async def _run_agent_session(
 
         cfg = NovaConfig().get_voice_config()
         # No audio in headless mode — never preload the (large) voice models.
-        _voice_wanted = bool(
-            not getattr(session_state, "headless", False)
-            and cfg.get("enabled")
-        )
+        _voice_wanted = bool(not getattr(session_state, "headless", False) and cfg.get("enabled"))
         if _voice_wanted and audio.is_voice_available():
             boot_status("voice: enabled (models load on demand)")
             try:
@@ -665,15 +661,11 @@ async def _run_agent_session(
             from novacode_cli.memory.store import get_durable_store as _get_store
             from novacode_cli.remote.scheduler import CronScheduler
 
-            _cron_sched = CronScheduler(
-                session_state._remote_message_queue, store=_get_store()
-            )
+            _cron_sched = CronScheduler(session_state._remote_message_queue, store=_get_store())
             await _cron_sched.start()
             if _cron_sched.list_jobs():
                 session_state._cron_scheduler = _cron_sched
-                _proc_logger.info(
-                    "Cron scheduler resumed %d job(s)", len(_cron_sched.list_jobs())
-                )
+                _proc_logger.info("Cron scheduler resumed %d job(s)", len(_cron_sched.list_jobs()))
             else:
                 await _cron_sched.stop()
         except Exception as _cron_exc:
@@ -698,7 +690,9 @@ async def _run_agent_session(
         initial_messages = [HumanMessage(content=imported.build(budget), id=MESSAGE_ID)]
         if session_manager is not None:
             await asyncio.to_thread(
-                imported.save, session_manager.sessions_dir, session_state.session_id,
+                imported.save,
+                session_manager.sessions_dir,
+                session_state.session_id,
             )
         console.print(imported.describe(budget), markup=False)
     elif session_manager is not None and getattr(session_state, "is_continued", False):
@@ -716,8 +710,10 @@ async def _run_agent_session(
         retained = [message for message in (initial_messages or []) if message.id != MESSAGE_ID]
         used = estimated_tokens("\n".join(str(message.content) for message in retained))
         initial_messages = await asyncio.to_thread(
-            restore_imported_reference, list(initial_messages or []),
-            session_manager.sessions_dir, session_state.session_id,
+            restore_imported_reference,
+            list(initial_messages or []),
+            session_manager.sessions_dir,
+            session_state.session_id,
             import_budget(window, used),
         )
 
@@ -727,7 +723,9 @@ async def _run_agent_session(
 
         previous_thread = session_state.thread_id
         session_state.thread_id = await seed_restored_context(
-            agent, initial_messages, as_node="model",
+            agent,
+            initial_messages,
+            as_node="model",
         )
         if getattr(session_state, "goal_thread_id", None) == previous_thread:
             session_state.goal_thread_id = session_state.thread_id
@@ -752,8 +750,10 @@ async def _run_agent_session(
     # (for its non-interactive guards) but has no one-shot prompt to run.
     if getattr(session_state, "worker", False) or getattr(session_state, "pipe_mode", False):
         from novacode_cli.sessions.worker import run_session_worker
+
         if getattr(session_state, "pipe_mode", False):
             from novacode_cli.headless.pipe import run_pipe_session
+
             run_session_worker = run_pipe_session
         from novacode_cli.ui.ui_elements import TokenTracker
 
@@ -991,9 +991,7 @@ def _prune_checkpoints(db_path: Path) -> int:
             previous = latest.get(key)
             if previous is None or rowid > previous[0]:
                 latest[key] = (rowid, str(checkpoint_id))
-        keep = {
-            (thread_key[0], thread_key[1], latest[thread_key][1]) for thread_key in latest
-        }
+        keep = {(thread_key[0], thread_key[1], latest[thread_key][1]) for thread_key in latest}
         stale = [(r[1], r[2], r[3]) for r in rows if (r[1], r[2], r[3]) not in keep]
         if stale:
             conn.executemany(
@@ -1013,11 +1011,7 @@ def _prune_checkpoints(db_path: Path) -> int:
                     sorted(stale_writes),
                 )
             conn.commit()
-        if (
-            removed
-            and db_path.exists()
-            and db_path.stat().st_size > _CHECKPOINT_COMPACT_SIZE_BYTES
-        ):
+        if removed and db_path.exists() and db_path.stat().st_size > _CHECKPOINT_COMPACT_SIZE_BYTES:
             # Reclaim the freed pages. Best effort — a lock or a full disk must not
             # break startup; the stale rows are already gone.
             with contextlib.suppress(sqlite3.Error):
@@ -1084,7 +1078,8 @@ async def main(
         from novacode_cli.headless.input import require_workspace_approval
 
         require_workspace_approval(
-            manager, cwd,
+            manager,
+            cwd,
             explicit_trust=getattr(session_state, "headless_trust_workspace", False),
         )
     elif not await check_path_approval():
@@ -1364,7 +1359,9 @@ async def main(
             from novacode_cli.handoff import restore_handoff
 
             restore_prime(session_state, getattr(session_data.meta, "prime", None))
-            session_state.oracle_enabled = getattr(session_data.meta, "oracle_enabled", None) is True
+            session_state.oracle_enabled = (
+                getattr(session_data.meta, "oracle_enabled", None) is True
+            )
             session_state.oracle_run = None
             restore_handoff(session_state, getattr(session_data.meta, "handoff", None))
             from novacode_cli.remote.session import connection_payload
@@ -1620,6 +1617,38 @@ async def main(
         await _run_local_session()
 
 
+def run_commands_catalog(use_json: bool = False) -> None:
+    """Print the slash-command catalogue (text table or JSON) for integrations."""
+    from novacode_cli.server.catalog import CATALOG
+
+    if use_json:
+        import json as _json
+
+        print(
+            _json.dumps(
+                [
+                    {
+                        "name": spec.name,
+                        "description": spec.help,
+                        "route": spec.route,
+                        "headless": spec.route == "passthrough",
+                        "aliases": list(spec.aliases),
+                    }
+                    for spec in CATALOG.values()
+                ],
+                indent=2,
+            )
+        )
+    else:
+        for spec in CATALOG.values():
+            marker = "headless" if spec.route == "passthrough" else spec.route
+            print(f"/{spec.name:<16} {marker:<10} {spec.help}")
+        print(
+            "\npassthrough commands run in headless mode:"
+            ' nova -p "/<command> [args]" --output-format json'
+        )
+
+
 def _execute_paths_command(args) -> None:
     """Execute paths management commands."""
     manager = PathApprovalManager()
@@ -1864,6 +1893,7 @@ def _run_onboarding() -> bool:
 async def _resolve_cli_model(spec):
     """Build an explicit process-local model; never silently fall back."""
     from novacode_cli.config.model_create import create_model_from_config
+
     provider, model_id = spec.split(":", 1)
     model = await asyncio.to_thread(create_model_from_config, provider, model_id)
     if model is None:
@@ -1921,6 +1951,7 @@ def _setup_headless_io() -> int | None:
     if fd is not None:
         if os.name == "nt":
             import msvcrt
+
             msvcrt.setmode(fd, os.O_BINARY)
         # Includes ordinary print(), native writes, and inherited subprocesses.
         with contextlib.suppress(OSError, ValueError, io.UnsupportedOperation):
@@ -1987,8 +2018,15 @@ def cli_main() -> None:
         except SystemExit:
             if pipe_mode:
                 from novacode_cli.headless.output import HeadlessOutput
+
                 output = HeadlessOutput("stream-json", "", None, fd=headless_out_fd)
-                output._writeln({"type": "error", "code": "missing_dependencies", "message": "Nova dependencies are missing; see stderr"})
+                output._writeln(
+                    {
+                        "type": "error",
+                        "code": "missing_dependencies",
+                        "message": "Nova dependencies are missing; see stderr",
+                    }
+                )
                 output._writeln({"type": "stopped", "exit_code": 1})
             raise
 
@@ -1998,8 +2036,15 @@ def cli_main() -> None:
                 if headless_prompt is not None or pipe_mode:
                     if pipe_mode:
                         from novacode_cli.headless.output import HeadlessOutput
+
                         output = HeadlessOutput("stream-json", "", None, fd=headless_out_fd)
-                        output._writeln({"type": "error", "code": "not_configured", "message": "Run nova init first"})
+                        output._writeln(
+                            {
+                                "type": "error",
+                                "code": "not_configured",
+                                "message": "Run nova init first",
+                            }
+                        )
                         output._writeln({"type": "stopped", "exit_code": 1})
                     print(
                         "Error: Nova is not configured. Run 'nova init' first.",
@@ -2052,6 +2097,8 @@ def cli_main() -> None:
             execute_mcp_command(args)
         elif args.command == "paths":
             _execute_paths_command(args)
+        elif args.command == "commands":
+            run_commands_catalog(getattr(args, "json", False))
         elif args.command == "migrate":
             if args.check:
                 check_migration_status()
@@ -2214,6 +2261,7 @@ def cli_main() -> None:
             )
             if pipe_mode:
                 from novacode_cli.headless.pipe import run_pipe_bootstrap
+
                 asyncio.run(run_pipe_bootstrap(main_task, session_state))
             elif headless_prompt is not None:
                 from novacode_cli.headless.runner import run_bootstrap

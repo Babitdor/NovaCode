@@ -162,14 +162,15 @@ class SessionWorker:
         future = asyncio.get_running_loop().create_future()
         self._session_pending[request_id] = future
         try:
-            self._emit({"t": "session_request", "id": request_id, "method": method, "payload": payload})
+            self._emit(
+                {"t": "session_request", "id": request_id, "method": method, "payload": payload}
+            )
             timeout = 310 if method == "authorize" else 10
             return await asyncio.wait_for(future, timeout=timeout)
         except asyncio.TimeoutError:
             return {"error": "Session broker did not answer before the timeout."}
         finally:
             self._session_pending.pop(request_id, None)
-
 
     async def _stdin_pump(self) -> None:
         """Feed parsed parent messages onto :attr:`inbox`; ``None`` on EOF.
@@ -233,9 +234,8 @@ class SessionWorker:
             reply = await fut
             if event.kind in {"tool", "plan"}:
                 field = "action_requests" if event.kind == "tool" else "plan"
-                if (
-                    not isinstance(event.payload, dict)
-                    or event.payload.get(field) != payload.get(field)
+                if not isinstance(event.payload, dict) or event.payload.get(field) != payload.get(
+                    field
                 ):
                     return
             result = reply
@@ -253,8 +253,14 @@ class SessionWorker:
                 )
 
     async def _run_turn(  # noqa: PLR0912
-        self, prompt_id: str, text: str, images=None, auto_approve=None, *,
-        assistant_id: str | None = None, intermediate: bool = False,
+        self,
+        prompt_id: str,
+        text: str,
+        images=None,
+        auto_approve=None,
+        *,
+        assistant_id: str | None = None,
+        intermediate: bool = False,
     ) -> bool:
         """Stream one prompt, emitting every event to the parent."""
         ok = True
@@ -265,6 +271,7 @@ class SessionWorker:
         self.image_tracker = attach_images(self.image_tracker, images)
         source = None
         from novacode_cli.sessions.gateway import endpoint
+
         token = endpoint.set(self.session_request)
         try:
             from novacode_cli.agents.invocation import refresh_definitions
@@ -318,9 +325,11 @@ class SessionWorker:
             ok = False
             logger.debug("turn failed", exc_info=True)
             self._emit(
-                {"t": "ev", "prompt_id": prompt_id, **protocol.encode_event(
-                    ev.Error(message=f"{type(exc).__name__}: {exc}")
-                )}
+                {
+                    "t": "ev",
+                    "prompt_id": prompt_id,
+                    **protocol.encode_event(ev.Error(message=f"{type(exc).__name__}: {exc}")),
+                }
             )
         finally:
             endpoint.reset(token)
@@ -348,8 +357,13 @@ class SessionWorker:
                     self._emit({"t": "turn_done", "id": pid, "ok": ok, "steered": consumed})
         return ok
 
-    async def _resolve_slash(self, text: str, *, prompt_id: str | None = None) -> str | None:
-        """Resolve commands in the child's own workspace, never as raw model input."""
+    async def _dispatch_slash(self, text: str) -> tuple[str, str | None, bool]:
+        """Run a slash command through the shared registry with console capture.
+
+        Returns ``(output, kickoff_prompt, is_exit)``. A handler that returns a
+        string produced a kickoff prompt (e.g. `/goal <objective>`); `exit`
+        asks the caller to shut down. Presentation-free: nothing is emitted.
+        """
         from novacode_cli.commands.commands import _get_registry, handle_command
         from novacode_cli.commands.skill_invoke import _try_skill_invocation
         from novacode_cli.config.config import console
@@ -365,25 +379,66 @@ class SessionWorker:
             name = cmd.removeprefix("skill:")
             skill = await _try_skill_invocation(name, args, self.session_state, self.assistant_id)
             if skill is not None:
-                return skill.pinned_prompt or skill.prompt
+                return (
+                    f"Invoking skill: {skill.name} — {skill.description}",
+                    skill.pinned_prompt or skill.prompt,
+                    False,
+                )
         with console.capture() as captured:
             result = await handle_command(
-                f"/{cmd}" + (f" {args}" if args else ""), self.agent,
-                TokenTracker(), self.session_state, self.assistant_id,
+                f"/{cmd}" + (f" {args}" if args else ""),
+                self.agent,
+                TokenTracker(),
+                self.session_state,
+                self.assistant_id,
                 session_manager=self.session_manager,
-                model_name=self.model_name, image_tracker=self.image_tracker,
+                model_name=self.model_name,
+                image_tracker=self.image_tracker,
             )
         output = captured.get().strip()
         self.agent = getattr(self.session_state, "_agent", self.agent) or self.agent
         self.backend = getattr(self.session_state, "_backend", self.backend) or self.backend
         if result == "exit":
+            return output or "Goodbye.", None, True
+        if isinstance(result, str) and result:
+            return output, result, False
+        return output or "Command completed.", None, False
+
+    async def _resolve_slash(self, text: str, *, prompt_id: str | None = None) -> str | None:
+        """Resolve commands in the child's own workspace, never as raw model input."""
+        output, kickoff, is_exit = await self._dispatch_slash(text)
+        if is_exit:
             await self.inbox.put({"t": "shutdown"})
-        elif isinstance(result, str):
-            return result
-        self._emit({"t": "ev", "prompt_id": prompt_id, **protocol.encode_event(ev.AssistantMessage(
-            text=output or "Command completed.", agent_name="Nova", agent_color="cyan",
-        ))})
+            return None
+        if kickoff is not None:
+            return kickoff
+        self._emit(
+            {
+                "t": "ev",
+                "prompt_id": prompt_id,
+                **protocol.encode_event(
+                    ev.AssistantMessage(
+                        text=output,
+                        agent_name="Nova",
+                        agent_color="cyan",
+                    )
+                ),
+            }
+        )
         return None
+
+    async def _run_command(self, pid: str, text: str) -> None:
+        """Run a public `command` frame: registry dispatch, structured result."""
+        try:
+            output, kickoff, is_exit = await self._dispatch_slash(text)
+        except Exception as exc:  # noqa: BLE001 — a broken handler is the result
+            output, kickoff, is_exit = f"{type(exc).__name__}: {exc}", None, False
+        done = {"t": "command_done", "id": pid, "ok": not is_exit, "output": output}
+        if kickoff:
+            done["kickoff"] = kickoff
+        self._emit(done)
+        if is_exit:
+            await self.inbox.put({"t": "shutdown"})
 
     def _start_turn(self, prompt_id: str, text: str, images=None, auto_approve=None) -> None:
         self._turn_id = prompt_id
@@ -418,9 +473,11 @@ class SessionWorker:
         from novacode_cli.shell.jobs import get_registry
 
         registry = get_registry()
+
         def jobs_changed(event, job):
             if event != "output":
                 self._emit({"t": "jobs", "jobs": job_snapshot(registry)})
+
         registry.add_observer(jobs_changed)
         """Serve the parent until shutdown or EOF. Returns an exit code."""
         self._emit(
@@ -497,7 +554,12 @@ class SessionWorker:
                         if not isinstance(auto_approve, bool):
                             raise ValueError("Invalid approval mode")
                     except (TypeError, ValueError):
-                        self._emit({"t": "error", "message": "Invalid prompt settings or image attachments."})
+                        self._emit(
+                            {
+                                "t": "error",
+                                "message": "Invalid prompt settings or image attachments.",
+                            }
+                        )
                         self._emit({"t": "turn_done", "id": pid, "ok": False})
                         continue
                     if images and not text.strip():
@@ -514,8 +576,10 @@ class SessionWorker:
                         self._emit({"t": "error", "message": "Prompt queue is full."})
                         self._emit({"t": "turn_done", "id": pid, "ok": False})
                     elif (
-                        self._turn_running() and msg.get("steer") is True
-                        and not images and not text.lstrip().startswith("/")
+                        self._turn_running()
+                        and msg.get("steer") is True
+                        and not images
+                        and not text.lstrip().startswith("/")
                         and auto_approve == self.session_state.auto_approve
                     ):
                         from novacode_cli.bootstrap.steering import SteeringInstruction
@@ -533,6 +597,22 @@ class SessionWorker:
                     else:
                         self._start_turn(pid, text, images, auto_approve)
 
+                elif kind == "command":
+                    # Public command frame: registry dispatch, never a turn.
+                    pid = str(msg.get("id") or "c")
+                    text = str(msg.get("text") or "")
+                    if self._turn_running():
+                        self._emit(
+                            {
+                                "t": "command_done",
+                                "id": pid,
+                                "ok": False,
+                                "output": "A prompt is running; cancel it before running commands.",
+                            }
+                        )
+                    else:
+                        asyncio.create_task(self._run_command(pid, text))
+
                 elif kind == "approval_mode":
                     enabled = msg.get("enabled")
                     if isinstance(enabled, bool):
@@ -544,7 +624,11 @@ class SessionWorker:
                     future = self._session_pending.get(str(msg.get("id")))
                     if future is not None and not future.done():
                         result = msg.get("result")
-                        future.set_result(result if isinstance(result, dict) else {"error": "Invalid broker reply."})
+                        future.set_result(
+                            result
+                            if isinstance(result, dict)
+                            else {"error": "Invalid broker reply."}
+                        )
 
                 elif kind == "interrupt_reply":
                     fut = self._pending.get(str(msg.get("id")))
@@ -553,6 +637,7 @@ class SessionWorker:
 
                 elif kind == "cancel":
                     from novacode_cli.shell.jobs import request_kill
+
                     request_kill()
                     await self._cancel_turn()
                     self._cancel_queued()
@@ -568,10 +653,16 @@ class SessionWorker:
                         registry.clear_completed()
                     elif action == "detach":
                         from novacode_cli.shell.jobs import request_detach
+
                         request_detach()
                     elif action == "logs":
-                        self._emit({"t": "job_logs", "request_id": msg.get("request_id"),
-                                    "output": job.output[-20000:] if job is not None else ""})
+                        self._emit(
+                            {
+                                "t": "job_logs",
+                                "request_id": msg.get("request_id"),
+                                "output": job.output[-20000:] if job is not None else "",
+                            }
+                        )
                     # Footer/panel polling needs metadata only. Fetch one
                     # bounded log tail on demand instead of shipping every
                     # completed task's logs once per second.
@@ -586,6 +677,7 @@ class SessionWorker:
         finally:
             registry.remove_observer(jobs_changed)
             from novacode_cli.shell.jobs import request_kill, _kill_pid_tree
+
             self._stop = True
             for future in list(self._session_pending.values()):
                 if not future.done():
@@ -601,7 +693,7 @@ class SessionWorker:
             # before the worker exits and loses its process-tree root.
             deadline = asyncio.get_running_loop().time() + 3
             while registry.active() and asyncio.get_running_loop().time() < deadline:
-                await asyncio.sleep(.05)
+                await asyncio.sleep(0.05)
             for job in registry.active():
                 if job.pid is not None:
                     await asyncio.to_thread(_kill_pid_tree, job.pid)

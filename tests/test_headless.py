@@ -165,10 +165,14 @@ def _fake_source(events: list) -> Callable[..., AsyncIterator]:
 
 
 def _headless_state(
-    fmt: str = "json", *, max_turns: int | None = None, deny_tools: bool = False
+    fmt: str = "json",
+    *,
+    max_turns: int | None = None,
+    deny_tools: bool = False,
+    prompt: str = "do the thing",
 ) -> SimpleNamespace:
     return SimpleNamespace(
-        headless_prompt="do the thing",
+        headless_prompt=prompt,
         headless_output_format=fmt,
         headless_max_turns=max_turns,
         headless_deny_tools=deny_tools,
@@ -243,6 +247,134 @@ async def test_run_headless_max_turns(
     obj = json.loads(capsys.readouterr().out.strip())
     assert obj["subtype"] == "error_max_turns"
     assert obj["is_error"] is True
+
+
+# --------------------------------------------------------------------------- #
+# Slash commands in one-shot runs
+# --------------------------------------------------------------------------- #
+async def test_run_headless_slash_command_dispatch(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    async def dispatch(*args):
+        return True, "Effort set to high", None, False
+
+    monkeypatch.setattr("novacode_cli.headless.runner._dispatch_command", dispatch)
+    called = False
+
+    def _guard(*_args: object, **_kwargs: object) -> AsyncIterator:
+        nonlocal called
+        called = True
+        yield ev.Done(had_response=True)
+
+    monkeypatch.setattr("novacode_cli.headless.runner.iterate_agent_events", _guard)
+
+    code = await run_headless(
+        agent=object(),
+        assistant_id="nova-agent",
+        session_state=_headless_state("json", prompt="/effort high"),
+        session_manager=None,
+    )
+    # A command without kickoff must not start an agent turn.
+    assert called is False
+    assert code == EXIT_OK
+    obj = json.loads(capsys.readouterr().out.strip())
+    assert obj["subtype"] == "command"
+    assert obj["command"] == "/effort high"
+    assert obj["is_error"] is False
+    assert obj["result"] == "Effort set to high"
+
+
+async def test_run_headless_slash_command_kickoff_runs_agent(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    async def dispatch(*args):
+        return True, "Goal set: check tests", "check the tests", False
+
+    monkeypatch.setattr("novacode_cli.headless.runner._dispatch_command", dispatch)
+    events = [
+        ev.AssistantMessage(text="Tests pass.", agent_name="Nova", agent_color="x"),
+        ev.Done(had_response=True),
+    ]
+    monkeypatch.setattr("novacode_cli.headless.runner.iterate_agent_events", _fake_source(events))
+
+    code = await run_headless(
+        agent=object(),
+        assistant_id="nova-agent",
+        session_state=_headless_state("json", prompt="/goal check tests"),
+        session_manager=None,
+    )
+    assert code == EXIT_OK
+    obj = json.loads(capsys.readouterr().out.strip())
+    assert obj["subtype"] == "success"
+    assert obj["result"] == "Tests pass."
+    assert obj["command"] == "/goal check tests"
+
+
+async def test_run_headless_unknown_command_is_structured_error(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    async def dispatch(*args):
+        return False, "Unknown command: /typo — run `nova commands --json`", None, False
+
+    monkeypatch.setattr("novacode_cli.headless.runner._dispatch_command", dispatch)
+
+    code = await run_headless(
+        agent=object(),
+        assistant_id="nova-agent",
+        session_state=_headless_state("json", prompt="/typo"),
+        session_manager=None,
+    )
+    assert code == EXIT_ERROR
+    obj = json.loads(capsys.readouterr().out.strip())
+    assert obj["subtype"] == "command"
+    assert obj["is_error"] is True
+    assert "Unknown command" in obj["result"]
+
+
+async def test_result_includes_tool_call_count(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    events = [
+        ev.ToolCall(name="read_file", display_str="read", icon=">", call_id="t1"),
+        ev.ToolResult(preview="ok", is_error=False, full_output="x", call_id="t1"),
+        ev.ToolCall(name="execute", display_str="ls", icon=">", call_id="t2"),
+        ev.ToolResult(preview="ok", is_error=False, full_output="y", call_id="t2"),
+        ev.AssistantMessage(text="done", agent_name="Nova", agent_color="x"),
+        ev.Done(had_response=True),
+    ]
+    monkeypatch.setattr("novacode_cli.headless.runner.iterate_agent_events", _fake_source(events))
+
+    await run_headless(
+        agent=object(),
+        assistant_id="nova-agent",
+        session_state=_headless_state("json"),
+        session_manager=None,
+    )
+    obj = json.loads(capsys.readouterr().out.strip())
+    assert obj["tool_call_count"] == 2
+
+
+# --------------------------------------------------------------------------- #
+# Command-surface discovery (`nova commands --json`)
+# --------------------------------------------------------------------------- #
+def test_commands_catalog_prints_json(capsys: pytest.CaptureFixture[str]) -> None:
+    from novacode_cli.main import run_commands_catalog
+
+    run_commands_catalog(use_json=True)
+    catalog = json.loads(capsys.readouterr().out)
+    assert catalog, "the catalogue must not be empty"
+    entry = catalog[0]
+    assert {"name", "description", "route", "headless", "aliases"} <= set(entry)
+    assert any(item["headless"] for item in catalog)
+
+
+def test_commands_catalog_prints_table(capsys: pytest.CaptureFixture[str]) -> None:
+    from novacode_cli.main import run_commands_catalog
+
+    run_commands_catalog()
+    out = capsys.readouterr().out
+    assert "/effort" in out
+    assert "headless" in out
 
 
 # --------------------------------------------------------------------------- #

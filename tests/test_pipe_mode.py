@@ -109,6 +109,135 @@ def test_nonfinite_metadata_is_valid_json(monkeypatch):
     json.dumps(records[-1], allow_nan=False)
 
 
+def test_ready_advertises_command_and_images(monkeypatch):
+    worker, records = make(monkeypatch)
+    worker._frame({"t": "ready"})
+    capabilities = records[0]["capabilities"]
+    assert "command" in capabilities
+    assert "images" in capabilities
+
+
+def test_command_frame_runs_without_a_turn(monkeypatch):
+    worker, records = make(monkeypatch)
+
+    async def dispatch(text):
+        return "effort is high", None, False
+
+    monkeypatch.setattr(worker, "_dispatch_slash", dispatch)
+    assert worker.translate({"type": "command", "id": "c1", "content": "/effort high"}) == {
+        "t": "command",
+        "id": "c1",
+        "text": "/effort high",
+    }
+
+
+@pytest.mark.asyncio
+async def test_command_frame_result(monkeypatch):
+    worker, records = make(monkeypatch)
+
+    async def dispatch(text):
+        return "effort is high", None, False
+
+    monkeypatch.setattr(worker, "_dispatch_slash", dispatch)
+    task = asyncio.create_task(worker.run())
+    await wait_for(lambda: records)
+    await worker.inbox.put({"type": "command", "id": "c1", "content": "/effort high"})
+    await wait_for(lambda: any(r["type"] == "command_result" for r in records))
+    result = next(r for r in records if r["type"] == "command_result")
+    assert result["request_id"] == "c1"
+    assert result["ok"] is True
+    assert result["output"] == "effort is high"
+    # Commands never create agent turns.
+    assert not any(r["type"] == "started" for r in records)
+    await worker.inbox.put({"type": "shutdown"})
+    assert await task == 0
+
+
+@pytest.mark.asyncio
+async def test_command_frame_returns_kickoff_without_starting_a_turn(monkeypatch):
+    worker, records = make(monkeypatch)
+
+    async def dispatch(text):
+        return "Goal set.", "do the thing", False
+
+    monkeypatch.setattr(worker, "_dispatch_slash", dispatch)
+    task = asyncio.create_task(worker.run())
+    await wait_for(lambda: records)
+    await worker.inbox.put({"type": "command", "id": "g1", "content": "/goal do the thing"})
+    await wait_for(lambda: any(r["type"] == "command_result" for r in records))
+    result = next(r for r in records if r["type"] == "command_result")
+    assert result["ok"] is True
+    assert result["kickoff"] == "do the thing"
+    # The controller decides whether to run the kickoff: no auto-start.
+    assert not any(r["type"] == "started" for r in records)
+    await worker.inbox.put({"type": "shutdown"})
+    assert await task == 0
+
+
+def test_command_frame_rejected_while_turn_running(monkeypatch):
+    worker, records = make(monkeypatch)
+
+    async def hang():
+        await asyncio.Future()
+
+    worker._turn = asyncio.get_event_loop().create_task(hang()) if False else None
+
+    # _turn_running checks is_done(); a finished task is "not running", so
+    # simulate a live one with an object.
+    class _Live:
+        def done(self):
+            return False
+
+    worker._turn = _Live()
+    worker.translate({"type": "command", "id": "c", "content": "/effort"})
+    assert records[-1]["code"] == "turn_running"
+
+
+def test_command_frame_validation(monkeypatch):
+    worker, records = make(monkeypatch)
+    worker.translate({"type": "command", "content": "/effort"})
+    assert records[-1]["code"] == "invalid_request"
+    worker.translate({"type": "command", "id": "c", "content": "   "})
+    assert records[-1]["code"] == "invalid_request"
+
+
+def test_images_are_validated_and_passed_through(monkeypatch):
+    worker, records = make(monkeypatch)
+    frame = {
+        "type": "prompt",
+        "id": "img",
+        "content": "what is this",
+        "images": [{"base64_data": "aGVsbG8=", "format": "png"}],
+    }
+    translated = worker.translate(frame)
+    assert translated["images"] == [
+        {"base64_data": "aGVsbG8=", "format": "png", "placeholder": "[image 1]"}
+    ]
+    # Errors:
+    worker.translate(
+        {"type": "prompt", "id": "img2", "content": "x", "images": [{"base64_data": "aA=="}]}
+    )
+    assert records[-1]["code"] == "invalid_request"
+    worker.translate(
+        {
+            "type": "prompt",
+            "id": "img3",
+            "content": "x",
+            "images": [{"base64_data": "aA==", "format": "tiff"}],
+        }
+    )
+    assert records[-1]["code"] == "invalid_request"
+    worker.translate(
+        {
+            "type": "prompt",
+            "id": "img4",
+            "content": "x",
+            "images": [{"base64_data": "aA==", "format": "png"} for _ in range(6)],
+        }
+    )
+    assert records[-1]["code"] == "invalid_request"
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("decision", ["approve", "reject", "timeout"])
 async def test_human_approval_and_expiry(monkeypatch, decision):

@@ -267,11 +267,15 @@ def setup_mcp_parser(subparsers: Any) -> argparse.ArgumentParser:  # noqa: ANN40
         help="Environment variables in KEY=VALUE format (can be specified multiple times)",
     )
     add_parser.add_argument(
-        "--header", action="append", metavar="NAME: VALUE",
+        "--header",
+        action="append",
+        metavar="NAME: VALUE",
         help="HTTP auth header; stored in Nova's secret store (repeatable)",
     )
     add_parser.add_argument(
-        "--oauth", action="store_true", help="Enable browser OAuth for an HTTP server",
+        "--oauth",
+        action="store_true",
+        help="Enable browser OAuth for an HTTP server",
     )
     add_parser.add_argument(
         "--description",
@@ -433,6 +437,17 @@ def parse_args() -> argparse.Namespace:  # noqa: PLR0912, PLR0915 — one existi
     update_parser = subparsers.add_parser("update", help="Update Nova or check for new code")
     update_parser.add_argument("--check", action="store_true", help="Check without installing")
 
+    # Commands catalogue - machine-readable command surface for third parties
+    commands_parser = subparsers.add_parser(
+        "commands",
+        help="List every slash command and where it runs",
+    )
+    commands_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit the catalogue as JSON",
+    )
+
     # Paths command - manage approved paths
     paths_parser = subparsers.add_parser(
         "paths",
@@ -582,7 +597,9 @@ def parse_args() -> argparse.Namespace:  # noqa: PLR0912, PLR0915 — one existi
     parser.add_argument("--approval-timeout", type=positive_seconds, default=300)
     parser.add_argument("--model", help="Process-local provider:model override")
     parser.add_argument(
-        "--prime", action=argparse.BooleanOptionalAction, default=None,
+        "--prime",
+        action=argparse.BooleanOptionalAction,
+        default=None,
         help="Enable Nova Prime Deep Work for this session (--no-prime disables it).",
     )
 
@@ -688,7 +705,10 @@ def parse_args() -> argparse.Namespace:  # noqa: PLR0912, PLR0915 — one existi
     parser.add_argument("-h", "--help", action="help", help="Show this help message and exit")
 
     parser.add_argument(
-        "--plugin-dir", action="append", default=[], metavar="PATH",
+        "--plugin-dir",
+        action="append",
+        default=[],
+        metavar="PATH",
         help="Load a standard directory plugin in this session without installing it",
     )
     args = parser.parse_args()
@@ -744,13 +764,9 @@ def parse_args() -> argparse.Namespace:  # noqa: PLR0912, PLR0915 — one existi
     elif args.latest or args.import_session:
         parser.error("--latest and --import-session require --import <provider>")
     if args.serve and (
-        args.print_prompt is not None
-        or args.mode == "pipe"
-        or args.session_worker
-        or args.command
+        args.print_prompt is not None or args.mode == "pipe" or args.session_worker or args.command
     ):
         parser.error(
-            "--serve cannot be combined with a subcommand, --print, --mode pipe "
-            "or --session-worker"
+            "--serve cannot be combined with a subcommand, --print, --mode pipe or --session-worker"
         )
     return args

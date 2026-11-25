@@ -133,8 +133,15 @@ class HeadlessOutput:
         duration_ms: int,
         usage: dict[str, int],
         exit_code: int = 0,
+        command: str | None = None,
+        tool_call_count: int | None = None,
     ) -> None:
-        """Emit the terminal result in the active format."""
+        """Emit the terminal result in the active format.
+
+        ``command`` and ``tool_call_count`` are additive, third-party fields:
+        the slash command that produced this result (subtype ``command``) and
+        the number of main-agent tool calls observed during the run.
+        """
         if self.fmt == "text":
             # Only the final answer goes to stdout. Errors still print their
             # message so a piped consumer sees *something*.
@@ -156,6 +163,10 @@ class HeadlessOutput:
             "usage": usage,
             "exit_code": exit_code,
         }
+        if command is not None:
+            payload["command"] = command
+        if tool_call_count is not None:
+            payload["tool_call_count"] = tool_call_count
         self._writeln(payload)
 
     # -- event mapping ----------------------------------------------------
