@@ -110,11 +110,54 @@ BROWSER_MCP_TOOLS = frozenset(f"browser_{action}" for action in BROWSER_ACTIONS)
 )
 
 
+_TRUSTED_CACHE: tuple[str, bytes | None, str, frozenset[str]] | None = None
+
+
+def _config_fingerprint(path: str) -> bytes | None:
+    import hashlib
+    from pathlib import Path
+
+    try:
+        return hashlib.blake2b(Path(path).read_bytes(), digest_size=16).digest()
+    except OSError:
+        return None
+
+
+def _config_path() -> str:
+    """The Nova.config.json path, without constructing Settings (no keychain)."""
+    from novacode_cli.config import config as config_module
+
+    return str(config_module.HOME_DIR / "Nova.config.json")
+
+
 def trusted_browser_servers() -> frozenset[str]:
-    """Read the saved selection without discovering, installing or enabling servers."""
+    """Read the saved selection without discovering, installing or enabling servers.
+
+    Building ``NovaConfig`` reads the OS keychain (bounded at 3 s) — and this
+    runs per tool check during Code Mode dispatch, on the UI loop, where a slow
+    keychain read presented as a full input freeze. Cache by the config file's
+    content hash plus the home directory it lives under: repeats read one small
+    file; any edit to it, or a redirected home, still invalidates. The reader's
+    qualname joins the key so a patched ``get_browser_mode_servers`` is always
+    honoured.
+    """
+    global _TRUSTED_CACHE
     from novacode_cli.config.nova_config import NovaConfig
 
-    return frozenset(NovaConfig().get_browser_mode_servers())
+    reader = NovaConfig.get_browser_mode_servers
+    path = _config_path()
+    fingerprint = _config_fingerprint(path)
+    cached = _TRUSTED_CACHE
+    if (
+        cached is not None
+        and cached[0] == path
+        and cached[1] == fingerprint
+        and cached[2] == reader.__qualname__
+    ):
+        return cached[3]
+    servers = frozenset(reader(NovaConfig()))
+    _TRUSTED_CACHE = (path, fingerprint, reader.__qualname__, servers)
+    return servers
 
 
 def browser_mode_enabled() -> bool:

@@ -386,13 +386,27 @@ class ReviewRunner:
                 return
             # bind caps the auxiliary request independently of the coding turn.
             model = request.model
-            module = type(model).__module__
-            from langchain_anthropic import ChatAnthropic
-            from langchain_core.language_models.fake_chat_models import FakeListChatModel
-            from langchain_openai import ChatOpenAI
+            # Only import adapters that are already loaded (sys.modules): a cold
+            # `from langchain_anthropic import ...` on the UI loop froze the TUI
+            # for seconds (stall watchdog, 6.6 s). A model instance's adapter
+            # module is always already imported, so the isinstance check below
+            # keeps its exact semantics without ever paying a cold import.
+            import sys
 
-            if not isinstance(model, (ChatOpenAI, ChatAnthropic, FakeListChatModel)) and not (
-                module.startswith("langchain_core.language_models.fake")
+            adapters = []
+            if "langchain_openai" in sys.modules:
+                from langchain_openai import ChatOpenAI
+
+                adapters.append(ChatOpenAI)
+            if "langchain_anthropic" in sys.modules:
+                from langchain_anthropic import ChatAnthropic
+
+                adapters.append(ChatAnthropic)
+            from langchain_core.language_models.fake_chat_models import FakeListChatModel
+
+            adapters.append(FakeListChatModel)
+            if not isinstance(model, tuple(adapters)) and not type(model).__module__.startswith(
+                "langchain_core.language_models.fake"
             ):
                 logger.info("Learning review skipped: adapter retry/output caps unavailable")
                 await self._record_skip("adapter caps unavailable")
