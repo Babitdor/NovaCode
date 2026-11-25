@@ -248,15 +248,43 @@ def test_tool_backlog_is_bounded_before_flush(monkeypatch: pytest.MonkeyPatch):
     assert len(scheduled) == 1
 
 
+def _drain_painted(nova, posted, painted, want, timeout: float = 5.0) -> None:
+    """Run the painter's pending posts until ``want(painted)`` or timeout.
+
+    Painting is asynchronous since the ANSI parse moved to the stream painter
+    thread; posts are collected through the ``_post_to_ui`` stub and executed
+    here, deterministically. The scheduler's ``set_timer`` posts are skipped:
+    without a running loop they cannot arm, and this helper drives the flush
+    itself.
+    """
+    import time
+
+    deadline = time.monotonic() + timeout
+    while not want(painted) and time.monotonic() < deadline:
+        while posted:
+            callback, args = posted.pop(0)
+            if getattr(callback, "__name__", "") != "set_timer":
+                callback(*args)
+        if not posted:
+            nova._flush_tool_output()
+        time.sleep(0.01)
+    while posted:
+        callback, args = posted.pop(0)
+        if getattr(callback, "__name__", "") != "set_timer":
+            callback(*args)
+
+
 def test_tool_backlog_bounds_call_count_and_keeps_newest_tail(monkeypatch: pytest.MonkeyPatch):
     nova = app()
-    monkeypatch.setattr(nova, "_post_to_ui", lambda *_args: None)
+    posted: list = []
+    monkeypatch.setattr(nova, "_post_to_ui", lambda cb, *args: posted.append((cb, args)))
     for index in range(200):
         nova._on_tool_output(str(index), "x" * 100_000 + f" END-{index}")
     assert len(nova._tool_out_pending) <= 32
     painted = {}
     monkeypatch.setattr(nova, "_write_tool_output", lambda cid, text: painted.update({cid: text}))
     nova._flush_tool_output()
+    _drain_painted(nova, posted, painted, lambda painted: "199" in painted)
     assert painted["199"].endswith(" END-199")
     assert "truncated" in painted["199"].lower()
     assert nova._tool_out_pending == {}
@@ -265,7 +293,8 @@ def test_tool_backlog_bounds_call_count_and_keeps_newest_tail(monkeypatch: pytes
 
 def test_concurrent_output_and_flush_remains_usable(monkeypatch: pytest.MonkeyPatch):
     nova = app()
-    monkeypatch.setattr(nova, "_post_to_ui", lambda *_args: None)
+    posted: list = []
+    monkeypatch.setattr(nova, "_post_to_ui", lambda cb, *args: posted.append((cb, args)))
     painted = []
     monkeypatch.setattr(nova, "_write_tool_output", lambda cid, text: painted.append((cid, text)))
 
@@ -281,6 +310,7 @@ def test_concurrent_output_and_flush_remains_usable(monkeypatch: pytest.MonkeyPa
             future.result()
     nova._on_tool_output("final", "sentinel")
     nova._flush_tool_output()
+    _drain_painted(nova, posted, painted, lambda painted: any(cid == "final" for cid, _ in painted))
     assert ("final", "sentinel") in painted
     assert nova._tool_out_pending == {}
     assert nova._tool_out_scheduled is False

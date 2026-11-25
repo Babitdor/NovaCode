@@ -63,13 +63,13 @@ def test_appending_and_evicting_output_only_wraps_new_lines(monkeypatch):
     from novacode_cli.tui import output_body
 
     wrapped = []
-    original = output_body.divide_line
+    original = OutputBody._line_boundaries
 
-    def wrap(text, *args, **kwargs):
+    def boundaries(self, text, width):
         wrapped.append(text)
-        return original(text, *args, **kwargs)
+        return original(self, text, width)
 
-    monkeypatch.setattr(output_body, "divide_line", wrap)
+    monkeypatch.setattr(OutputBody, "_line_boundaries", boundaries)
     lines = deque(Text(f"{n}: " + "wide output " * 8) for n in range(1000))
     body = OutputBody(wrap=True, highlighter=None)
     body.replace_lines(lines)

@@ -1193,22 +1193,50 @@ def replay_window(messages: list, budget: int) -> list:
     return messages[turn_start:] if turn_start < len(messages) else messages[-1:]
 
 
-def _prepare_output_chunk(text: str) -> str | Text:
-    """Resolve ANSI escape codes before the chunk reaches the UI thread.
+class _ToolStreamPainter:
+    """One daemon thread that bounds, ANSI-parses and splits live tool output.
 
-    ``Text.from_ansi`` is pure CPU over the chunk, so producers (the shell
-    background loop, tool threads) can run it; the UI loop then only appends
-    ready-made lines. Chunks without escapes stay strings and take the cheap
-    split path in ``OutputLog.write``.
+    The UI thread hands over raw tails (<=64 KB per call); the painter applies
+    the display bound, resolves escape codes and posts ready content back
+    through ``_post_to_ui``. Submissions for the same call coalesce while the
+    worker is busy, so a fast producer cannot build an unbounded backlog — the
+    next flush's newer text simply replaces what has not been parsed yet.
     """
-    if "\x1b" not in text and "\r" not in text and "\t" not in text:
-        return text
-    try:
-        parsed = Text.from_ansi(text)
-    except Exception:  # noqa: BLE001 — malformed output stays visible
-        return text
-    parsed.expand_tabs()
-    return parsed
+
+    def __init__(self, app: NovaApp) -> None:
+        import queue
+
+        self._app = app
+        self._queue: queue.Queue = queue.Queue()
+        self._pending: dict[str, str] = {}
+        self._pending_lock = threading.Lock()
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, name="nova-stream-painter", daemon=True)
+        self._thread.start()
+
+    def submit(self, call_id: str, text: str, expanded: bool) -> None:
+        with self._pending_lock:
+            merged = self._pending.get(call_id, "") + text
+            # A parser slower than the producer must not grow without bound:
+            # the display tail is bounded anyway, so keep only the newest tail.
+            if len(merged) > 262_144:
+                merged = merged[-262_144:]
+            self._pending[call_id] = merged
+        self._expanded = expanded
+        self._queue.put(None)  # wake the worker; payload travels via _pending
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            self._queue.get()
+            with self._pending_lock:
+                batch, self._pending = self._pending, {}
+            if not batch:
+                continue
+            expanded = getattr(self, "_expanded", False)
+            for call_id, text in batch.items():
+                content = _display_tail(text, expanded=expanded)
+                if content:
+                    self._app._post_to_ui(self._app._write_tool_output, call_id, content)
 
 
 def _display_tail(text: str | Text, *, expanded: bool = False) -> str | Text:
@@ -3197,7 +3225,10 @@ class NovaApp(App):
                     # still arrive through the normal event/session path.
                     self._tool_out_pending.pop(next(iter(self._tool_out_pending)))
                 buffer = self._tool_out_pending[call_id] = OutputTail()
-            buffer.append(_prepare_output_chunk(text))
+            # Parse at flush, not here: per-chunk ANSI parsing on the producer
+            # thread burns the GIL on text the 20K display tail will discard
+            # anyway, and at build-output rates that starved the UI loop.
+            buffer.append(text)
             if self._tool_out_scheduled:
                 return
             self._tool_out_scheduled = True
@@ -3207,10 +3238,22 @@ class NovaApp(App):
         with self._tool_out_lock:
             pending, self._tool_out_pending = self._tool_out_pending, {}
             self._tool_out_scheduled = False
+        if not pending:
+            return
+        expanded = self._tools_expanded
+        painter = self._stream_painter()
         for call_id, buffer in pending.items():
-            self._write_tool_output(
-                call_id, _display_tail(buffer.drain_content(), expanded=self._tools_expanded)
-            )
+            # The bounding + ANSI parse + tail split run off the UI loop: at
+            # build-output rates they cost ~2 ms per flush per log on the
+            # thread that owns every keystroke. The painter coalesces bursts
+            # per call and posts the ready content back.
+            painter.submit(call_id, buffer.drain(), expanded)
+
+    def _stream_painter(self) -> _ToolStreamPainter:
+        painter = getattr(self, "_tool_stream_painter", None)
+        if painter is None:
+            painter = self._tool_stream_painter = _ToolStreamPainter(self)
+        return painter
 
     def _write_tool_output(self, call_id: str, text: str | Text) -> None:
         """Append live output to the widget showing ``call_id`` (UI thread)."""
