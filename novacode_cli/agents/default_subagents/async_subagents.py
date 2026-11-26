@@ -20,9 +20,10 @@ DEFAULT_ASYNC_AGENT_BASE_URL = "http://localhost"
 ASYNC_AGENT_PORT = 2024
 
 #: How long to wait for the server's port to accept a connection. This runs on
-#: the agent-build path, so it has to be short enough not to be felt; a
-#: container that is up answers a local TCP connect in single-digit ms.
-_PROBE_TIMEOUT_S = 0.4
+#: the agent-build path (and twice per boot when the first probe misses), so it
+#: has to be short enough not to be felt; a live local server answers a TCP
+#: connect in single-digit ms, and an unreachable one burns the whole timeout.
+_PROBE_TIMEOUT_S = 0.15
 
 _availability: bool | None = None
 

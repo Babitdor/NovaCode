@@ -126,9 +126,6 @@ except ImportError:
 # The filesystem/write_file patches are applied in _run_agent_session (not at
 # module import) so they don't pull deepagents (~4s) at CLI startup.
 
-from novacode_cli.commands.commands import (
-    execute_skills_command,
-)
 from novacode_cli.config.config import (
     COLORS,
     HOME_DIR,
@@ -140,7 +137,6 @@ from novacode_cli.config.config import (
 from novacode_cli.config.model_create import create_model, create_model_for_session
 from novacode_cli.utils.model_info import get_current_provider
 from novacode_cli.hooks import HookEvent, dispatch_hook_fire_and_forget
-from novacode_cli.ui.ui_elements import show_help
 from novacode_cli.tracking.tracing import auto_configure as _auto_configure_tracing
 
 # Module logger for background services (cron scheduler, remote processor).
@@ -148,8 +144,6 @@ _proc_logger = logging.getLogger("novacode_cli.remote")
 
 # Initialize LangSmith tracing from environment variables (no-op when not configured)
 _auto_configure_tracing()
-from novacode_cli.mcp.commands import execute_mcp_command
-from novacode_cli.migrate import check_migration_status, migrate_agents
 from novacode_cli.path_approval import PathApprovalManager, check_path_approval
 from novacode_cli.states.Session import SessionState
 from novacode_cli.tools import (
@@ -2085,6 +2079,8 @@ def cli_main() -> None:
                     console.print("[dim]Cancelled.[/dim]")
 
         elif args.command == "help":
+            from novacode_cli.ui.ui_elements import show_help
+
             show_help()
         elif args.command == "list":
             from novacode_cli.agents.core_agent import list_agents
@@ -2095,14 +2091,20 @@ def cli_main() -> None:
 
             reset_agent(args.agent, args.source_agent)
         elif args.command == "skills":
+            from novacode_cli.commands.commands import execute_skills_command
+
             execute_skills_command(args)
         elif args.command == "mcp":
+            from novacode_cli.mcp.commands import execute_mcp_command
+
             execute_mcp_command(args)
         elif args.command == "paths":
             _execute_paths_command(args)
         elif args.command == "commands":
             run_commands_catalog(getattr(args, "json", False))
         elif args.command == "migrate":
+            from novacode_cli.migrate import check_migration_status, migrate_agents
+
             if args.check:
                 check_migration_status()
             else:
