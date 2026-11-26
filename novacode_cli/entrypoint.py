@@ -3,6 +3,10 @@
 import sys
 from contextlib import nullcontext
 
+from novacode_cli.startup_trace import mark
+
+mark("process_start")
+
 from novacode_cli.skills.upstream import add_arguments, run_skills_cli
 
 

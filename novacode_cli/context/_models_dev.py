@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
 import urllib.request
 from pathlib import Path
@@ -25,10 +26,40 @@ _DISK = Path.home() / ".nova" / "models_dev.json"
 _TTL = 7 * 86_400  # refresh weekly
 # One shared in-process cache: data + whether we already tried the network this run.
 _state: dict = {"data": None, "net_tried": False}
+_fetch_thread: threading.Thread | None = None
 
 
-def _load_catalog() -> dict:
-    """Return the models.dev catalog: in-memory → fresh disk cache → network."""
+def _fetch_network() -> None:
+    """Fetch the catalog over the network into the shared state (worker thread)."""
+    try:
+        # models.dev returns 403 to the default urllib UA — send a browser one.
+        req = urllib.request.Request(_URL, headers={"User-Agent": "Mozilla/5.0 (Nova-Code)"})
+        with urllib.request.urlopen(req, timeout=10) as r:  # noqa: S310 — fixed https URL
+            data = json.load(r)
+        if isinstance(data, dict) and data:
+            _state["data"] = data
+            try:
+                _DISK.parent.mkdir(parents=True, exist_ok=True)
+                _DISK.write_text(json.dumps(data), encoding="utf-8")
+            except Exception:  # noqa: BLE001
+                pass
+    except Exception as e:  # noqa: BLE001
+        logger.debug("models.dev fetch failed: %s", e)
+
+
+def _load_catalog(*, network_timeout: float = 3.0) -> dict:
+    """Return the models.dev catalog: in-memory → fresh disk cache → network.
+
+    The network fetch runs on a daemon thread and the caller waits at most
+    ``network_timeout`` seconds. The timeout only bounds socket operations —
+    DNS resolution (``getaddrinfo``) blocks unbounded, and on a freshly
+    booted machine with a cold resolver it stalled the TUI's UI loop for
+    minutes during the agent build (a blank terminal). Abandoning the thread
+    is safe: when it eventually completes it populates the shared state for
+    later reads, and ``net_tried`` keeps it one fetch per process.
+    """
+    import threading
+
     if _state["data"] is not None:
         return _state["data"]
 
@@ -40,26 +71,19 @@ def _load_catalog() -> dict:
     except Exception:  # noqa: BLE001
         pass
 
-    # Network, at most once per process.
+    # Network, at most once per process — on a worker thread, never the caller.
+    global _fetch_thread
     if not _state["net_tried"]:
         _state["net_tried"] = True
-        try:
-            # models.dev returns 403 to the default urllib UA — send a browser one.
-            req = urllib.request.Request(_URL, headers={"User-Agent": "Mozilla/5.0 (Nova-Code)"})
-            with urllib.request.urlopen(req, timeout=10) as r:  # noqa: S310 — fixed https URL
-                data = json.load(r)
-            if isinstance(data, dict) and data:
-                _state["data"] = data
-                try:
-                    _DISK.parent.mkdir(parents=True, exist_ok=True)
-                    _DISK.write_text(json.dumps(data), encoding="utf-8")
-                except Exception:  # noqa: BLE001
-                    pass
-                return data
-        except Exception as e:  # noqa: BLE001
-            logger.debug("models.dev fetch failed: %s", e)
+        _fetch_thread = threading.Thread(target=_fetch_network, name="nova-models-dev", daemon=True)
+        _fetch_thread.start()
+    if _fetch_thread is not None:
+        _fetch_thread.join(network_timeout)
 
-    # Network failed — fall back to a stale disk copy if one exists.
+    if _state["data"] is not None:
+        return _state["data"]
+
+    # Network failed (or still in flight) — fall back to a stale disk copy.
     try:
         if _DISK.exists():
             _state["data"] = json.loads(_DISK.read_text(encoding="utf-8"))
