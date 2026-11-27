@@ -9,9 +9,18 @@ import re
 from pathlib import Path
 from typing import Any
 
-from novacode_cli.memory.store import get_durable_store
-from novacode_cli.security.prompt_injection import _credential_values, _redact
 from novacode_cli.session.history_export import redact
+
+
+def get_durable_store():
+    """Deferred-import seam: the durable store pulls langgraph (~1 s).
+
+    Module-level so tests can monkeypatch store access.
+    """
+    from novacode_cli.memory.store import get_durable_store as _load
+
+    return _load()
+
 
 DEPENDENCIES = (
     "pyproject.toml",
@@ -68,6 +77,10 @@ def continuation_context(report: Record) -> Record:
 
 def safe_text(value: str, limit: int = 2000) -> str:
     """Bound excerpts, redact known credentials, and omit environment assignments."""
+    # Deferred: prompt_injection pulls langchain (~1.5 s), which must stay off
+    # the import path of every consumer of this module.
+    from novacode_cli.security.prompt_injection import _credential_values, _redact
+
     value = redact(_redact(value, _credential_values()))
     value = re.sub(
         r"(?im)^\s*(?:export\s+|set\s+|\$env:)?[\w.-]+\s*=.*$",

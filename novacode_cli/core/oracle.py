@@ -20,17 +20,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from pydantic import BaseModel, ConfigDict, Field
 
 from novacode_cli import ui_events as ev
 from novacode_cli.agents.model_budget import _bounded_model
-from novacode_cli.core.autonomous_loop import run_with_goal
-from novacode_cli.core.verification_loop import _extract_test_evidence
 from novacode_cli.prime_memory import session_directory
-from novacode_cli.security.prompt_injection import _credential_values, _redact
 from novacode_cli.session.history_export import redact
-from novacode_cli.shell.processes import kill_process_tree, process_group_options
 from novacode_cli.tracking.usage_tree import (
     UsageTree,
     _current_tree,
@@ -40,6 +35,17 @@ from novacode_cli.tracking.usage_tree import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def run_with_goal(user_input: str, agent: Any, assistant_id: str | None, session_state: Any, **kwargs: Any):
+    """Deferred-import seam: the autonomous loop pulls agent_loop -> langchain.
+
+    Module-level so tests can monkeypatch the lead-agent stream.
+    """
+    from novacode_cli.core.autonomous_loop import run_with_goal as _real
+
+    return _real(user_input, agent, assistant_id, session_state, **kwargs)
+
 
 MAX_ROUNDS = 20
 MAX_REVIEW_CHARS = 64_000
@@ -60,7 +66,10 @@ REVIEW_ASSIGNMENTS = (
     ("Regressions", "Look for broken existing behavior, compatibility gaps, and boundary cases."),
     ("Security", "Check permissions, trust boundaries, sensitive data, and unsafe inputs."),
     ("Verification", "Evaluate test coverage, observed test results, and untested failure paths."),
-    ("Maintainability", "Check integration, ownership of logic, duplication, and unnecessary complexity."),
+    (
+        "Maintainability",
+        "Check integration, ownership of logic, duplication, and unnecessary complexity.",
+    ),
 )
 
 
@@ -132,6 +141,9 @@ def _git(root: Path, *args: str, max_output_chars: int | None = None) -> bytes:
         raise ReviewEvidenceTooLarge(REVIEW_SIZE_ERROR)
     # UTF-8 uses at most four bytes per character; spool output instead of buffering it in RAM.
     byte_limit = max_output_chars * 4
+    # Deferred: shell.processes pulls the shell package -> middleware -> langchain.
+    from novacode_cli.shell.processes import process_group_options
+
     options = process_group_options()
     if os.name == "nt":
         options["creationflags"] |= subprocess.CREATE_NO_WINDOW
@@ -140,7 +152,10 @@ def _git(root: Path, *args: str, max_output_chars: int | None = None) -> bytes:
             deadline = time.monotonic() + GIT_TIMEOUT
             try:
                 while True:
-                    if any(os.fstat(stream.fileno()).st_size > byte_limit for stream in (stdout, stderr)):
+                    if any(
+                        os.fstat(stream.fileno()).st_size > byte_limit
+                        for stream in (stdout, stderr)
+                    ):
                         raise ReviewEvidenceTooLarge(REVIEW_SIZE_ERROR)
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
@@ -166,6 +181,8 @@ def _git(root: Path, *args: str, max_output_chars: int | None = None) -> bytes:
                 return output
             finally:
                 if process.poll() is None:
+                    from novacode_cli.shell.processes import kill_process_tree
+
                     kill_process_tree(process.pid)
                     if process.poll() is None:
                         process.kill()
@@ -175,8 +192,13 @@ def _git(root: Path, *args: str, max_output_chars: int | None = None) -> bytes:
 def _text_diff(root: Path, head: str, paths: list[str], *, limit: int | None = None) -> str:
     """Collect every literal path without overflowing the Windows command line."""
     args = (
-        "--literal-pathspecs", "diff", "--no-ext-diff", "--no-textconv",
-        "--no-renames", head, "--",
+        "--literal-pathspecs",
+        "diff",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--no-renames",
+        head,
+        "--",
     )
     prefix = subprocess.list2cmdline(["git", "-C", str(root), *args])
     prefix_units = len(prefix.encode("utf-16-le", errors="surrogatepass")) // 2
@@ -234,10 +256,18 @@ class Snapshot:
 
 def workspace_watch_paths(directory: str) -> tuple[Path, ...]:
     """Include the worktree and Git metadata stored outside linked worktrees."""
-    locations = _git(
-        Path(directory), "rev-parse", "--path-format=absolute", "--show-toplevel",
-        "--absolute-git-dir", "--git-common-dir",
-    ).decode().splitlines()
+    locations = (
+        _git(
+            Path(directory),
+            "rev-parse",
+            "--path-format=absolute",
+            "--show-toplevel",
+            "--absolute-git-dir",
+            "--git-common-dir",
+        )
+        .decode()
+        .splitlines()
+    )
     return tuple(dict.fromkeys(Path(location).resolve() for location in locations))
 
 
@@ -250,7 +280,13 @@ def workspace_changes_relevant(paths: tuple[Path, ...], changed_paths: set[str])
         git_dir = next((base for base in git_dirs if path.is_relative_to(base)), None)
         if git_dir is not None:
             relative = path.relative_to(git_dir).as_posix()
-            if relative in {".", "HEAD", "index", "packed-refs", "info/exclude"} or relative.startswith("refs/"):
+            if relative in {
+                ".",
+                "HEAD",
+                "index",
+                "packed-refs",
+                "info/exclude",
+            } or relative.startswith("refs/"):
                 return True
         elif path.is_relative_to(root):
             relative = path.relative_to(root).as_posix()
@@ -260,8 +296,11 @@ def workspace_changes_relevant(paths: tuple[Path, ...], changed_paths: set[str])
     if not worktree:
         return False
     ignored = subprocess.run(
-        ["git", "check-ignore", "-z", "--stdin"], cwd=root,
-        input=b"\0".join(worktree) + b"\0", capture_output=True, timeout=GIT_TIMEOUT,
+        ["git", "check-ignore", "-z", "--stdin"],
+        cwd=root,
+        input=b"\0".join(worktree) + b"\0",
+        capture_output=True,
+        timeout=GIT_TIMEOUT,
         check=False,
     )
     return ignored.returncode not in {0, 1} or bool(worktree - set(ignored.stdout.split(b"\0")))
@@ -270,7 +309,9 @@ def workspace_changes_relevant(paths: tuple[Path, ...], changed_paths: set[str])
 def snapshot(directory: str, *, capture_start: bool = False) -> Snapshot:
     """Hash nonignored tracked/untracked inputs without touching the Git index."""
     root = Path(_git(Path(directory), "rev-parse", "--show-toplevel").decode().strip())
-    names = set(_git(root, "ls-files", "-z", "--cached", "--others", "--exclude-standard").split(b"\0"))
+    names = set(
+        _git(root, "ls-files", "-z", "--cached", "--others", "--exclude-standard").split(b"\0")
+    )
     names.discard(b"")
     root = root.resolve()
     files = {}
@@ -287,11 +328,22 @@ def snapshot(directory: str, *, capture_start: bool = False) -> Snapshot:
     if capture_start and not head:
         capture_paths = names
     elif capture_start:
-        capture_paths.update(_git(
-            root, "diff", "--name-only", "-z", "--no-ext-diff", "--no-textconv",
-            "--no-renames", head, "--",
-        ).split(b"\0"))
-        capture_paths.update(_git(root, "ls-files", "-z", "--others", "--exclude-standard").split(b"\0"))
+        capture_paths.update(
+            _git(
+                root,
+                "diff",
+                "--name-only",
+                "-z",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--no-renames",
+                head,
+                "--",
+            ).split(b"\0")
+        )
+        capture_paths.update(
+            _git(root, "ls-files", "-z", "--others", "--exclude-standard").split(b"\0")
+        )
     remaining = MAX_BASELINE_BYTES
     checked_parents = set()
     digest = hashlib.sha256(head.encode())
@@ -368,8 +420,15 @@ def _workspace_review_input(
         object_format = _git(after.root, "rev-parse", "--show-object-format").decode().strip()
         base = hashlib.new(object_format, b"tree 0\0").hexdigest()
     stats = _git(
-        after.root, "diff", "--numstat", "-z", "--no-ext-diff", "--no-textconv",
-        "--no-renames", base, "--",
+        after.root,
+        "diff",
+        "--numstat",
+        "-z",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--no-renames",
+        base,
+        "--",
     )
     text_paths = []
     binaries = changed & (before.binary_files | after.binary_files)
@@ -419,7 +478,9 @@ def _workspace_review_input(
             if len(raw) > file_byte_limit:
                 raise ReviewEvidenceTooLarge(f"Changed file too large for an Oracle review: {name}")
             if hashlib.sha256(raw).hexdigest() != after.files.get(name):
-                raise ValueError(f"Workspace changed while Oracle collected {name}. Retry the review.")
+                raise ValueError(
+                    f"Workspace changed while Oracle collected {name}. Retry the review."
+                )
             try:
                 body = raw.decode("utf-8")
             except UnicodeDecodeError as exc:
@@ -431,6 +492,9 @@ def _workspace_review_input(
         if text_size > budget:
             raise ReviewEvidenceTooLarge(REVIEW_SIZE_ERROR)
         blocks.append(block)
+    # Deferred: prompt_injection pulls langchain; keep it off module import.
+    from novacode_cli.security.prompt_injection import _credential_values, _redact
+
     text = redact(_redact("\n\n".join(blocks), _credential_values()))
     if len(text) > budget:
         raise ReviewEvidenceTooLarge(REVIEW_SIZE_ERROR)
@@ -446,7 +510,10 @@ def _starting_body(before: Snapshot, name: str) -> bytes:
     if before.head:
         try:
             blob = _git(
-                before.root, "cat-file", "blob", f"{before.head}:{name}",
+                before.root,
+                "cat-file",
+                "blob",
+                f"{before.head}:{name}",
                 max_output_chars=MAX_AGENT_EVIDENCE_CHARS,
             )
         except subprocess.CalledProcessError:
@@ -457,12 +524,19 @@ def _starting_body(before: Snapshot, name: str) -> bytes:
         for candidate in (blob, lf, lf.replace(b"\n", b"\r\n")):
             if hashlib.sha256(candidate).hexdigest() == before.files[name]:
                 return candidate
-    raise ValueError(f"Oracle could not recover the starting contents of {name}. Review it manually.")
+    raise ValueError(
+        f"Oracle could not recover the starting contents of {name}. Review it manually."
+    )
 
 
 def _task_review_input(
-    before: Snapshot, after: Snapshot, request: str, answer: str,
-    test_evidence: list[str] | None, *, paged: bool,
+    before: Snapshot,
+    after: Snapshot,
+    request: str,
+    answer: str,
+    test_evidence: list[str] | None,
+    *,
+    paged: bool,
 ) -> str:
     """Review only the actual delta from the start-of-task working tree."""
     budget = MAX_AGENT_EVIDENCE_CHARS if paged else MAX_REVIEW_CHARS
@@ -471,7 +545,8 @@ def _task_review_input(
     if binaries:
         raise ValueError(
             "Oracle cannot inspect binary changes made during this task: "
-            + ", ".join(sorted(binaries)) + ". Review them manually."
+            + ", ".join(sorted(binaries))
+            + ". Review them manually."
         )
     blocks = [
         f"Review scope: This task · changed paths: {len(paths)}\n\n"
@@ -484,7 +559,9 @@ def _task_review_input(
     for name in paths:
         old_mode, new_mode = before.modes.get(name), after.modes.get(name)
         if any(mode is not None and stat.S_ISLNK(mode) for mode in (old_mode, new_mode)):
-            raise ValueError(f"Oracle cannot inspect a changed symbolic link: {name}. Review it manually.")
+            raise ValueError(
+                f"Oracle cannot inspect a changed symbolic link: {name}. Review it manually."
+            )
         path = root / name
         if not path.resolve().is_relative_to(root):
             raise ValueError(f"Oracle path escaped the workspace: {name}. Review it manually.")
@@ -495,7 +572,9 @@ def _task_review_input(
             if len(current) > MAX_BASELINE_FILE_BYTES:
                 raise ReviewEvidenceTooLarge(f"Changed file too large for an Oracle review: {name}")
             if hashlib.sha256(current).hexdigest() != after.files[name]:
-                raise ValueError(f"Workspace changed while Oracle collected {name}. Retry the review.")
+                raise ValueError(
+                    f"Workspace changed while Oracle collected {name}. Retry the review."
+                )
         elif path.exists() or path.is_symlink():
             raise ValueError(f"Oracle cannot verify the missing path {name}. Review it manually.")
         old = _starting_body(before, name)
@@ -527,6 +606,9 @@ def _task_review_input(
             if size > budget:
                 raise ReviewEvidenceTooLarge(REVIEW_SIZE_ERROR)
             blocks.append(line)
+    # Deferred: prompt_injection pulls langchain; keep it off module import.
+    from novacode_cli.security.prompt_injection import _credential_values, _redact
+
     text = redact(_redact("".join(blocks), _credential_values()))
     if len(text) > budget:
         raise ReviewEvidenceTooLarge(REVIEW_SIZE_ERROR)
@@ -534,8 +616,13 @@ def _task_review_input(
 
 
 def prepare_review(
-    before: Snapshot, after: Snapshot, request: str, answer: str, test_evidence: list[str],
-    *, scope: Literal["task", "workspace"] = "task",
+    before: Snapshot,
+    after: Snapshot,
+    request: str,
+    answer: str,
+    test_evidence: list[str],
+    *,
+    scope: Literal["task", "workspace"] = "task",
 ) -> str | tuple[str, ...]:
     """Keep inline reviews cheap. Capture and redact the large packet before serving any pages."""
     collect = _task_review_input if scope == "task" else _workspace_review_input
@@ -625,12 +712,16 @@ async def _review_with_pages(
     model: Any, system: str, pages: tuple[str, ...], row: Reviewer
 ) -> Review:
     """Run an independent reviewer with two tools and bounded conversation history."""
+    # Deferred: langchain_core pulls langchain; keep it off module import.
+    from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+
     try:
         agent = model.bind_tools([ReadEvidence, Review])
     except (AttributeError, NotImplementedError) as exc:
         raise ReviewerProtocolError("Model does not support paged review tools") from exc
     instructions = SystemMessage(
-        content=system + (
+        content=system
+        + (
             f" Evidence is available in {len(pages)} immutable pages numbered from 1. "
             "Make exactly one tool call per turn. Start with ReadEvidence page 1 and empty notes. "
             "Read every page using ReadEvidence. Keep a running account of the request, test "
@@ -641,7 +732,10 @@ async def _review_with_pages(
             "findings only after reading every page."
         )
     )
-    messages: list = [instructions, HumanMessage(content="Inspect the Oracle evidence and review it.")]
+    messages: list = [
+        instructions,
+        HumanMessage(content="Inspect the Oracle evidence and review it."),
+    ]
     seen: set[int] = set()
     # Allow a bounded number of rereads for checking interactions between files.
     for _ in range(len(pages) + 5):
@@ -716,6 +810,9 @@ async def review_round(run: OracleRun, model: Any, evidence: str | tuple[str, ..
                         timeout=reviewer_timeout(row.page_count),
                     )
                 else:
+                    # Deferred: langchain_core pulls langchain.
+                    from langchain_core.messages import HumanMessage, SystemMessage
+
                     response = await asyncio.wait_for(
                         reviewer_model.with_structured_output(Review).ainvoke(
                             [SystemMessage(content=system), HumanMessage(content=evidence)]
@@ -799,6 +896,10 @@ async def run_with_oracle(
     user_input: str, agent: Any, assistant_id: str | None, session_state: Any, **kwargs: Any
 ):
     """Withhold Done until reviews pass, or an owner explicitly accepts or pauses."""
+    # _extract_test_evidence is deferred too: verification_loop pulls agent_loop
+    # -> langchain, which must stay off module import.
+    from novacode_cli.core.verification_loop import _extract_test_evidence
+
     initialize(session_state)
     if not session_state.oracle_enabled or getattr(session_state, "plan_mode_enabled", False):
         async for event in run_with_goal(user_input, agent, assistant_id, session_state, **kwargs):
@@ -888,7 +989,12 @@ async def run_with_oracle(
                     raise ValueError("Teammates are still active; wait for them before reviewing")
                 before = await asyncio.to_thread(snapshot, run.directory)
                 evidence = await asyncio.to_thread(
-                    prepare_review, original, before, user_input, answer, test_evidence,
+                    prepare_review,
+                    original,
+                    before,
+                    user_input,
+                    answer,
+                    test_evidence,
                     scope=run.settings.scope,
                 )
                 run.revision = before.revision
@@ -902,10 +1008,14 @@ async def run_with_oracle(
                     run.status = "stale"
                 elif run.lowest is None:
                     run.status = "review_error"
-                    run.error = "; ".join(
-                        f"Reviewer {row.slot} {row.status}: {row.error}"
-                        for row in run.latest if row.error
-                    ) or "Reviewers did not return a valid score."
+                    run.error = (
+                        "; ".join(
+                            f"Reviewer {row.slot} {row.status}: {row.error}"
+                            for row in run.latest
+                            if row.error
+                        )
+                        or "Reviewers did not return a valid score."
+                    )
                 elif run.lowest >= run.settings.target:
                     run.status = "passed"
                 else:

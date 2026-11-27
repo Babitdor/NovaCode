@@ -13,18 +13,14 @@ from textual.message import Message
 from textual.widgets import Button, OptionList, Static
 from textual.widgets.option_list import Option
 
-from novacode_cli.commands.prime_handler import factory_receipt, factory_records, is_factory_report
-from novacode_cli.prime import receipt
-from novacode_cli.prime_memory import (
-    PrimeMemory,
-    Record,
-    freshness,
-    project_context,
-    session_directory,
-)
-
 if TYPE_CHECKING:
     from textual.app import ComposeResult
+
+    from novacode_cli.prime_memory import Record
+
+# The Prime memory chain (memory.store -> langgraph, prompt_injection ->
+# langchain) is deferred to call sites: importing this module must stay cheap
+# for the TUI boot path and for any `novacode_cli.tui.*` import.
 
 COMPACT_WIDTH = 80
 logger = logging.getLogger(__name__)
@@ -36,6 +32,14 @@ def _saved_records(
     identity: str = "",
 ) -> list[Record]:
     """Read named rows in a worker, keeping store access and fingerprints off the UI loop."""
+    from novacode_cli.commands.prime_handler import factory_records, is_factory_report
+    from novacode_cli.prime_memory import (
+        PrimeMemory,
+        freshness,
+        project_context,
+        session_directory,
+    )
+
     memory = PrimeMemory(project_context(session_directory(session)))
     rows = []
     records = memory.records(kind)
@@ -75,6 +79,13 @@ def _saved_records(
 
 def _record_details(session: Any, record: Record) -> str:  # noqa: ANN401 - Session boundary.
     """Present task context or captured check evidence in readable text, without ID plumbing."""
+    from novacode_cli.commands.prime_handler import (
+        factory_receipt,
+        factory_records,
+        is_factory_report,
+    )
+    from novacode_cli.prime_memory import PrimeMemory, project_context, session_directory
+
     if is_factory_report(record):
         if record.get("summary_only"):
             record = next(iter(factory_records(session, record["id"])), record)
@@ -297,6 +308,8 @@ class PrimePanel(Vertical):
             enabled,
             self.app.size.width,
         )
+        from novacode_cli.commands.prime_handler import is_factory_report
+
         self.display = enabled or self.query_one("#prime-drawer").display
         source_report = report
         report = report or {}
@@ -397,6 +410,9 @@ class PrimePanel(Vertical):
         identity: str = "",
     ) -> None:
         """Refresh named records, fencing slow reads after tab or session changes."""
+        from novacode_cli.commands.prime_handler import factory_receipt, is_factory_report
+        from novacode_cli.prime import receipt
+
         self._session = session
         if view is not None:
             self._view, self._detail = view, False

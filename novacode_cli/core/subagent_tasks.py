@@ -365,8 +365,13 @@ def task_row(
         )
         cached = _ROW_CACHE.get(key)
         if cached is None:
-            if len(_ROW_CACHE) > 512:
-                _ROW_CACHE.clear()
+            if len(_ROW_CACHE) >= _ROW_CACHE_CAP:
+                # Evict the oldest rows, not the whole cache: a wholesale
+                # clear made a dock near the cap re-render every row after
+                # one burst of new finishes (and selection toggling keeps
+                # two entries per row, so it hit the cliff constantly).
+                for _ in range(_ROW_CACHE_EVICT):
+                    _ROW_CACHE.pop(next(iter(_ROW_CACHE)), None)
             cached = _build_task_row(task, width=width, now=now, selected=selected)
             _ROW_CACHE[key] = cached
         return cached
@@ -375,6 +380,8 @@ def task_row(
 
 _ROW_CACHE: dict[tuple, Text] = {}
 _ROW_CACHE_WIDTH = -1
+_ROW_CACHE_CAP = 512
+_ROW_CACHE_EVICT = 128
 
 
 def _build_task_row(
@@ -514,8 +521,14 @@ def panel_body(
     if left_width:
         left.append(Text("Phases", style="dim"))
         left_phases.append(None)
+        # Group in one pass: the per-phase filter below ran on every tick and
+        # every coalesced paint, O(phases x tasks) on the UI thread.
+        members_by_phase: dict[str, list[SubagentTask]] = {}
+        for task in tasks:
+            if task.phase_id:
+                members_by_phase.setdefault(task.phase_id, []).append(task)
         for position, phase_id in enumerate(_ordered_phases(tasks, phase_order), start=1):
-            members = [task for task in tasks if task.phase_id == phase_id]
+            members = members_by_phase.get(phase_id, [])
             collapsed = phase_id in collapsed_phases
             left.append(
                 phase_row(

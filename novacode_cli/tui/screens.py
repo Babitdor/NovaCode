@@ -6324,9 +6324,15 @@ class BackgroundTasksScreen(ModalScreen[dict | None]):
         super().__init__()
         self._tasks: list[Any] = []
         self._row_signatures: dict[int, str] = {}
+        # Mirror of the OptionList's row order, by task id ("_" = placeholder).
+        self._row_option_ids: list[str] = []
         self._extra_tasks = extra_tasks or (lambda: [])
         self._clear_extra = clear_extra or (lambda: None)
         self._task_registry = registry
+        self._ticker = None
+        self._registry_observer = None
+        self._events_dirty = False
+        self._event_flush_timer = None
 
     def compose(self) -> ComposeResult:
         with Vertical(id="modal-box"):
@@ -6343,7 +6349,50 @@ class BackgroundTasksScreen(ModalScreen[dict | None]):
     def on_mount(self) -> None:
         self._fit_height()
         self._refresh()
-        self.set_interval(1.0, self._refresh)  # live runtimes
+        # Runtime strings tick at 1 Hz only while rows exist; new/finished
+        # tasks arrive through the registry observer instead of the clock.
+        self._ticker = self.set_interval(1.0, self._refresh, pause=not self._tasks)
+        registry = self._registry()
+        if hasattr(registry, "add_observer"):
+            self._registry_observer = self._on_registry_event
+            registry.add_observer(self._registry_observer)
+
+    def on_unmount(self) -> None:
+        """Detach the registry observer; the modal no longer refreshes."""
+        if self._registry_observer is not None:
+            self._registry().remove_observer(self._registry_observer)
+            self._registry_observer = None
+
+    def _on_registry_event(self, event: str, job: Any) -> None:
+        """Registry events arrive on the background-loop thread.
+
+        ``output`` fires per log chunk with no consumers here — dropping it
+        keeps a chatty build from flooding the UI loop; every other event
+        changes a row's text or the row set.
+        """
+        if event == "output":
+            return
+        self.app._post_to_ui(self._mark_events_dirty)
+
+    def _mark_events_dirty(self) -> None:
+        """Throttle event refreshes: leading-edge now, then at most 4/s.
+
+        A storm posts dozens of events per second and each uncoalesced
+        refresh re-rendered the whole modal (~7 ms of compositor work
+        measured), burning a fifth of the frame budget while the panel sat
+        open over a busy registry.
+        """
+        if self._event_flush_timer is None:
+            self._refresh()
+            self._event_flush_timer = self.set_timer(0.25, self._flush_event_refresh)
+            return
+        self._events_dirty = True
+
+    def _flush_event_refresh(self) -> None:
+        self._event_flush_timer = None
+        if self._events_dirty:
+            self._events_dirty = False
+            self._refresh()
 
     def on_resize(self) -> None:
         self._fit_height()
@@ -6386,10 +6435,27 @@ class BackgroundTasksScreen(ModalScreen[dict | None]):
             [*self._registry().list_jobs(), *self._extra_tasks()],
             key=lambda task: task.status != "running",
         )
-        same_rows = previous_ids == [task.task_id for task in self._tasks] and bool(self._tasks)
-        if not same_rows:
+        new_ids = [task.task_id for task in self._tasks]
+        same_rows = previous_ids == new_ids and bool(self._tasks)
+        in_place = same_rows
+        if not in_place:
+            # Self._tasks is already the new list here; the incremental
+            # helper decides from the widget mirror whether removals and
+            # terminal appends can be expressed in place.
+            in_place = self._update_rows_incrementally(new_ids)
+        if in_place:
+            self._row_option_ids = list(new_ids)
+        else:
             ol.clear_options()
             self._row_signatures.clear()
+            self._row_option_ids = []
+        if self._ticker is not None:
+            # Live runtimes need the clock only while rows exist; new and
+            # finished tasks arrive through the registry observer.
+            if self._tasks:
+                self._ticker.resume()
+            else:
+                self._ticker.pause()
         running = sum(task.status == "running" for task in self._tasks)
         from novacode_cli.tui.app import _paint
 
@@ -6401,6 +6467,7 @@ class BackgroundTasksScreen(ModalScreen[dict | None]):
         )
         if not self._tasks:
             ol.add_option(Option("No background tasks."))
+            self._row_option_ids = ["_"]
         else:
             style = {"running": "cyan", "done": "green", "failed": "red", "terminated": "yellow"}
             for index, t in enumerate(self._tasks):
@@ -6410,10 +6477,11 @@ class BackgroundTasksScreen(ModalScreen[dict | None]):
                 line.append(f"{t.command[:44]}", style="white")
                 state = t.status + (f" · exit {t.exit_code}" if t.exit_code is not None else "")
                 line.append(f"\n   {state} · {fmt_runtime(t.runtime())}", style="dim")
-                if same_rows:
+                if in_place:
                     # Completed rows never change text: with many retained
-                    # jobs, skipping unchanged prompts keeps the 1 Hz tick at
-                    # near-zero OptionList churn.
+                    # jobs, skipping unchanged prompts keeps the tick at
+                    # near-zero OptionList churn. (Signatures are index-keyed
+                    # and cleared on every membership change.)
                     if self._row_signatures.get(index) == line.plain:
                         continue
                     self._row_signatures[index] = line.plain
@@ -6421,11 +6489,52 @@ class BackgroundTasksScreen(ModalScreen[dict | None]):
                 else:
                     self._row_signatures[index] = line.plain
                     ol.add_option(Option(line))
+            self._row_option_ids = list(new_ids)
         if self._tasks and keep is not None:
             ol.highlighted = next(
                 (index for index, task in enumerate(self._tasks) if task.task_id == selected_id),
                 min(keep, len(self._tasks) - 1),
             )
+
+    def _update_rows_incrementally(self, new_ids: list[str]) -> bool:
+        """Apply a membership change to the OptionList without rebuilding it.
+
+        Handles removals (a job finished and was evicted, or Clear done) and
+        terminal additions (a job finished: the stable sort moves it to the
+        bottom, which the widget can express as one removal plus one append).
+        Returns False — the caller then rebuilds — whenever the widget cannot
+        express the change: a new *running* row sorts above existing rows and
+        this OptionList has no insert-at-index, and any reorder of retained
+        rows would need one too. Keeping the rows in place also keeps the
+        keyboard selection, which a rebuild only approximates.
+        """
+        old = self._row_option_ids
+        if not old or "_" in old:
+            return False
+        old_set, new_set = set(old), set(new_ids)
+        if len(old_set) != len(old) or len(new_set) != len(new_ids):
+            return False  # duplicate ids would break the index math
+        retained_old = [task_id for task_id in old if task_id in new_set]
+        retained_new = [task_id for task_id in new_ids if task_id in old_set]
+        if retained_old != retained_new:
+            return False
+        added = [task_id for task_id in new_ids if task_id not in old_set]
+        if added:
+            tasks_by_id = {task.task_id: task for task in self._tasks}
+            if any(tasks_by_id[task_id].status == "running" for task_id in added):
+                return False
+        ol = self.query_one("#tasks-list", OptionList)
+        current = list(old)
+        for task_id in [task_id for task_id in old if task_id not in new_set]:
+            index = current.index(task_id)
+            ol.remove_option_at_index(index)
+            current.pop(index)
+        for task_id in added:
+            ol.add_option(Option(Text()))  # prompt filled in by the render pass
+            current.append(task_id)
+        self._row_option_ids = current
+        self._row_signatures.clear()
+        return True
 
     def _selected(self):
         ol = self.query_one("#tasks-list", OptionList)

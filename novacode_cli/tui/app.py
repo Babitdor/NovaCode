@@ -775,7 +775,6 @@ def _read_tail(path: str, lines: int = 40) -> str:
 
 
 from novacode_cli import ui_events as ev
-from novacode_cli.agent_stream import run_agent_stream
 from novacode_cli.config.config import console as _rich_console
 from novacode_cli.input_utils import (
     PasteTracker,
@@ -2685,6 +2684,12 @@ class NovaApp(App):
         #: the session. A deadline simply expires.
         self._subagents_paint_due: float = 0.0
         self._subagents_tick: Any = None
+        #: Panel rows resolve their MODEL from role config. Building NovaConfig
+        #: reads the keychain (~8 ms), and this runs per row per event on the
+        #: UI thread — so the resolution is memoized and invalidated when the
+        #: model screen writes role models back.
+        self._panel_model_cache: dict[tuple[str, str], str] = {}
+        self._panel_config: Any = None
 
     def _current_agent_info(self) -> tuple[str, str | None]:
         """The speaking assistant's display name and its identity colour.
@@ -6987,9 +6992,7 @@ class NovaApp(App):
             # Resolved by role, not blanket-inherited: a subagent or async row may
             # run on a model of its own now. Falls back to the session model when
             # the role is unset, which is what this used to always show.
-            from novacode_cli.config.role_models import panel_row_model
-
-            task.model = panel_row_model(task.phase_kind, self.model_name)
+            task.model = self._panel_model_for(task.phase_kind)
         if task.phase_id and task.phase_id not in self._subagent_phase_order:
             self._subagent_phase_order.append(task.phase_id)
         self._subagent_rows[task.task_id] = task
@@ -6998,6 +7001,27 @@ class NovaApp(App):
             row.status == "running" for row in self._subagent_rows.values()
         )
         self._schedule_subagents_paint()
+
+    def _panel_model_for(self, phase_kind: str) -> str:
+        """Resolve a panel row's MODEL by role, memoized.
+
+        ``panel_row_model`` builds a NovaConfig when no config is passed, and
+        that construction reads the keychain (~8 ms measured) — per row, per
+        event, on the UI thread. The config is built once and reused; the
+        cache is cleared when the model screen writes role models back.
+        """
+        key = (phase_kind, self.model_name)
+        cached = self._panel_model_cache.get(key)
+        if cached is None:
+            from novacode_cli.config.role_models import panel_row_model
+
+            if self._panel_config is None:
+                from novacode_cli.config.nova_config import NovaConfig
+
+                self._panel_config = NovaConfig()
+            cached = panel_row_model(phase_kind, self.model_name, self._panel_config)
+            self._panel_model_cache[key] = cached
+        return cached
 
     def _subagent_task_list(self) -> list[Any]:
         """Active rows in arrival order, capped for a runaway fan-out.
@@ -7187,9 +7211,7 @@ class NovaApp(App):
             # The server decides this one's model, so naming the async role (or
             # the server default) is the honest label. It was blanked as unknown,
             # which was right only while a local model was all a row could mean.
-            from novacode_cli.config.role_models import panel_row_model
-
-            row.model = panel_row_model("async", self.model_name)
+            row.model = self._panel_model_for("async")
             existing = self._subagent_rows.get(row.task_id)
             if (
                 existing is not None
@@ -7263,14 +7285,16 @@ class NovaApp(App):
         if opened.phase_kind == "async":
             self._follow_async_preview(task_id, screen)
 
-    @work(exclusive=True, group="subagent-preview")
+    @work(group="subagent-preview")
     async def _follow_async_preview(self, task_id: str, screen: SubagentPreviewScreen) -> None:
         """Poll a remote agent's thread while its preview is open.
 
         An async agent runs on the agent server, so nothing it does reaches this
         process's stream: its messages are read from the thread's state instead.
         That is checkpointed per step, so this is step-by-step rather than
-        token-by-token.
+        token-by-token. One worker per open preview: ``exclusive`` in a shared
+        group cancelled the first preview's poller the moment a second was
+        opened, freezing it at its last snapshot.
         """
         from langgraph_sdk import get_client
 
@@ -11412,6 +11436,7 @@ class NovaApp(App):
             self._compacted_last_turn = False
 
     async def _do_stream(self, text: str, assistant_id: str | None = None) -> None:
+        from novacode_cli.agent_stream import run_agent_stream
         from novacode_cli.agents.invocation import refresh_definitions
         from novacode_cli.input_utils import parse_file_mentions
         from novacode_cli.sessions.gateway import session_events
@@ -14520,6 +14545,9 @@ class NovaApp(App):
             return
         try:
             NovaConfig().set_role_model(role, provider, model, self._credential_base_url(provider))
+            # New rows must resolve against the written config, not the cached one.
+            self._panel_config = None
+            self._panel_model_cache.clear()
             from novacode_cli.agents.core_agent import clear_named_subagents_cache
 
             clear_named_subagents_cache()

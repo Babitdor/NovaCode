@@ -10,12 +10,54 @@ from rich.text import Text
 from textual.strip import Strip
 from textual.widget import Widget
 
+
+def line_boundaries(plain: str, width: int, wrap: bool) -> list[int]:
+    """Row-end offsets for one logical line at *width*.
+
+    ``rich._wrap.divide_line`` walks every word in Python, which made long
+    build lines (thousands of words, appended 20x/s) the single hottest
+    call in the TUI. ASCII lines — the overwhelming majority of command
+    output — get an O(len/width) scan instead; the break semantics match
+    (break after a space, hard-break overlong words). Non-ASCII lines keep
+    rich's cell-aware divider. Pure: module-level so it can be ported to
+    Rust and verified against recorded cases.
+    """
+    if not wrap or width <= 0:
+        # width <= 0 would loop forever below; real callers pass the panel
+        # width (>= 1), but a degenerate layout must not hang the UI loop.
+        return []
+    if plain.isascii():
+        boundaries: list[int] = []
+        pos = 0
+        n = len(plain)
+        while n - pos > width:
+            cut = plain.rfind(" ", pos, pos + width)
+            if cut <= pos:
+                cut = pos + width
+            else:
+                cut += 1  # keep the space at the end of the row
+            boundaries.append(cut)
+            pos = cut
+        return boundaries
+    return divide_line(plain, width, fold=True)
+
+
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Sequence
 
     from rich.highlighter import Highlighter
     from textual.geometry import Region, Size
     from textual.selection import Selection
+
+
+def line_boundaries_batch(plains: Sequence[str], width: int, wrap: bool) -> list[list[int]]:
+    """Row-end offsets for many logical lines in one call.
+
+    The flush path wraps every new line of a batch; batching keeps the
+    per-call overhead (Python or FFI into the Rust port) paid once per
+    flush instead of once per line.
+    """
+    return [line_boundaries(plain, width, wrap) for plain in plains]
 
 
 class OutputBody(Widget):
@@ -68,13 +110,26 @@ class OutputBody(Widget):
             if len(new) >= len(old_ids) and new_ids[: len(old_ids)] == old_ids:
                 added = new[len(old_ids) :]
             else:
-                # Streaming with head eviction: new == old[k:] + added.
-                for k in range(1, len(old_ids) + 1):
-                    tail = old_ids[k:]
-                    if new_ids[: len(tail)] == tail:
-                        trim = k
-                        added = new[len(tail) :]
-                        break
+                # Streaming with head eviction: new == old[k:] + added for the
+                # smallest k. Only split points whose first retained id matches
+                # new_ids[0] can match, so the scan touches those instead of
+                # every k: a rewrite-style stream (no k at all) costs one
+                # pass and falls through to the rebuild, not n² slice compares.
+                trim = len(old_ids)
+                added = new
+                if new_ids:
+                    pos = 1
+                    while True:
+                        try:
+                            k = old_ids.index(new_ids[0], pos)
+                        except ValueError:
+                            break
+                        pos = k + 1
+                        tail = old_ids[k:]
+                        if new_ids[: len(tail)] == tail:
+                            trim = k
+                            added = new[len(tail) :]
+                            break
             if added is not None:
                 if trim:
                     # Pop before trimming: old_ids aliases _row_line_ids, so
@@ -102,46 +157,25 @@ class OutputBody(Widget):
         self._refresh_after_replace()
 
     def _line_boundaries(self, plain: str, width: int) -> list[int]:
-        """Row-end offsets for one logical line at *width*.
-
-        ``rich._wrap.divide_line`` walks every word in Python, which made long
-        build lines (thousands of words, appended 20x/s) the single hottest
-        call in the TUI. ASCII lines — the overwhelming majority of command
-        output — get an O(len/width) scan instead; the break semantics match
-        (break after a space, hard-break overlong words). Non-ASCII lines keep
-        rich's cell-aware divider.
-        """
-        if not self._wrap:
-            return []
-        if plain.isascii():
-            boundaries: list[int] = []
-            pos = 0
-            n = len(plain)
-            while n - pos > width:
-                cut = plain.rfind(" ", pos, pos + width)
-                if cut <= pos:
-                    cut = pos + width
-                else:
-                    cut += 1  # keep the space at the end of the row
-                boundaries.append(cut)
-                pos = cut
-            return boundaries
-        return divide_line(plain, width, fold=True)
+        """Row-end offsets for one logical line at *width*."""
+        return line_boundaries(plain, width, self._wrap)
 
     def _append_rows(self, lines: tuple[Text, ...]) -> None:
         """Wrap only the new lines at the current width and extend the rows."""
         width = self._row_width
-        for line in lines:
-            cached = self._wrap_cache.get(id(line))
-            if cached is None:
-                boundaries = self._line_boundaries(line.plain, width)
+        uncached = [line for line in lines if id(line) not in self._wrap_cache]
+        if uncached:
+            # One batched call per flush instead of one wrap call per line.
+            batch = line_boundaries_batch([line.plain for line in uncached], width, self._wrap)
+            for line, boundaries in zip(uncached, batch):
                 start = 0
                 prepared = []
                 for end in (*boundaries, len(line)):
                     prepared.append((line, start, end))
                     start = end
                 self._wrap_cache[id(line)] = prepared
-                cached = prepared
+        for line in lines:
+            cached = self._wrap_cache[id(line)]
             self._rows.extend(cached)
             self._row_counts.append(len(cached))
             self._row_line_ids.append(id(line))
@@ -157,17 +191,18 @@ class OutputBody(Widget):
         rows = []
         counts: list[int] = []
         ids: list[int] = []
-        for line in self._lines:
-            cached = self._wrap_cache.get(id(line))
-            if cached is None:
-                boundaries = self._line_boundaries(line.plain, width)
+        uncached = [line for line in self._lines if id(line) not in self._wrap_cache]
+        if uncached:
+            batch = line_boundaries_batch([line.plain for line in uncached], width, self._wrap)
+            for line, boundaries in zip(uncached, batch):
                 start = 0
                 prepared = []
                 for end in (*boundaries, len(line)):
                     prepared.append((line, start, end))
                     start = end
                 self._wrap_cache[id(line)] = prepared
-                cached = prepared
+        for line in self._lines:
+            cached = self._wrap_cache[id(line)]
             rows.extend(cached)
             counts.append(len(cached))
             ids.append(id(line))

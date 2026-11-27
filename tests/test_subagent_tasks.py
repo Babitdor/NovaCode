@@ -212,6 +212,61 @@ def _task(**kwargs: object) -> SubagentTask:
     return SubagentTask(**base)  # type: ignore[arg-type]
 
 
+def test_row_cache_evicts_oldest_and_keeps_recent_rows():
+    """Crossing the cap must trim, not clear: a dock near the cap keeps hits."""
+    st._ROW_CACHE.clear()
+    st._ROW_CACHE_WIDTH = 80
+    try:
+        for n in range(st._ROW_CACHE_CAP - 1):
+            st.task_row(
+                _task(task_id=f"n{n}", status="done", duration_ms=1_000),
+                width=80,
+                now=101.0,
+            )
+        survivor = st.task_row(
+            _task(task_id="survivor", status="done", duration_ms=1_000),
+            width=80,
+            now=101.0,
+        )
+        assert len(st._ROW_CACHE) == st._ROW_CACHE_CAP
+        # One more finish crosses the cap: the oldest 128 rows are trimmed,
+        # not the whole cache.
+        st.task_row(
+            _task(task_id="trigger", status="done", duration_ms=1_000),
+            width=80,
+            now=101.0,
+        )
+        assert len(st._ROW_CACHE) < st._ROW_CACHE_CAP
+        again = st.task_row(
+            _task(task_id="survivor", status="done", duration_ms=1_000),
+            width=80,
+            now=101.0,
+        )
+        assert again is survivor, "a recent row must survive the trim and stay cached"
+    finally:
+        st._ROW_CACHE.clear()
+        st._ROW_CACHE_WIDTH = -1
+
+
+def test_panel_body_groups_phases_without_reshuffling_members():
+    """The one-pass grouping preserves per-phase arrival order."""
+    tasks = [
+        _task(task_id="t1", label="alpha", status="running", phase_id="p2", started_at=100.0),
+        _task(task_id="t2", label="bravo", status="running", phase_id="p1", started_at=101.0),
+        _task(task_id="t3", label="charlie", status="done", phase_id="p2", duration_ms=500),
+        _task(task_id="t4", label="delta", status="running", phase_id="p2", started_at=102.0),
+    ]
+    body = st.panel_body(tasks, width=120, now=110.0)
+    plain = "\n".join(line.plain for line in body.lines)
+    # p2 arrived first: 1 of its 3 members done. p1 second: 0 of 1.
+    assert "1/3" in plain
+    assert "0/1" in plain
+    # The right pane keeps arrival order across phases.
+    assert (
+        plain.index("alpha") < plain.index("bravo") < plain.index("charlie") < plain.index("delta")
+    )
+
+
 def test_the_summary_counts_done_phases_and_failures():
     tasks = [
         _task(task_id="1", status="done", phase_id="p1"),

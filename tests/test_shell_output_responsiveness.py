@@ -63,13 +63,13 @@ def test_appending_and_evicting_output_only_wraps_new_lines(monkeypatch):
     from novacode_cli.tui import output_body
 
     wrapped = []
-    original = OutputBody._line_boundaries
+    original_batch = output_body.line_boundaries_batch
 
-    def boundaries(self, text, width):
-        wrapped.append(text)
-        return original(self, text, width)
+    def batch(plains, width, wrap):
+        wrapped.extend(plains)
+        return original_batch(plains, width, wrap)
 
-    monkeypatch.setattr(OutputBody, "_line_boundaries", boundaries)
+    monkeypatch.setattr(output_body, "line_boundaries_batch", batch)
     lines = deque(Text(f"{n}: " + "wide output " * 8) for n in range(1000))
     body = OutputBody(wrap=True, highlighter=None)
     body.replace_lines(lines)
@@ -87,6 +87,58 @@ def test_appending_and_evicting_output_only_wraps_new_lines(monkeypatch):
     assert len(wrapped) == 2100
     body.on_unmount()
     assert not body._wrap_cache
+
+
+def test_rewrite_flush_rebuilds_rows_and_stays_linear(monkeypatch):
+    """A stream that rewrites its buffer each flush must not wedge the flush.
+
+    The old head-eviction scan tried every split point with slice compares
+    (O(n²) per flush) before falling back to a rebuild; the candidate scan
+    bails after one pass.
+    """
+    from novacode_cli.tui import output_body
+
+    body = OutputBody(wrap=True, highlighter=None)
+    lines = deque(Text(f"gen {n}: " + "payload " * 20) for n in range(400))
+    body.replace_lines(lines)
+    body._wrap_rows(80)
+    assert len(body._lines) == 400
+
+    # Rewrite storm: every flush replaces the whole buffer with fresh lines.
+    generation = 0
+    for _ in range(30):
+        generation += 1
+        lines = deque(Text(f"gen {generation}: " + "payload " * 20) for _ in range(400))
+        body.replace_lines(lines)
+        body._wrap_rows(80)
+        assert len(body._rows) >= 400
+        assert len(body._lines) == 400
+        assert body._lines[0].plain.startswith(f"gen {generation}: ")
+
+    # The retained wrap cache only holds the current generation's lines.
+    assert set(body._wrap_cache) == {id(line) for line in lines}
+
+
+def test_eviction_of_every_line_clears_cleanly():
+    body = OutputBody(wrap=True, highlighter=None)
+    lines = deque(Text(f"line {n}") for n in range(50))
+    body.replace_lines(lines)
+    body._wrap_rows(80)
+    assert body._rows
+
+    lines.clear()  # the stream ended: empty replacement
+    body.replace_lines(lines)
+    body._wrap_rows(80)
+    assert body._rows == []
+    assert body._wrap_cache == {}
+    # Every row vanished, so the next refresh must lay out (0 != the
+    # previous 50) — the incremental eviction recorded the new total.
+    assert body._last_layout_rows == 0
+
+    lines.append(Text("after the storm"))
+    body.replace_lines(lines)
+    body._wrap_rows(80)
+    assert len(body._rows) == 1
 
 
 def test_large_ansi_string_is_bounded_before_decoding(monkeypatch):
