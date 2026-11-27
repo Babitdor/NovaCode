@@ -82,7 +82,7 @@ def patch(root: Path) -> bool:
 
     # The startupinfo helper, once, before the first function that uses it.
     if "_nova_hidden_console_startupinfo" in text and "def _nova_hidden_console_startupinfo" not in text:
-        anchor = "\ndef _create_windows_process("
+        anchor = "\nasync def create_windows_process("
         if anchor in text:
             text = text.replace(anchor, HELPER + anchor, 1)
 
