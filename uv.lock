@@ -3997,6 +3997,7 @@ dependencies = [
     { name = "rich" },
     { name = "runloop-api-client" },
     { name = "semble" },
+    { name = "tavily-python" },
     { name = "textual" },
     { name = "textual-image", extra = ["textual"] },
     { name = "tomli-w" },
@@ -4132,6 +4133,7 @@ requires-dist = [
     { name = "sherpa-onnx", marker = "extra == 'voice-parakeet'", specifier = ">=1.10.0,<2" },
     { name = "silero-vad", marker = "extra == 'voice'", specifier = ">=5.1" },
     { name = "sounddevice", marker = "extra == 'voice'", specifier = ">=0.4.6" },
+    { name = "tavily-python" },
     { name = "textual", specifier = ">=1.0.0" },
     { name = "textual-image", extras = ["textual"], specifier = "==0.12.0" },
     { name = "tomli-w", specifier = ">=1.0.0" },
@@ -9711,6 +9713,20 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/68/38/901ed2557527541e90e89366212538463de96f9393de95fee2f7928d1321/synchronicity-0.12.4.tar.gz", hash = "sha256:f9e38d0c37d8e56b5dcb22cc0083591a535a42187d3d97ea9aef6e84bd122640", size = 60339, upload-time = "2026-06-16T15:43:06.29Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e5/44/ed8f5c1ce8d6a4d986a5629fcd17fca6e91952e43ffa9bdb7d640341e50d/synchronicity-0.12.4-py3-none-any.whl", hash = "sha256:87c53625f680ed1a6992fccda5adeb6705904fdb0c820e04d384358708f2607c", size = 41013, upload-time = "2026-06-16T15:43:05.233Z" },
+]
+
+[[package]]
+name = "tavily-python"
+version = "0.8.5"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "httpx" },
+    { name = "requests" },
+    { name = "tiktoken" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/2f/39/3aff85cb3b45cab3ef9578560364b893baa34e79744e99567a825dbadf57/tavily_python-0.8.5.tar.gz", hash = "sha256:1795965c3ffe5654856244d637daa816a4ee947aca57d0588b731c69e75e71fe", size = 35634, upload-time = "2026-10-06T15:11:34.827Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/2f/c5/fc13567e2a1d3671f51252d44f580bf3ab3c0a6ec90a6553f5c67ba87208/tavily_python-0.8.5-py3-none-any.whl", hash = "sha256:f8d2880f5aa67cf3ee2eb1f7c9336ea50dc331eb1e406688391badb0140599a7", size = 24629, upload-time = "2026-10-06T15:11:33.854Z" },
 ]
 
 [[package]]
