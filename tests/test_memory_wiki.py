@@ -113,6 +113,27 @@ def test_broken_links_reported_and_scoped_project_pages_reachable(tmp_path: Path
     assert "../../INDEX.md" in page.read_text(encoding="utf-8")
 
 
+def test_legacy_flat_project_pages_reach_the_wiki(tmp_path: Path) -> None:
+    """Pages written flat as projects/<topic>.md (before the layout was
+    enforced) must be indexed, mapped and navigated like any other topic —
+    or /dream can never consolidate them and the wiki stops accumulating."""
+    memories = tmp_path / "memories"
+    flat = memories / "projects"
+    flat.mkdir(parents=True)
+    page = flat / "novacode-landing.md"
+    page.write_text("# NovaCode landing site\n\nProject-scoped shipping notes.\n", encoding="utf-8")
+    maintain_wiki(tmp_path)
+    hub = (memories / "wiki-projects.md").read_text(encoding="utf-8")
+    assert "projects/novacode-landing.md" in hub
+    body = page.read_text(encoding="utf-8")
+    assert body.startswith("# NovaCode landing site")
+    assert "wiki-projects.md" in body
+    home = (memories / "INDEX.md").read_text(encoding="utf-8")
+    assert "wiki-projects.md" in home
+    maintain_wiki(tmp_path)
+    assert (memories / "wiki-projects.md").read_text(encoding="utf-8") == hub
+
+
 def test_maintenance_builds_backlinks_from_authored_page_links(tmp_path: Path) -> None:
     memories = tmp_path / "memories"
     memories.mkdir()

@@ -83,6 +83,9 @@ async def handle_dream_command(
         [
             *memories_dir.glob("*.md"),
             *(memories_dir / "projects").glob("*/*.md"),
+            # Legacy flat project pages (projects/<topic>.md) are still memory;
+            # excluding them here is how they stranded outside the wiki.
+            *(memories_dir / "projects").glob("*.md"),
         ]
     )
 

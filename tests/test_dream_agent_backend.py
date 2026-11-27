@@ -61,6 +61,30 @@ def test_memory_search_hides_other_project_scopes(tmp_path: Path) -> None:
     assert all("project-b" not in entry["path"] for entry in projects.entries or [])
 
 
+def test_legacy_flat_project_pages_are_readable_but_stays_scoped(tmp_path: Path) -> None:
+    """A flat projects/<topic>.md page (written before the layout was enforced)
+    is still memory: the dreamer must see it or it can never be consolidated.
+    Other projects' scoped directories stay hidden, including their names."""
+    flat = tmp_path / "memories" / "projects" / "legacy-landing.md"
+    flat.parent.mkdir(parents=True)
+    flat.write_text("# Landing\nLEGACY_NOTES\n", encoding="utf-8")
+    hidden = tmp_path / "memories" / "projects" / "project-b" / "notes.md"
+    hidden.parent.mkdir(parents=True)
+    hidden.write_text("OTHER_ONLY\n", encoding="utf-8")
+    backend = build_dream_backend(tmp_path, "project-a")
+
+    legacy = backend.read("/memories/memories/projects/legacy-landing.md")
+    matches = backend.grep("NOTES", path="/memories/")
+    other = backend.read("/memories/memories/projects/project-b/notes.md")
+    listing = backend.ls("/memories/memories/projects")
+
+    assert legacy.file_data is not None
+    assert "LEGACY_NOTES" in legacy.file_data["content"]
+    assert any("legacy-landing.md" in match["path"] for match in matches.matches or [])
+    assert other.error
+    assert all("project-b" not in entry["path"] for entry in listing.entries or [])
+
+
 def test_memory_read_rejects_project_symlink_escape(tmp_path: Path) -> None:
     active = tmp_path / "memories" / "projects" / "project-a"
     other = tmp_path / "memories" / "projects" / "project-b" / "notes.md"

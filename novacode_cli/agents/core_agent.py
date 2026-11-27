@@ -263,7 +263,10 @@ from novacode_cli.agents.default_subagents.subagents import (
     unique_subagent_specs,
 )
 from novacode_cli.backends import ConversationHistoryBackend
-from novacode_cli.backends import OptimizedFilesystemBackend as FilesystemBackend
+from novacode_cli.backends import (
+    AgentMemoryBackend,
+    OptimizedFilesystemBackend as FilesystemBackend,
+)
 from novacode_cli.backends import OptimizedLocalShellBackend
 from novacode_cli.agents.default_subagents.async_subagents import (
     retrieve_async_subagents,
@@ -1331,10 +1334,9 @@ def _build_composite_backend(
     # from the filesystem at startup, but the /memories/ route enables
     # the agent to re-read them during execution.
     if agent_dir:
-        _agent_backend = FilesystemBackend(
-            root_dir=str(agent_dir),
-            virtual_mode=True,
-        )
+        # Guarded view: refuses flat projects/<topic>.md writes so memory pages
+        # always land in the scoped layout the wiki, /dream and memory_search read.
+        _agent_backend = AgentMemoryBackend(str(agent_dir))
         _routes["/memories/"] = _agent_backend
 
     # /cleared/ route → offloaded tool results (see agents/tool_offload.py).

@@ -116,6 +116,32 @@ def test_project_memory_resolves_from_the_workspace(memory_home):
     assert "PROJECT_RULES" in result["content"]
 
 
+def test_flat_project_page_write_is_refused_with_the_scoped_target(memory_home):
+    """A flat projects/<topic>.md write strands outside the wiki, /dream and
+    memory_search; the refusal must name the scoped path to write instead."""
+    from novacode_cli.tools.memory_tools import read_memory, write_memory
+
+    result = write_memory.invoke(
+        {
+            "content": "STRANDED",
+            "memory_type": "project",
+            "path": "/memories/memories/projects/novacode-landing.md",
+        }
+    )
+    assert result["success"] is False
+    assert "projects/<project-key>/" in result["error"]
+    assert "/memories/memories/projects/" in result["error"]
+    assert not (memory_home / "memories" / "projects" / "novacode-landing.md").exists()
+
+    # The scoped layout stays writable and the hint's directory is the one used.
+    hint = result["error"].split("Write to ")[1].split(" instead")[0]
+    ok = write_memory.invoke({"content": "SCOPED", "path": hint})
+    assert ok["success"] is True
+    back = read_memory.invoke({"path": hint})
+    assert back["success"] is True
+    assert "SCOPED" in back["content"]
+
+
 def test_tool_schema_is_json_serializable():
     """Guard against an annotation that breaks tool-schema generation."""
     from novacode_cli.tools.memory_tools import read_memory, write_memory

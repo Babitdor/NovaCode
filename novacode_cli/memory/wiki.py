@@ -94,7 +94,11 @@ def _body(text: str) -> str:
 def _topics(agent_dir: Path) -> dict[Path, bytes]:
     memories = agent_dir / "memories"
     paths = list(memories.glob("*.md"))
+    # Scoped project pages (projects/<key>/<topic>.md) plus legacy flat pages
+    # (projects/<topic>.md) written before the layout was enforced; both belong
+    # to the wiki, or /dream can never consolidate what it cannot see.
     paths.extend((memories / "projects").glob("*/*.md"))
+    paths.extend((memories / "projects").glob("*.md"))
     result = {}
     for path in sorted(paths):
         _safe(agent_dir, path)

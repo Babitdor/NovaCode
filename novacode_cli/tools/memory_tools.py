@@ -177,6 +177,32 @@ def write_memory(
             "memory_type": memory_type,
         }
 
+    from novacode_cli.config.config import MAIN_AGENT_ID, settings
+    from novacode_cli.hermes.memory_tiers import PROJECTS_DIRNAME, project_memory_key
+
+    agent_dir = settings.get_agent_dir(MAIN_AGENT_ID)
+    projects_dir = (agent_dir / "memories" / PROJECTS_DIRNAME).resolve()
+    try:
+        flat_target = memory_path.resolve().parent == projects_dir
+    except OSError:
+        flat_target = False
+    if flat_target:
+        # Flat pages under projects/ are invisible to the wiki, /dream and
+        # memory_search, which all read projects/<project-key>/<topic>.md.
+        # Stranded pages are exactly how the wiki stops accumulating.
+        key = project_memory_key(settings.project_root)
+        scoped = f"/memories/memories/{PROJECTS_DIRNAME}/{key}/{memory_path.name}"
+        return {
+            "success": False,
+            "error": (
+                "Project memory pages live under projects/<project-key>/, never "
+                f"flat inside projects/. Write to {scoped} instead (this "
+                f"session's project key is {key or 'unavailable'}; another "
+                "project's page belongs in that project's key directory)."
+            ),
+            "memory_type": memory_type,
+        }
+
     # Create parent directory if needed
     memory_path.parent.mkdir(parents=True, exist_ok=True)
 

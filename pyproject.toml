@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "novacode-cli"
-version = "1.2.88"
+version = "1.2.89"
 description = "Agentic Coding Tool that runs in your terminal"
 authors = [{ name = "Babitdor", email = "babitdorbryan14@gmail.com" }]
 readme = {file = "README.md", content-type = "text/markdown"}
@@ -53,10 +53,10 @@ dependencies = [
     "tavily-python",
     # 0.7.x: verified against Nova's three monkey-patches into deepagents
     # internals (validate_path, perform_string_replacement, create_sub_agent) —
-    # all three keep the same signatures through 0.7.9. Capped below 0.8 because
+    # all three keep the same signatures through 0.7.42. Pinned exactly because
     # those patches bind private internals a minor bump may reshape;
     # tests/test_deepagents_compat.py fails loudly if one drifts.
-    "deepagents>=0.7.0,<0.8",
+    "deepagents==0.7.42",
     "python-dotenv",
     "daytona>=0.113.0",
     "modal>=0.65.0",

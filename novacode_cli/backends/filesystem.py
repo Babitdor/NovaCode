@@ -924,6 +924,71 @@ class OptimizedFilesystemBackend(FilesystemBackend):
         return GlobResult(matches=matches)
 
 
+class AgentMemoryBackend(OptimizedFilesystemBackend):
+    """The agent-directory view with the project-memory layout enforced.
+
+    Project memory pages must live at ``memories/projects/<project-key>/<topic>.md``:
+    the wiki, ``/dream`` and ``memory_search`` all read that scoped layout, so a
+    page written flat as ``memories/projects/<topic>.md`` is invisible to every
+    consumer — it strands outside the wiki and never gets consolidated. The
+    writer-side guard is deterministic, like ConversationHistoryBackend: a
+    refused write with the correct scoped target beats a prompt rule the model
+    can ignore. Reads and deletes of flat legacy pages stay allowed so the
+    dreamer can see and clean them up.
+    """
+
+    def __init__(self, root_dir: str) -> None:
+        super().__init__(root_dir=root_dir, virtual_mode=True)
+        self._projects_dir = Path(root_dir).resolve() / "memories" / "projects"
+
+    def _flat_project_error(self, key: str) -> str | None:
+        """Refusal message when *key* names a flat page under projects/, else None."""
+        try:
+            resolved = self._resolve_path(key).resolve()
+        except (OSError, RuntimeError, ValueError):
+            return None
+        if resolved.parent != self._projects_dir:
+            return None
+        if resolved.suffix != ".md":
+            return (
+                "Project memory pages live under projects/<project-key>/, never flat "
+                "inside projects/ — a flat file is invisible to the memory wiki, "
+                "/dream and memory_search. Use a scoped "
+                "projects/<project-key>/<topic>.md path instead."
+            )
+        from novacode_cli.config.config import settings
+        from novacode_cli.hermes.memory_tiers import project_memory_key
+
+        try:
+            key_dir = project_memory_key(settings.project_root) or "<project-key>"
+        except Exception:  # noqa: BLE001 - the hint must never fail the refusal
+            key_dir = "<project-key>"
+        return (
+            "Project memory pages live under projects/<project-key>/, never flat "
+            "inside projects/ — a flat page is invisible to the memory wiki, /dream "
+            f"and memory_search. Write to /memories/memories/projects/{key_dir}/"
+            f"{resolved.name} instead."
+        )
+
+    def write(self, file_path: str, content: str) -> WriteResult:
+        error = self._flat_project_error(file_path)
+        if error is not None:
+            return WriteResult(error=error)
+        return super().write(file_path, content)
+
+    def edit(
+        self,
+        file_path: str,  # noqa: ARG002
+        old_string: str,  # noqa: ARG002
+        new_string: str,  # noqa: ARG002
+        replace_all: bool = False,  # noqa: FBT001, FBT002
+    ) -> EditResult:
+        error = self._flat_project_error(file_path)
+        if error is not None:
+            return EditResult(error=error)
+        return super().edit(file_path, old_string, new_string, replace_all=replace_all)
+
+
 class ConversationHistoryBackend(FilesystemBackend):
     """Write-only store for conversation history evicted by summarization.
 

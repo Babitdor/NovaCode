@@ -81,9 +81,16 @@ class ReadOnlyMemoryBackend(OptimizedFilesystemBackend):
             lexical_scope = lexical.relative_to(projects).parts
         except ValueError:
             lexical_scope = ()
-        if lexical_scope and (not self.project_key or lexical_scope[0] != self.project_key):
-            message = "Dream memory access is limited to the active project."
-            raise ValueError(message)
+        # One part under projects/ names either a legacy flat page
+        # (projects/<topic>.md, written before the layout was enforced — readable
+        # so the dream can consolidate it) or another project's key directory
+        # (still hidden). Only the file case opens up.
+        if lexical_scope and not (
+            len(lexical_scope) == 1 and (projects / lexical_scope[0]).is_file()
+        ):
+            if not self.project_key or lexical_scope[0] != self.project_key:
+                message = "Dream memory access is limited to the active project."
+                raise ValueError(message)
         resolved = super()._resolve_path(key)
         root = self.cwd.resolve()
         if not resolved.is_relative_to(root):
@@ -93,11 +100,13 @@ class ReadOnlyMemoryBackend(OptimizedFilesystemBackend):
             resolved_project = resolved.relative_to(projects.resolve())
         except ValueError:
             return resolved
-        if resolved_project.parts and (
-            not self.project_key or resolved_project.parts[0] != self.project_key
+        # relative_to of the projects dir itself is Path('.') with empty parts.
+        if resolved_project.parts and not (
+            len(resolved_project.parts) == 1 and resolved.is_file()
         ):
-            message = "Dream project memory symlink escapes its scope."
-            raise ValueError(message)
+            if not self.project_key or resolved_project.parts[0] != self.project_key:
+                message = "Dream project memory symlink escapes its scope."
+                raise ValueError(message)
         return resolved
 
     def _path_allowed(self, path: str) -> bool:
