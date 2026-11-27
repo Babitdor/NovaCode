@@ -1099,6 +1099,55 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
         )
         return tracker
 
+    def _repair_dispatch_args(
+        self, target: BaseTool, arguments: dict, schema: dict, step: dict
+    ) -> dict:
+        """Validate-then-repair at the dispatch boundary.
+
+        The JS snippet's args are validated with the same gate the call will
+        face; on failure the repair catalogue runs at the failing paths (the
+        same layer the model's native tool calls get) and the repaired args
+        must still pass the ORIGINAL gate - acceptance semantics are
+        unchanged, only recoverable shapes are fixed. Unrepairable failures
+        raise a compact, model-readable summary instead of the raw blob.
+        """
+        gate = _validator(json.dumps(schema, sort_keys=True), close_named=True)
+        try:
+            gate.validate(arguments)
+        except Exception as exc:
+            from jsonschema.validators import validator_for
+
+            from novacode_cli.agents.arg_repair import _compact_issues, repair_invalid
+
+            errors = list(validator_for(schema)(schema).iter_errors(arguments))
+            repaired = repair_invalid(arguments, schema, target.name, errors) if errors else None
+            if repaired is not None:
+                fixed, kinds, _notes = repaired
+                try:
+                    gate.validate(fixed)
+                except Exception:
+                    repaired = None  # the gate still refuses: unrepairable
+                else:
+                    step["repaired"] = {
+                        "kinds": kinds,
+                        **({"note": _notes[0]} if _notes else {}),
+                    }
+                    logger.info("tool_input_repaired:%s %s", target.name, ",".join(kinds))
+                    return fixed
+            if repaired is None:
+                # One line: the outcome record keeps the first line only, so the
+                # model-readable summary has to ride on it.
+                summary = "; ".join(
+                    line.strip("- ")
+                    for line in (
+                        _compact_issues(errors) if errors else _error_text(exc)
+                    ).splitlines()
+                    if line.strip()
+                )
+                raise ValueError(f"Invalid tool arguments: {summary}") from exc
+        else:
+            return arguments
+
     async def _invoke(  # noqa: PLR0912 -- validate and execute at the common trust boundary.
         self,
         request: ToolCallRequest,
@@ -1117,46 +1166,7 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
         if not profile_tool_allowed(profile, target.name, target.metadata):
             raise ValueError(f"The selected agent cannot call {target.name}.")
         schema = convert_to_openai_tool(target)["function"]["parameters"]
-        gate = _validator(json.dumps(schema, sort_keys=True), close_named=True)
-        try:
-            gate.validate(arguments)
-        except Exception as exc:
-            # Validate-then-repair: the JS snippet's args failed the schema, so
-            # walk the validator's issue list and apply the repair catalogue at
-            # those paths (same layer the model's native tool calls get). The
-            # repaired args must still pass the ORIGINAL gate — acceptance
-            # semantics are unchanged, only recoverable shapes are fixed.
-            from jsonschema.validators import validator_for
-
-            from novacode_cli.agents.arg_repair import _compact_issues, repair_invalid
-
-            errors = list(validator_for(schema)(schema).iter_errors(arguments))
-            repaired = repair_invalid(arguments, schema, target.name, errors) if errors else None
-            accepted = None
-            if repaired is not None:
-                fixed, kinds, notes = repaired
-                try:
-                    gate.validate(fixed)
-                    accepted = (fixed, kinds, notes)
-                except Exception:
-                    accepted = None
-            if accepted is None:
-                # One line: the outcome record keeps the first line only, so the
-                # model-readable summary has to ride on it.
-                summary = "; ".join(
-                    line.strip("- ")
-                    for line in (
-                        _compact_issues(errors) if errors else _error_text(exc)
-                    ).splitlines()
-                    if line.strip()
-                )
-                raise ValueError(f"Invalid tool arguments: {summary}") from exc
-            arguments, kinds, repair_notes = accepted
-            step["repaired"] = {
-                "kinds": kinds,
-                **({"note": repair_notes[0]} if repair_notes else {}),
-            }
-            logger.info("tool_input_repaired:%s %s", target.name, ",".join(kinds))
+        arguments = self._repair_dispatch_args(target, arguments, schema, step)
         edited = await self._authorize(request, target.name, arguments)
         if edited is not None:
             arguments = edited
