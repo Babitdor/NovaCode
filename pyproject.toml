@@ -48,15 +48,16 @@ dependencies = [
     # Optional at runtime (memory falls back to a stdlib-sqlite3 store) but
     # declared so a normal install gets the preferred, battle-tested backend.
     "langgraph-checkpoint-sqlite>=2.0.0",
-    "langsmith>=0.14.17",
-    # Other dependencies
-    "tavily-python",
     # 0.7.x: verified against Nova's three monkey-patches into deepagents
     # internals (validate_path, perform_string_replacement, create_sub_agent) —
     # all three keep the same signatures through 0.7.42. Pinned exactly because
     # those patches bind private internals a minor bump may reshape;
     # tests/test_deepagents_compat.py fails loudly if one drifts.
     "deepagents==0.7.42",
+    # deepagents 0.7.42 requires langsmith>=0.16.2, so the floor follows it.
+    # Nova's runtime /trace setup clears langsmith's cached environment
+    # internals — 0.16 moved that cache, and tracing.py handles the new one.
+    "langsmith>=0.16.2",
     "python-dotenv",
     "daytona>=0.113.0",
     "modal>=0.65.0",

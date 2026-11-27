@@ -92,7 +92,12 @@ def test_apply_sets_every_variable_and_activates_tracing():
     # The point of the change: the next model call carries a tracer.
     tracers = _tracers()
     assert len(tracers) == 1
-    assert tracers[0].project_name == "MyProject"
+    # langsmith >=0.16 moved project resolution from tracer construction to
+    # RunTree creation, so the attribute is None by design; assert the
+    # resolution the run will actually take instead.
+    from langsmith.run_helpers import _get_project_name
+
+    assert _get_project_name(None) == "MyProject"
 
 
 def test_tracing_activates_without_restarting_the_process():
@@ -112,7 +117,9 @@ def test_tracing_activates_without_restarting_the_process():
 
     tracers = _tracers()
     assert len(tracers) == 1
-    assert tracers[0].project_name == "LateProject"
+    from langsmith.run_helpers import _get_project_name
+
+    assert _get_project_name(None) == "LateProject"
 
 
 def test_tracing_without_an_api_key_stays_off():

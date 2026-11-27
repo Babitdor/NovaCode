@@ -117,7 +117,9 @@ async def test_installed_factory_and_check_tool_report_the_failure(
 
     from novacode_cli.agents import async_context
 
-    client = client_for(asynchronous=asynchronous)
+    # deepagents 0.7.42 reads run["run_id"] off the fetched run; the real SDK
+    # always includes it on a Run, so the mock must mirror that shape.
+    client = client_for(asynchronous=asynchronous, run={"status": "error", "run_id": "r"})
     factory_name = "get_client" if asynchronous else "get_sync_client"
     monkeypatch.setattr(async_subagents, factory_name, lambda **_kwargs: client)
     # Restore the factory after install_async_model_context replaces it, too.

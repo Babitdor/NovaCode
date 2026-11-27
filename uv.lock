@@ -3997,7 +3997,6 @@ dependencies = [
     { name = "rich" },
     { name = "runloop-api-client" },
     { name = "semble" },
-    { name = "tavily-python" },
     { name = "textual" },
     { name = "textual-image", extra = ["textual"] },
     { name = "tomli-w" },
@@ -4103,7 +4102,7 @@ requires-dist = [
     { name = "langgraph", specifier = ">=1.1.3" },
     { name = "langgraph-checkpoint-sqlite", specifier = ">=2.0.0" },
     { name = "langgraph-cli", extras = ["inmem"], marker = "extra == 'agents-server'" },
-    { name = "langsmith", specifier = ">=0.14.17" },
+    { name = "langsmith", specifier = ">=0.16.2" },
     { name = "llama-cpp-python", marker = "extra == 'voice-orpheus'", specifier = ">=0.3.0", index = "https://abetlen.github.io/llama-cpp-python/whl/cpu" },
     { name = "markdownify", specifier = ">=0.13.0" },
     { name = "mcp", specifier = ">=1.28.1,<2" },
@@ -4133,7 +4132,6 @@ requires-dist = [
     { name = "sherpa-onnx", marker = "extra == 'voice-parakeet'", specifier = ">=1.10.0,<2" },
     { name = "silero-vad", marker = "extra == 'voice'", specifier = ">=5.1" },
     { name = "sounddevice", marker = "extra == 'voice'", specifier = ">=0.4.6" },
-    { name = "tavily-python" },
     { name = "textual", specifier = ">=1.0.0" },
     { name = "textual-image", extras = ["textual"], specifier = "==0.12.0" },
     { name = "tomli-w", specifier = ">=1.0.0" },
@@ -9713,20 +9711,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/68/38/901ed2557527541e90e89366212538463de96f9393de95fee2f7928d1321/synchronicity-0.12.4.tar.gz", hash = "sha256:f9e38d0c37d8e56b5dcb22cc0083591a535a42187d3d97ea9aef6e84bd122640", size = 60339, upload-time = "2026-06-16T15:43:06.29Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e5/44/ed8f5c1ce8d6a4d986a5629fcd17fca6e91952e43ffa9bdb7d640341e50d/synchronicity-0.12.4-py3-none-any.whl", hash = "sha256:87c53625f680ed1a6992fccda5adeb6705904fdb0c820e04d384358708f2607c", size = 41013, upload-time = "2026-06-16T15:43:05.233Z" },
-]
-
-[[package]]
-name = "tavily-python"
-version = "0.7.26"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "httpx" },
-    { name = "requests" },
-    { name = "tiktoken" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/bd/29/c2d5056dbf45a80484df5a1bf0d0ae59c611aa9680372c400a278fbf0c50/tavily_python-0.7.26.tar.gz", hash = "sha256:36202728144fce1ef0cece33800f98e3cdeb5f600e6678c50b1232b866a2f509", size = 29647, upload-time = "2026-06-10T18:38:45.231Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/1b/c2/616ebcd49561d74c93099efa45fd5a4af2e528415f01351575980be0ba9e/tavily_python-0.7.26-py3-none-any.whl", hash = "sha256:9b9e7f2d10b3572444e13e9a3bf4f5341975d591cbc1306be04ef89a363e42a7", size = 21940, upload-time = "2026-06-10T18:38:44.127Z" },
 ]
 
 [[package]]
