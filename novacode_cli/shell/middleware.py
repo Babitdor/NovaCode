@@ -1442,6 +1442,15 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
                                 + "]"
                             )
                             break
+                    if detached and proc.returncode is not None:
+                        # The main process exited while detached, but a
+                        # grandchild can hold the inherited stdout pipe open:
+                        # EOF never arrives, so without this check the job
+                        # would sit "running" forever with nothing actually
+                        # alive (the phantom the Tasks panel showed). The main
+                        # process's exit code is the job's result; grandchild
+                        # output after exit is dropped.
+                        break
                     continue
                 text = decoder.decode(chunk, final=not chunk)
                 if not chunk:

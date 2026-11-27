@@ -234,6 +234,61 @@ def test_task_logs_cursor_returns_only_new_output():
     assert "no new output" in get_task_logs.invoke({"task_id": job.task_id, "from_offset": 21})
 
 
+@pytest.mark.timeout(40)
+def test_detached_job_completes_when_a_grandchild_holds_the_pipe() -> None:
+    """The phantom wait: a detached command's main process exits, but a
+    grandchild it spawned inherits the stdout pipe and holds it open — EOF
+    never arrives, so the drain loop used to sit in its 0.5s timeout branch
+    forever, leaving the job "running" (Tasks panel active, wait_for_task
+    waiting) with nothing actually alive. The drain must complete the job
+    with the main process's exit code instead."""
+    mw = ShellMiddleware(workspace_root=os.getcwd(), timeout=30.0)
+    prog = [sys.executable, "-u", "-c"]
+    code = (
+        "import subprocess, sys\n"
+        "subprocess.Popen([sys.executable, '-u', '-c', 'import time; time.sleep(120)'])\n"
+        "print('main done', flush=True)\n"
+    )
+
+    reg = jobs.get_registry()
+    completed: list[object] = []
+    reg.set_completion_callback(completed.append)
+
+    box: dict[str, object] = {}
+
+    def run() -> None:
+        box["msg"] = mw._run_local_command(code, tool_call_id="g", prog=prog)
+
+    th = threading.Thread(target=run)
+    th.start()
+    for _ in range(100):  # wait for the command to publish
+        if jobs.get_current() is not None:
+            break
+        time.sleep(0.1)
+    time.sleep(1.2)  # the main process exits inside this window
+    assert jobs.request_detach() is True
+    th.join(timeout=10)
+
+    msg = box["msg"]
+    m = re.search(r"backgrounded: task_(\d+)", msg.content)
+    assert m, msg.content
+    task_id = int(m.group(1))
+
+    # The job must complete promptly with the main process's exit code —
+    # not sit "running" while the pipe-holding grandchild sleeps.
+    job = None
+    for _ in range(100):
+        job = next((j for j in completed if j.id == task_id), None)
+        if job is not None:
+            break
+        time.sleep(0.1)
+    assert job is not None, "the job stayed 'running': the pipe-holding grandchild wedged the drain"
+    assert job.status == "done"
+    assert job.exit_code == 0
+
+    reg.set_completion_callback(None)
+
+
 def test_task_logs_offset_inside_a_split_escape_leaves_no_fragment():
     """A from_offset landing inside a split escape resumes after it closes.
 
