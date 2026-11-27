@@ -351,7 +351,9 @@ async def test_tui_turn_refreshes_before_streaming(
         seen.append((graph, kwargs["backend"]))
         yield ev.Done()
 
-    monkeypatch.setattr("novacode_cli.tui.app.run_agent_stream", stream)
+    # `_do_stream` imports the stream function at call time (the TUI boot no
+    # longer pulls the agent chain), so the patch targets the source module.
+    monkeypatch.setattr("novacode_cli.agent_stream.run_agent_stream", stream)
     async with app.run_test(size=(100, 30)):
         await app._do_stream("Use fresh")
     assert seen == [(fresh, backend)]
