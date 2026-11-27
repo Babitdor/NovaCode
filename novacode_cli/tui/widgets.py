@@ -260,6 +260,15 @@ class MatrixRain(Static):
             canvas = (self.size.width, self.size.height) if self.size.area else self._canvas_size
             if canvas is not None:
                 width, viewport_height = canvas[0] + 4, canvas[1]
+                # The widget's own box is derived from the first width guess,
+                # so canvas[0] propagates that guess's padding error forever:
+                # classic's home header border costs 2 columns, the default
+                # layout's padding 4. The parent slot's content width is the
+                # layout truth, whatever the style's chain adds up to.
+                parent = self.parent
+                measured = getattr(parent, "content_size", None)
+                if measured is not None and measured.width:
+                    width = measured.width + 4
         if (
             width == self._width
             and (compact is None or compact == self._compact)
@@ -387,15 +396,23 @@ class MatrixRain(Static):
         auto-sizing a ``Static`` used to get from its content is gone and the
         box would collapse to zero height. The grid dimensions are the size.
         """
-        self.styles.width = "1fr" if self._viewport_height is not None else self._col_count
+        # Width always fills the container: each home style's chain between the
+        # terminal and this widget differs (classic's header border, the
+        # dashboard's header padding), so a grid-pinned width would lock in the
+        # first guess's padding error — a permanent blank band. The grid itself
+        # converges via on_resize.
+        self.styles.width = "1fr"
         self.styles.height = "1fr" if self._viewport_height is not None else self._row_count
 
     def on_resize(self, event: events.Resize) -> None:
-        """Fit Classic's rain to its canvas, including multiline composer growth."""
-        if self._viewport_height is None or not event.size.area:
+        """Fit the rain to its laid-out container, including composer growth."""
+        if not event.size.area:
             return
         self._canvas_size = (event.size.width, event.size.height)
-        self._viewport_height = event.size.height
+        if self._viewport_height is not None:
+            self._viewport_height = event.size.height
+        # The laid-out box is the container truth; +4 offsets _configure's
+        # padding subtraction so the grid fills the box exactly.
         self._configure(self._art_source, event.size.width + 4)
         self._init_columns()
         self.redraw_frame()

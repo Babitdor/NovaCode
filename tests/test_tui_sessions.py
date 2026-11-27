@@ -608,7 +608,9 @@ def test_stateful_attrs_has_no_duplicates():
 # ── layout: the pane wrapper must not shrink the transcript ──────────────────
 
 
-async def _drive_banner_fits_its_container(term_width: int = 120, *, _height: int = 50):
+async def _drive_banner_fits_its_container(
+    term_width: int = 120, *, style: str = "dashboard", _height: int = 50
+):
     """The Matrix-rain banner must span the home header's real content width.
 
     Regression: wrapping the transcript in a ContentSwitcher for session panes
@@ -625,7 +627,10 @@ async def _drive_banner_fits_its_container(term_width: int = 120, *, _height: in
     *wide*. The rain must fill the content width exactly.
 
     Driven at both ends of the old clamp: 260 columns (past the 200 ceiling) and
-    50 (below the 60 floor). 120 would pass under either old defect.
+    50 (below the 60 floor). 120 would pass under either old defect. Each home
+    style has its own width chain (classic's header border costs 2 columns, the
+    default padding 4), so all three are driven here through an isolated config
+    — a developer's own ``home_style`` must not decide what this test sees.
     """
     from rich.cells import cell_len
 
@@ -639,23 +644,49 @@ async def _drive_banner_fits_its_container(term_width: int = 120, *, _height: in
         assert rain is not None, "home banner should be mounted at startup"
         # Stop the 15fps repaint or pilot.pause() never settles.
         rain.pause()
-        await pilot.pause()
-
-        avail = app.query_one("#home-banner-slot").content_size.width
-        assert avail > 0
+        slot = app.query_one("#home-banner-slot")
+        # Layout converges over several refreshes (borders, breakpoint-hidden
+        # rows); assert the settled state, not a transient mid-convergence one.
+        avail = 0
+        for _ in range(40):
+            await pilot.pause()
+            avail = slot.content_size.width
+            if avail and rain._col_count == max(avail, rain._art_w):
+                break
 
         assert rain._col_count == max(avail, rain._art_w), (
             f"rain grid {rain._col_count} against header content {avail} at "
-            f"{term_width} columns — a narrower grid leaves a blank band, a wider one "
-            "wraps every row"
+            f"{term_width} columns in the {app._home_style} home — a narrower grid "
+            "leaves a blank band, a wider one wraps every row"
         )
         for line in rain._build_frame().plain.split("\n"):
             assert cell_len(line) <= avail
 
 
 @pytest.mark.parametrize("term_width", [260, 120, 50])
-def test_home_banner_fits_the_header_width(term_width: int):
-    asyncio.run(_drive_banner_fits_its_container(term_width))
+@pytest.mark.parametrize("home_style", ["dashboard", "classic", "signal"])
+def test_home_banner_fits_the_header_width(
+    home_style: str, term_width: int, monkeypatch, tmp_path
+):
+    import novacode_cli.config.config as config_module
+    from novacode_cli.config.nova_config import NovaConfig
+    from novacode_cli.tui.app import NovaApp
+
+    monkeypatch.setattr(config_module, "HOME_DIR", tmp_path / ".nova")
+    monkeypatch.setenv("NOVA_DISABLE_UPDATE_CHECK", "1")
+
+    def initialize(config):
+        config.config_dir = tmp_path / ".nova"
+        config.config_path = config.config_dir / "Nova.config.json"
+        config._config = {"home_style": home_style}
+        config._loaded = {}
+
+    async def no_voice_warmup():
+        pass
+
+    monkeypatch.setattr(NovaConfig, "__init__", initialize)
+    monkeypatch.setattr(NovaApp, "_eager_voice_warmup", lambda self: no_voice_warmup())
+    asyncio.run(_drive_banner_fits_its_container(term_width, style=home_style))
 
 
 async def _drive_transcript_fills_screen():
