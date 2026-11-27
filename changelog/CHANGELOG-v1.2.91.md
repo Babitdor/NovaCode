@@ -19,3 +19,11 @@ the list to nothing.
   content, long lists scroll inside the box as before.
 - New regression tests assert the picker and the saved-sessions screen give
   every option actual screen space, not just a populated model.
+
+## Change: the centered home blends with the background
+
+The `centered` home style drew its hero as a visible panel card (a lighter
+76-column box floating on the app background). It now blends with the app
+background like OpenCode's welcome screen — centered content, no card — while
+the prompt block keeps its subtle tint. `banner` and `minimal` blend the same
+way.

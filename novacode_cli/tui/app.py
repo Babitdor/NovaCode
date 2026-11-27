@@ -1467,7 +1467,9 @@ class NovaApp(App):
     Screen.home.dashboard-low #home-header,
     Screen.home.dashboard-low #home-actions { display: none; }
     #home-style-header, #home-composer-meta, #home-shortcuts { display: none; }
-    #home-style-header { height: auto; width: 100%; padding: 1 2; background: $panel; }
+    /* The centered hero blends with the app background (the OpenCode look):
+       no visible card, only the prompt block keeps the panel tint. */
+    #home-style-header { height: auto; width: 100%; padding: 1 2; background: transparent; }
     #home-style-art, #home-style-details, #home-style-tip { height: auto; }
     #home-style-details { color: $text-muted; margin-top: 1; }
     #home-style-tip { color: $text-muted; margin-top: 1; }
