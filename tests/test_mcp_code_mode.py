@@ -517,6 +517,52 @@ async def test_wall_deadline_and_oversized_intermediate(tmp_path):
     assert "exceeds" in messages[0].content.lower()
 
 
+async def test_dispatched_call_with_repairable_args_is_fixed_not_bounced(tmp_path):
+    """Code Mode dispatches go through the same validate-then-repair layer as
+    the model's native tool calls: a JSON-encoded array string where an array
+    is expected is repaired, the call RUNS, and the outcome tells the model
+    what was fixed instead of bouncing a raw validator blob."""
+    seen: list[list[str]] = []
+
+    @tool("db_read")
+    def read(values: list[str]) -> int:
+        """Read a typed synthetic list."""
+        seen.append(values)
+        return len(values)
+
+    mcp = inventory(tmp_path, read)
+    messages = await execute(
+        graph(mcp, 'return await mcp.call("db","read",{values:\'["a","b"]\'});')
+    )
+    assert seen == [["a", "b"]], "the repaired call must run, not bounce"
+    body = json.loads(messages[0].content)
+    assert messages[0].status == "success"
+    step = body["outcomes"][0]
+    assert step["status"] == "completed"
+    assert step["repaired"]["kinds"] == ["json-array-parse"]
+    assert body["result"] == 2
+
+
+async def test_dispatched_call_with_unrepairable_args_gets_a_readable_summary(tmp_path):
+    """Unrepairable args: the outcome carries a compact, model-readable summary
+    of the schema issues instead of the raw validator blob."""
+
+    @tool("db_read")
+    def read(value: int) -> int:
+        """Read a number."""
+        return value
+
+    mcp = inventory(tmp_path, read)
+    messages = await execute(graph(mcp, 'return await mcp.call("db","read",{value:"abc"});'))
+    assert messages[0].status == "error"
+    body = json.loads(messages[0].content)
+    step = body["outcomes"][0]
+    assert step["status"] == "failed"
+    message = step["error"]["message"]
+    assert "did not match" not in message or "schema" in message
+    assert "not of type" in message or "Valid" in message or "abc" in message
+
+
 async def test_runtime_credential_cannot_be_forwarded_through_nested_call(tmp_path, monkeypatch):
     secret = "sk-synthetic-code-mode-credential-123456789"
     monkeypatch.setenv("OPENAI_API_KEY", secret)

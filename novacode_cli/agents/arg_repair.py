@@ -200,29 +200,20 @@ def _apply_relational_defaults(
     return changed
 
 
-def evaluate_args(
-    args: dict, schema: dict, tool_name: str | None = None
-) -> tuple[dict, list[str]] | str | None:
-    """Check one call's arguments against the tool's JSON schema.
+def repair_invalid(
+    args: dict, schema: dict, tool_name: str | None, errors: list
+) -> tuple[dict, list[str], list[str]] | None:
+    """Shape + relational repairs for already-collected validator errors.
 
-    Returns:
-        - ``None``: the args are valid as-is — run them untouched.
-        - ``(fixed, kinds)``: the args needed adjustment (shape repairs, an
-          autolink unwrap, a relational default) — run ``fixed`` and surface
-          the note.
-        - ``str``: the args are invalid and unrepairable — a compact,
-          model-readable summary of the issues, to return instead of the raw
-          validator blob.
+    Returns ``(fixed, kinds, notes)`` when the repaired args validate clean,
+    else ``None``. Callers keep their own acceptance validator: the repaired
+    args must pass the original gate, not just this walk.
     """
     from jsonschema.validators import validator_for
 
     validator = validator_for(schema)(schema)
-    args, unlinked = _unlink_paths(args)
-    kinds = ["markdown-autolink"] if unlinked else []
-    errors = list(validator.iter_errors(args))
-    if not errors:
-        return ((args, kinds), ()) if kinds else None
     fixed = copy.deepcopy(args)
+    kinds: list[str] = []
     notes: list[str] = []
     for error in errors:
         path = list(error.absolute_path)
@@ -248,13 +239,44 @@ def evaluate_args(
             parent[path[-1]] = new
         kinds.append(kind)
     remaining = list(validator.iter_errors(fixed))
-    if remaining and tool_name is not None and _apply_relational_defaults(
-        fixed, remaining, tool_name, kinds, notes
+    if (
+        remaining
+        and tool_name is not None
+        and _apply_relational_defaults(fixed, remaining, tool_name, kinds, notes)
     ):
         remaining = list(validator.iter_errors(fixed))
-    if not remaining:
-        return (fixed, kinds), tuple(notes)
-    return _compact_issues(remaining)
+    if remaining:
+        return None
+    return fixed, kinds, notes
+
+
+def evaluate_args(
+    args: dict, schema: dict, tool_name: str | None = None
+) -> tuple[dict, list[str]] | str | None:
+    """Check one call's arguments against the tool's JSON schema.
+
+    Returns:
+        - ``None``: the args are valid as-is — run them untouched.
+        - ``(fixed, kinds)``: the args needed adjustment (shape repairs, an
+          autolink unwrap, a relational default) — run ``fixed`` and surface
+          the note.
+        - ``str``: the args are invalid and unrepairable — a compact,
+          model-readable summary of the issues, to return instead of the raw
+          validator blob.
+    """
+    from jsonschema.validators import validator_for
+
+    validator = validator_for(schema)(schema)
+    args, unlinked = _unlink_paths(args)
+    kinds = ["markdown-autolink"] if unlinked else []
+    errors = list(validator.iter_errors(args))
+    if not errors:
+        return ((args, kinds), ()) if kinds else None
+    repaired = repair_invalid(args, schema, tool_name, errors)
+    if repaired is None:
+        return _compact_issues(errors)
+    fixed, kinds, notes = repaired
+    return (fixed, kinds), tuple(notes)
 
 
 def repair_args(args: dict, schema: dict) -> tuple[dict, list[str]] | None:

@@ -1117,10 +1117,46 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
         if not profile_tool_allowed(profile, target.name, target.metadata):
             raise ValueError(f"The selected agent cannot call {target.name}.")
         schema = convert_to_openai_tool(target)["function"]["parameters"]
+        gate = _validator(json.dumps(schema, sort_keys=True), close_named=True)
         try:
-            _validator(json.dumps(schema, sort_keys=True), close_named=True).validate(arguments)
+            gate.validate(arguments)
         except Exception as exc:
-            raise ValueError(f"Invalid tool arguments: {exc}") from exc
+            # Validate-then-repair: the JS snippet's args failed the schema, so
+            # walk the validator's issue list and apply the repair catalogue at
+            # those paths (same layer the model's native tool calls get). The
+            # repaired args must still pass the ORIGINAL gate — acceptance
+            # semantics are unchanged, only recoverable shapes are fixed.
+            from jsonschema.validators import validator_for
+
+            from novacode_cli.agents.arg_repair import _compact_issues, repair_invalid
+
+            errors = list(validator_for(schema)(schema).iter_errors(arguments))
+            repaired = repair_invalid(arguments, schema, target.name, errors) if errors else None
+            accepted = None
+            if repaired is not None:
+                fixed, kinds, notes = repaired
+                try:
+                    gate.validate(fixed)
+                    accepted = (fixed, kinds, notes)
+                except Exception:
+                    accepted = None
+            if accepted is None:
+                # One line: the outcome record keeps the first line only, so the
+                # model-readable summary has to ride on it.
+                summary = "; ".join(
+                    line.strip("- ")
+                    for line in (
+                        _compact_issues(errors) if errors else _error_text(exc)
+                    ).splitlines()
+                    if line.strip()
+                )
+                raise ValueError(f"Invalid tool arguments: {summary}") from exc
+            arguments, kinds, repair_notes = accepted
+            step["repaired"] = {
+                "kinds": kinds,
+                **({"note": repair_notes[0]} if repair_notes else {}),
+            }
+            logger.info("tool_input_repaired:%s %s", target.name, ",".join(kinds))
         edited = await self._authorize(request, target.name, arguments)
         if edited is not None:
             arguments = edited
