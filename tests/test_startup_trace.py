@@ -43,3 +43,43 @@ def test_unwritable_diagnostic_log_does_not_abort_startup(monkeypatch: pytest.Mo
 
     monkeypatch.setattr(startup_trace, "_ensure_handler", unavailable)
     startup_trace.mark("heavy_imports_start")
+
+
+def test_a_failed_rollover_drops_the_record_without_printing_to_stderr(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Nova processes hold startup.log open concurrently, so the rollover's
+    rename fails with WinError 32 while another session is live. The logging
+    machinery prints that traceback to stderr itself — outside mark()'s
+    guard — so the handler must swallow it instead: the trace is diagnostic
+    and a record lost to a failed rotation is acceptable noise."""
+    import os
+
+    logger = logging.getLogger("novacode_cli.startup.test.rollover")
+    monkeypatch.setattr(startup_trace, "_logger", logger)
+    monkeypatch.setattr(startup_trace, "_LOG_PATH", tmp_path / "startup.log")
+
+    def refusing_rename(source, dest, **_kwargs: object) -> None:
+        raise PermissionError(32, "file is open in another process")
+
+    monkeypatch.setattr(os, "rename", refusing_rename)
+    try:
+        # ~1 200 short records cross the handler's 64 KB cap, forcing rollovers
+        # that the refusing rename turns into the exact production failure.
+        for index in range(1200):
+            startup_trace.mark(f"phase-{index}")
+
+        captured = capsys.readouterr()
+        assert "Logging error" not in captured.err
+        assert "PermissionError" not in captured.err
+        assert "Traceback" not in captured.err
+        # Rotation was impossible, so nothing was moved away: the file keeps
+        # its pre-cap content and freezes there (records past the cap are
+        # dropped until some later process's rotation finally succeeds).
+        text = (tmp_path / "startup.log").read_text(encoding="utf-8")
+        assert "startup phase: phase-0" in text
+        assert "startup phase:" in text.splitlines()[-1]
+    finally:
+        for handler in logger.handlers[:]:
+            handler.close()
+            logger.removeHandler(handler)
