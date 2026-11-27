@@ -57,6 +57,8 @@ async def test_status_ignores_stale_hidden_child_state_and_resolved_question():
 
 
 async def test_center_observes_another_terminal_transition(tmp_path: Path):
+    import time
+
     presence = TerminalPresence(tmp_path)
     manager = Manager([meta("remote")])
     manager.sessions_dir = tmp_path
@@ -64,22 +66,29 @@ async def test_center_observes_another_terminal_transition(tmp_path: Path):
     host = Host(screen)
     presence.publish([{"session_id": "remote", "status": "Working", "pane_id": "root"}])
     async with host.run_test() as pilot:
-        await screen.workers.wait_for_complete()
-        await pilot.pause()
+        # _load_presence is an exclusive worker the 1s interval also fires, so a
+        # manual call can legitimately cancel a predecessor on a slow runner.
+        # Converge on the file state instead of assuming one worker survives.
+        async def observed_status(session_id: str, expected: str) -> bool:
+            deadline = time.monotonic() + 5.0
+            while time.monotonic() < deadline:
+                row = screen._rows.get(f"session:{session_id}")
+                if row is not None and row.status == expected:
+                    return True
+                screen._load_presence()
+                await pilot.pause(0.05)
+            return False
+
+        assert await observed_status("remote", "Working")
         row = screen._rows["session:remote"]
-        assert row.status == "Working"
         assert row.external
         assert not row.pane_id
         await pilot.press("enter")
         assert host.result is None
         presence.publish([{"session_id": "remote", "status": "Needs you"}])
-        screen._load_presence()
-        await screen.workers.wait_for_complete()
-        assert screen._rows["session:remote"].status == "Needs you"
+        assert await observed_status("remote", "Needs you")
         presence.close()
-        screen._load_presence()
-        await screen.workers.wait_for_complete()
-        assert screen._rows["session:remote"].status == "Inactive"
+        assert await observed_status("remote", "Inactive")
 
 
 async def test_app_publishes_transitions_and_removes_its_snapshot(

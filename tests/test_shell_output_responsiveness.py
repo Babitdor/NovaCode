@@ -2,6 +2,7 @@
 
 import asyncio
 import sys
+import time
 from collections import deque
 
 import pytest
@@ -220,6 +221,13 @@ async def test_noisy_interactive_terminal_parses_off_the_ui_loop(tmp_path, monke
         await app._run_bash(f'!!"{sys.executable}" "{script}"')
         await app.workers.wait_for_complete()
         assert isinstance(app.screen, TerminalCommandScreen)
+        # The bash worker finishing does not mean the last off-UI parse chunk
+        # has been applied yet; converge on the final row instead of racing it.
+        deadline = time.monotonic() + 10.0
+        while (
+            "row-2999" not in app.screen.terminal.snapshot() and time.monotonic() < deadline
+        ):
+            await asyncio.sleep(0.05)
         assert "row-2999" in app.screen.terminal.snapshot()
         assert any(thread != ui_thread for thread in parse_threads)
 
