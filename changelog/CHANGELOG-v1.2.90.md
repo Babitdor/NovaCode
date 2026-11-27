@@ -20,4 +20,19 @@ behind `/sessions` — with:
   declared in `pyproject.toml`, so an edit can never silently strand a
   dependency again.
 
+## Fix: the home banner fills its container in every home style
+
+The Matrix-rain banner pinned its own width to the first grid guess, and the
+dashboard never re-gridded on resize (the correction only ran for the
+classic/signal viewport path). Each home style's chain between the terminal
+and the banner differs — classic's header border 2 columns, dashboard's header
+padding 2, the assumed transcript padding 4 — so the grid locked in whatever
+the first guess got wrong and left a blank band down the right side of the
+backdrop. The banner now always fills its container, every resize re-grids
+from the laid-out box, and rendering pulls one refit per box/grid mismatch
+(a resize event cannot fire when the box itself no longer changes). The banner
+test runs all three home styles through an isolated config with a settle loop
+instead of asserting mid-convergence with whatever `home_style` a developer's
+own config leaks in.
+
 v1.2.89 installs were affected; this release supersedes it.
