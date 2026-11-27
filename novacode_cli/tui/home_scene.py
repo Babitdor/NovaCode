@@ -19,15 +19,21 @@ PORTRAIT_HOME_MIN_HEIGHT = 34
 _BLINK_HALF_FRAMES = 3
 
 
-def scene_frame(style: str, base: Text, palette: FooterPalette, frame: int) -> Text:
-    """Draw one decorative frame without changing the scene's row count."""
-    result = base.copy()
+def scene_frame_layout(
+    style: str, plain: str, accent: str, text_color: str, frame: int
+) -> tuple[str, list[tuple[int, int, str]]]:
+    """One scene frame as plain data: the text plus `(start, end, style)` spans.
+
+    Pure and string-only so the per-frame compute can be ported to Rust and
+    verified against recorded calls; :func:`scene_frame` is the Rich wrapper.
+    """
     if style == "terminal":
-        visible = min(len(base.plain), 2 + frame * 3)
-        text = "".join(
-            char if index < visible or char == "\n" else " "
-            for index, char in enumerate(base.plain)
-        )
+        visible = min(len(plain), 2 + frame * 3)
+        chars = list(plain)
+        for index in range(visible, len(chars)):
+            if chars[index] != "\n":
+                chars[index] = " "
+        text = "".join(chars)
         cursor_on = frame % (_BLINK_HALF_FRAMES * 2) < _BLINK_HALF_FRAMES
         if visible < len(text):
             cursor = visible + (text[visible] == "\n")
@@ -35,28 +41,43 @@ def scene_frame(style: str, base: Text, palette: FooterPalette, frame: int) -> T
                 text = text[:cursor] + "_" + text[cursor + 1 :]
         else:
             text += " _" if cursor_on else "  "
-        return Text(text, style=base.style)
+        return text, []
     if style == "blueprint":
-        start = base.plain.find("─")
+        start = plain.find("─")
         if start >= 0:
-            end = base.plain.find("\n", start)
-            end = len(base.plain) if end < 0 else end
+            end = plain.find("\n", start)
+            end = len(plain) if end < 0 else end
             cursor = start + frame % max(1, end - start)
-            result.stylize(f"bold reverse {palette.accent}", cursor, cursor + 1)
-    elif style == "studio":
-        lines = base.plain.splitlines(keepends=True)
+            return plain, [(cursor, cursor + 1, f"bold reverse {accent}")]
+        return plain, []
+    if style == "studio":
+        lines = plain.splitlines(keepends=True)
         sweep = frame % max(1, len(lines))
+        spans: list[tuple[int, int, str]] = []
         offset = 0
+        stars = list(plain)
         for index, line in enumerate(lines):
             if index == sweep:
-                result.stylize(f"bold {palette.text}", offset, offset + len(line.rstrip("\n")))
+                spans.append((offset, offset + len(line.rstrip("\n")), f"bold {text_color}"))
             offset += len(line)
         # Only ordinary spaces are transparent: braille blanks belong to the portrait.
-        stars = list(base.plain)
         for index in range(frame % 7, len(stars), 97):
             if stars[index] == " ":
                 stars[index] = "." if (index + frame) % 2 else "*"
-        result = Text("".join(stars), style=result.style, spans=result.spans)
+        return "".join(stars), spans
+    return plain, []
+
+
+def scene_frame(style: str, base: Text, palette: FooterPalette, frame: int) -> Text:
+    """Draw one decorative frame without changing the scene's row count."""
+    text, spans = scene_frame_layout(style, base.plain, palette.accent, palette.text, frame)
+    if style == "terminal":
+        return Text(text, style=base.style)
+    # The base art's own spans ride along (the original did this via
+    # base.copy()); the star mutation in studio keeps offsets valid.
+    result = Text(text, style=base.style, spans=list(base.spans))
+    for start, end, span_style in spans:
+        result.stylize(span_style, start, end)
     return result
 
 

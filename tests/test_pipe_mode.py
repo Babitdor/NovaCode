@@ -26,6 +26,7 @@ def make(monkeypatch, stream=None):
         headless_out_fd=None,
         headless_exit_code=0,
         pipe_startup_timeout=0.05,
+        steering_instructions=[],
     )
     worker = PipeSession(agent=object(), assistant_id="nova", session_state=state)
     records = []
@@ -115,6 +116,59 @@ def test_ready_advertises_command_and_images(monkeypatch):
     capabilities = records[0]["capabilities"]
     assert "command" in capabilities
     assert "images" in capabilities
+    assert "steer" in capabilities
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("consume", [True, False])
+async def test_desktop_guidance_stays_in_the_target_turn(monkeypatch, consume):
+    from novacode_cli.bootstrap.steering import SteeringMiddleware
+
+    resume = asyncio.Event()
+
+    async def stream(text, *args, **kwargs):
+        await resume.wait()
+        update = middleware.before_model({}, None) if consume else None
+        if update:
+            yield ev.AssistantMessage(update["messages"][0].content, "Nova", "blue")
+        yield ev.Done(True)
+
+    worker, records = make(monkeypatch, stream)
+    instructions = worker.session_state.steering_instructions
+    middleware = SteeringMiddleware(instructions=instructions)
+    task = asyncio.create_task(worker.run())
+    try:
+        await worker.inbox.put({"type": "prompt", "id": "running", "content": "initial"})
+        await wait_for(lambda: any(record["type"] == "started" for record in records))
+        for target in ("previous", "running"):
+            await worker.inbox.put(
+                {"type": "steer", "id": target, "request_id": target, "content": "/literal"}
+            )
+        await wait_for(lambda: sum(record["type"] == "steer_result" for record in records) == 2)
+        results = [record for record in records if record["type"] == "steer_result"]
+        assert [(record["id"], record["ok"]) for record in results] == [
+            ("previous", False),
+            ("running", True),
+        ]
+        resume.set()
+        await wait_for(lambda: any(record["type"] == "done" for record in records))
+        assert [record["request_id"] for record in records if record["type"] == "started"] == [
+            "running"
+        ]
+        text = [record["content"] for record in records if record["type"] == "text"]
+        missed = [record["count"] for record in records if record["type"] == "steer_undelivered"]
+        if consume:
+            assert text == [
+                "[Guidance from a desktop tool. Follow the usual user approval process.]\n/literal"
+            ]
+            assert not missed
+        else:
+            assert not text
+            assert missed == [1]
+        assert not instructions
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
 
 
 def test_command_frame_runs_without_a_turn(monkeypatch):

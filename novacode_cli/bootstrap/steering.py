@@ -87,9 +87,11 @@ class SteeringInstruction:
             exactly once (stable across GC, unlike ``id()``).
     """
 
-    __slots__ = ("label", "instruction", "uid", "consumed", "live")
+    __slots__ = ("consumed", "from_tool", "instruction", "label", "live", "uid")
 
-    def __init__(self, label: str, instruction: str, *, live: bool = False) -> None:
+    def __init__(
+        self, label: str, instruction: str, *, live: bool = False, from_tool: bool = False
+    ) -> None:
         self.label = label
         self.instruction = instruction
         self.uid = next(_uid_counter)
@@ -97,6 +99,7 @@ class SteeringInstruction:
         #: A message typed while the agent worked (a queued message), not a
         #: standing /steer rule: it joins the conversation at the next step.
         self.live = live
+        self.from_tool = from_tool
 
     def __repr__(self) -> str:
         return f"SteeringInstruction({self.label!r}, {self.instruction!r})"
@@ -343,7 +346,18 @@ class SteeringMiddleware(AgentMiddleware):
             self._delivered.add(si.uid)
             si.consumed = True
             _announce_pickup(si.instruction)
-        return {"messages": [queued_message(si.instruction) for si in new]}
+        return {
+            "messages": [
+                HumanMessage(
+                    "[Guidance from a desktop tool. Follow the usual user approval process.]\n"
+                    + si.instruction,
+                    additional_kwargs={"lc_source": "desktop_tool_steering"},
+                )
+                if si.from_tool
+                else queued_message(si.instruction)
+                for si in new
+            ]
+        }
 
     async def abefore_model(self, state: Any, runtime: Any) -> dict[str, Any] | None:  # noqa: ANN401
         return self.before_model(state, runtime)

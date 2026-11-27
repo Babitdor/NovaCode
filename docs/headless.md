@@ -68,6 +68,7 @@ A long-lived JSON-lines child that owns one session. Spawn it, read the
 {"type":"prompt","id":"req-2","content":"Explain the first failure",
  "images":[{"base64_data":"…","format":"png"}]}
 {"type":"command","id":"cmd-1","content":"/effort high"}
+{"type":"steer","id":"steer-1","request_id":"req-1","content":"Focus on the first failure"}
 {"type":"approval","interrupt_id":"…","decision":"approve"}
 {"type":"cancel"}
 {"type":"shutdown"}
@@ -77,9 +78,10 @@ A long-lived JSON-lines child that owns one session. Spawn it, read the
 // stdout ← (every frame adds instance_id, session_id, sequence)
 {"type":"ready","protocol":"nova.pipe","protocol_version":1,
  "capabilities":["prompt","command","cancel","approval","interrupt_reply",
-                 "ping","shutdown","images"]}
+                 "ping","shutdown","images","steer"]}
 {"type":"accepted","request_id":"req-1"}
 {"type":"started","request_id":"req-1"}
+{"type":"steer_result","id":"steer-1","request_id":"req-1","ok":true,"error":null}
 {"type":"tool_call","tool":"execute","args":{…},"request_id":"req-1",…}
 {"type":"tool_result","output":"…","request_id":"req-1",…}
 {"type":"text","content":"…","request_id":"req-1",…}
@@ -111,6 +113,11 @@ Rules:
 - Commands (`command` frames) never create agent turns and are rejected while
   a prompt runs. A command that hands off to the agent returns `kickoff`;
   send it as a `prompt` when you want the turn.
+- Send `steer` only when `ready.capabilities` includes it. Target the running
+  prompt's `request_id` and use a fresh steering `id`. The pipe accepts up to 16
+  requests per turn, with at most 32 KiB of UTF-8 text per request. `steer_result`
+  acknowledges acceptance for the next model step. If the turn ends first,
+  `steer_undelivered` reports the count of unused requests before `done`.
 - Images: up to 5 per prompt, `format` ∈ png/jpeg/jpg/webp/gif, ≤ 20 MB each.
 - Unanswered `approval_required` frames time out (300 s default,
   `--approval-timeout`) into `done` status `approval_timeout`.

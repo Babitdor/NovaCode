@@ -29,6 +29,32 @@ class _Column:
     chain: list[str]
 
 
+def paint_chains(
+    width: int, height: int, columns: list[_Column]
+) -> tuple[list[list[str]], list[list[int]]]:
+    """Erase the previous frame and repaint every live chain.
+
+    Pure and module-level so the O(width x height) per-step repaint can be
+    ported to Rust and verified against recorded calls; the level zero is the
+    bright, unsaturated head and other levels use the source's
+    ``1 - (distance / length) ** 2`` fade.
+    """
+    glyphs = [[" "] * width for _ in range(height)]
+    levels = [[-1] * width for _ in range(height)]
+    for column in columns:
+        for distance, glyph in enumerate(column.chain):
+            row = column.head - distance
+            if 0 <= row < height:
+                glyphs[row][column.x] = glyph
+                # "Love of my life": each character occupies two terminal cells.
+                glyphs[row][column.x + 1] = ""
+                levels[row][column.x] = (
+                    0 if distance == 0 else 1 + round(15 * (distance / len(column.chain)) ** 2)
+                )
+                levels[row][column.x + 1] = levels[row][column.x]
+    return glyphs, levels
+
+
 class Matrix3:
     """Keep bounded live-chain buffers independently of the terminal driver."""
 
@@ -57,21 +83,7 @@ class Matrix3:
 
     def _paint_chains(self) -> None:
         # Erase the previous frame so departed chains leave no shadow or ghost text.
-        for row in range(self.height):
-            self._glyphs[row][:] = [" "] * self.width
-            self._levels[row][:] = [-1] * self.width
-        for column in self._columns:
-            for distance, glyph in enumerate(column.chain):
-                row = column.head - distance
-                if 0 <= row < self.height:
-                    self._glyphs[row][column.x] = glyph
-                    self._glyphs[row][column.x + 1] = ""
-                    # Level zero is the bright, unsaturated head; other levels
-                    # use the source's 1 - (distance / length) ** 2 fade.
-                    self._levels[row][column.x] = (
-                        0 if distance == 0 else 1 + round(15 * (distance / len(column.chain)) ** 2)
-                    )
-                    self._levels[row][column.x + 1] = self._levels[row][column.x]
+        self._glyphs, self._levels = paint_chains(self.width, self.height, self._columns)
 
     def _step(self) -> None:
         occupied = {column.x for column in self._columns}

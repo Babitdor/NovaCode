@@ -59,6 +59,7 @@ class PipeSession(SessionWorker):
         self._output_lock = threading.Lock()
         self._emit = self._frame
         self._requests = OrderedDict()
+        self._steers = {}
         self._public_interrupts = {}
         self._policy = []
         self._terminal = None
@@ -119,6 +120,7 @@ class PipeSession(SessionWorker):
                     "ping",
                     "shutdown",
                     "images",
+                    "steer",
                 ],
                 max_pending=self.MAX_PENDING,
             )
@@ -386,6 +388,48 @@ class PipeSession(SessionWorker):
             entry["done"] = done
         self.publish("done", **done)
 
+    def _accept_steer(self, msg: dict) -> None:
+        from novacode_cli.bootstrap.steering import SteeringInstruction
+        from novacode_cli.tools.waiter_tools import interrupt_task_waits
+
+        steer_id, target, text = (msg.get(key) for key in ("id", "request_id", "content"))
+        if not isinstance(steer_id, str) or not 0 < len(steer_id) <= 128:
+            self._reject("invalid_request", "Steering requires a request id (max 128 characters)")
+            return
+
+        reason = None
+        try:
+            valid_text = (
+                isinstance(text, str)
+                and text.strip()
+                and "\0" not in text
+                and len(text.encode("utf-8")) <= 32 * 1024
+            )
+        except UnicodeError:
+            valid_text = False
+        if not valid_text:
+            reason = "Enter steering text of 1 to 32768 UTF-8 bytes"
+        elif (
+            target != self._turn_id
+            or not self._turn_running()
+            or self._status != "running"
+            or self._completed
+            or self._terminal is not None
+        ):
+            reason = "The requested turn is no longer running"
+        elif steer_id in self._steers:
+            reason = "This steering request was already accepted"
+        elif len(self._steers) >= self.MAX_PENDING:
+            reason = "This turn reached its steering limit"
+        else:
+            instruction = SteeringInstruction("steer", text, live=True, from_tool=True)
+            self.session_state.steering_instructions.append(instruction)
+            self._steers[steer_id] = instruction
+            interrupt_task_waits(self.session_state.thread_id)
+        self.publish(
+            "steer_result", id=steer_id, request_id=target, ok=reason is None, error=reason
+        )
+
     def translate(self, msg):
         """Validate a public frame before it can reach the private worker."""
         if msg is None:
@@ -461,6 +505,9 @@ class PipeSession(SessionWorker):
             }
         if kind == "command":
             return self._translate_command(msg)
+        if kind == "steer":
+            self._accept_steer(msg)
+            return {}
         if kind in ("approval", "interrupt_reply"):
             iid = msg.get("interrupt_id")
             entry = self._public_interrupts.get(iid) if isinstance(iid, str) else None
@@ -500,7 +547,7 @@ class PipeSession(SessionWorker):
             return {}
         self._reject(
             "unknown_command",
-            "Supported commands: prompt, approval, interrupt_reply, cancel, ping, shutdown",
+            "Supported commands: prompt, command, steer, approval, interrupt_reply, cancel, ping, shutdown",
         )
         return {}
 
@@ -585,6 +632,15 @@ class PipeSession(SessionWorker):
                     if self._completed and self._terminal and self._terminal["ok"]
                     else "error"
                 )
+            self._status = status
+            missed = 0
+            for instruction in self._steers.values():
+                with contextlib.suppress(ValueError):
+                    self.session_state.steering_instructions.remove(instruction)
+                missed += not instruction.consumed
+            self._steers.clear()
+            if missed:
+                self.publish("steer_undelivered", request_id=pid, count=missed)
             with contextlib.suppress(Exception):
                 await asyncio.wait_for(self._save(), timeout=5)
             self._finish(pid, status)
