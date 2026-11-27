@@ -105,9 +105,43 @@ class _Factory:
 @pytest.fixture
 def factory(monkeypatch):
     made = _Factory()
+    import contextlib as cl
     import langchain_mcp_adapters.sessions as sessions_mod
 
     monkeypatch.setattr(sessions_mod, "create_session", made)
+
+    # Stdio servers that drift from the startup preset (custom env, version
+    # pins) spawn through mw.stdio_client + mw.ClientSession now — their
+    # stderr is captured to a per-server log file. The fake factory covers
+    # that seam too, so session-count assertions hold for both paths.
+
+    @cl.asynccontextmanager
+    async def fake_stdio(params, errlog=None):
+        yield object(), object()
+
+    class _DelegatingSession:
+        def __init__(self, ctx):
+            self._ctx = ctx
+            self._session = None
+
+        async def __aenter__(self):
+            self._session = await self._ctx.__aenter__()
+            return self._session
+
+        async def __aexit__(self, *exc):
+            return await self._ctx.__aexit__(*exc)
+
+        def __getattr__(self, name):
+            session = self.__dict__.get("_session")
+            if session is None:
+                raise AttributeError(name)
+            return getattr(session, name)
+
+    def fake_client_session(read, write, **kwargs):
+        return _DelegatingSession(made({"transport": "stdio"}))
+
+    monkeypatch.setattr(mw, "stdio_client", fake_stdio)
+    monkeypatch.setattr(mw, "ClientSession", fake_client_session)
     return made
 
 
@@ -218,6 +252,33 @@ async def test_cancelling_serena_leaves_transport_time_to_stop_its_children(monk
         await release.wait()
 
     monkeypatch.setattr("langchain_mcp_adapters.sessions.create_session", make_session)
+    # The drifted-stdio branch spawns through these two (stderr captured).
+    import contextlib as cl
+
+    @cl.asynccontextmanager
+    async def fake_stdio(params, errlog=None):
+        yield object(), object()
+
+    class _HookedSession:
+        def __init__(self, read, write):
+            self._ctx = make_session(STDIO)
+            self._session = None
+
+        async def __aenter__(self):
+            self._session = await self._ctx.__aenter__()
+            return self._session
+
+        async def __aexit__(self, *exc):
+            return await self._ctx.__aexit__(*exc)
+
+        def __getattr__(self, name):
+            session = self.__dict__.get("_session")
+            if session is None:
+                raise AttributeError(name)
+            return getattr(session, name)
+
+    monkeypatch.setattr(mw, "stdio_client", fake_stdio)
+    monkeypatch.setattr(mw, "ClientSession", _HookedSession)
 
     call = asyncio.create_task(proxy.call_tool("execute_shell_command", {}))
     try:
@@ -244,6 +305,36 @@ async def test_a_server_that_will_not_start_raises_and_leaves_no_wreckage(monkey
     import langchain_mcp_adapters.sessions as sessions_mod
 
     monkeypatch.setattr(sessions_mod, "create_session", made)
+
+    import contextlib as cl
+
+    @cl.asynccontextmanager
+    async def fake_stdio(params, errlog=None):
+        yield object(), object()
+
+    class _DelegatingSession:
+        def __init__(self, ctx):
+            self._ctx = ctx
+            self._session = None
+
+        async def __aenter__(self):
+            self._session = await self._ctx.__aenter__()
+            return self._session
+
+        async def __aexit__(self, *exc):
+            return await self._ctx.__aexit__(*exc)
+
+        def __getattr__(self, name):
+            session = self.__dict__.get("_session")
+            if session is None:
+                raise AttributeError(name)
+            return getattr(session, name)
+
+    def fake_client_session(read, write, **kwargs):
+        return _DelegatingSession(made({"transport": "stdio"}))
+
+    monkeypatch.setattr(mw, "stdio_client", fake_stdio)
+    monkeypatch.setattr(mw, "ClientSession", fake_client_session)
 
     pool = mw._PersistentSessionPool()
     proxy = mw._SessionProxy(pool, "s", STDIO)

@@ -39,6 +39,32 @@ from novacode_cli.prompts import render_template
 logger = logging.getLogger(__name__)
 _DISCOVERY_TIMEOUT = 90.0
 
+_MCP_LOG_DIR = Path.home() / ".nova" / "logs" / "mcp"
+
+
+def _server_stderr_log(server: str):
+    """An append-mode file for one MCP server's stderr.
+
+    The MCP SDK defaults a stdio server's stderr to ``sys.stderr``, so any
+    drifted entry (a version pin, custom env, extra flags) writes its logs
+    straight over the TUI. They belong in a file: still readable after the
+    fact, never on screen.
+    """
+    _MCP_LOG_DIR.mkdir(parents=True, exist_ok=True)
+    return open(_MCP_LOG_DIR / f"{server}.log", "a", encoding="utf-8")
+
+
+def _expand_connection_env(env: dict[str, str] | None) -> dict[str, str] | None:
+    """Expand ``${VAR}`` references the way langchain-mcp-adapters does."""
+    if env is None:
+        return None
+    try:
+        from langchain_mcp_adapters.sessions import _expand_env_vars
+
+        return {key: _expand_env_vars(value) for key, value in env.items()}
+    except ImportError:  # pragma: no cover - older adapters
+        return dict(env)
+
 
 class _PersistentSessionPool:
     """One long-lived MCP session per stdio server, shared by every tool call.
@@ -94,6 +120,25 @@ class _PersistentSessionPool:
                     errlog = stack.enter_context(open(os.devnull, "w", encoding="utf-8"))
                     params = StdioServerParameters(
                         command=connection["command"], args=connection["args"]
+                    )
+                    streams = await stack.enter_async_context(stdio_client(params, errlog=errlog))
+                    session = await stack.enter_async_context(ClientSession(*streams))
+                elif connection.get("transport", "stdio") == "stdio" and connection.get("command"):
+                    # Any other stdio server leaks its stderr to the terminal: the
+                    # SDK's default errlog is sys.stderr, so a drifted entry (a
+                    # version pin, custom env, extra flags) prints Serena's INFO
+                    # logs and friends straight over the TUI. Capture it per
+                    # server instead — still readable, never on screen.
+                    errlog = stack.enter_context(_server_stderr_log(server))
+                    params = StdioServerParameters(
+                        command=connection["command"],
+                        args=connection.get("args") or [],
+                        env=_expand_connection_env(connection.get("env")),
+                        cwd=connection.get("cwd"),
+                        encoding=connection.get("encoding", "utf-8"),
+                        encoding_error_handler=connection.get(
+                            "encoding_error_handler", "strict"
+                        ),
                     )
                     streams = await stack.enter_async_context(stdio_client(params, errlog=errlog))
                     session = await stack.enter_async_context(ClientSession(*streams))
