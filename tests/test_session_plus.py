@@ -109,7 +109,28 @@ async def test_plus_creates_blank_session_and_preserves_home(
         root = app._root_pane
         rain = app._home_banner
         initial_logo_top = rain.region.y + rain._art_top
-        initial_grid = (rain._col_count, rain._row_count)
+
+        def fills_container() -> bool:
+            """The banner spans its current container exactly (no blank band,
+            no wrapped rows). The container itself may legitimately differ
+            between the root home and a child session's home — a pane wrapper
+            costs columns — so the invariant is the fill, not one grid tuple."""
+            slot = rain.parent
+            content = getattr(slot, "content_size", None)
+            return bool(
+                content
+                and content.width
+                and rain._col_count == max(content.width, rain._art_w)
+            )
+
+        async def settled() -> None:
+            for _ in range(40):
+                await pilot.pause()
+                if fills_container():
+                    return
+
+        await settled()
+        assert fills_container(), "home banner does not fill its container"
         if not from_home:
             app._set_home_visible(visible=False)
         await pilot.click("#new-session")
@@ -121,7 +142,8 @@ async def test_plus_creates_blank_session_and_preserves_home(
         assert app._home_visible
         assert app._home_banner is rain
         assert len(app.query(MatrixRain)) == 1
-        assert (rain._col_count, rain._row_count) == initial_grid
+        await settled()
+        assert fills_container(), "banner stopped filling its container after +"
         assert rain.region.y + rain._art_top == initial_logo_top
         assert app.query_one("#prompt", PromptInput).has_focus
         supervisor.spawn.assert_awaited_once()
@@ -130,7 +152,8 @@ async def test_plus_creates_blank_session_and_preserves_home(
         assert app._home_visible is from_home
         await app._switch_to(child)
         assert app._home_visible
-        assert (rain._col_count, rain._row_count) == initial_grid
+        await settled()
+        assert fills_container()
         assert rain.region.y + rain._art_top == initial_logo_top
         await app._dispatch_to_child(child, "hello")
         assert not app._home_visible

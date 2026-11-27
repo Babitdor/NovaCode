@@ -572,6 +572,37 @@ class MatrixRain(Static):
         self._strips = self._build_strips()
         self.refresh(layout=needs_layout)
 
+    def _refit_if_box_changed(self) -> None:
+        """Re-grid when the laid-out box no longer matches the grid.
+
+        A resize event only fires when the widget's own box changes. With a
+        ``1fr`` width the box follows its container, but the first layout can
+        hand the widget a transient width, and after that no further resize
+        fires even though box and grid disagree — the grid stays at the initial
+        terminal-width guess and leaves a blank band beside the rain. Rendering
+        is the one point that definitely sees the settled box, so the refit is
+        pulled from here, once per mismatch, outside this render pass.
+        """
+        if (
+            getattr(self, "_refit_pending", False)
+            or not self.is_mounted
+            or not self.size.area
+            or self._width == self.size.width + 4
+        ):
+            return
+        self._refit_pending = True
+        self.call_after_refresh(self._refit_to_box)
+
+    def _refit_to_box(self) -> None:
+        self._refit_pending = False
+        if not self.is_mounted or not self.size.area:
+            return
+        self._configure(self._art_source, self.size.width + 4)
+        self._init_columns()
+        self._apply_size()
+        self._needs_layout = True
+        self.redraw_frame()
+
     def render_line(self, y: int) -> Strip:
         """Serve row *y* from the frame built by :meth:`_tick`.
 
@@ -589,6 +620,7 @@ class MatrixRain(Static):
         a ``Text`` measured *worse* (28 ms); the cost is ``Text``'s own span
         resolution and line division, so the only real fix is to not build one.
         """
+        self._refit_if_box_changed()
         if 0 <= y < len(self._strips):
             return self._strips[y]
         return Strip.blank(self.size.width or self._col_count, self.rich_style)
