@@ -689,6 +689,68 @@ def test_home_banner_fits_the_header_width(
     asyncio.run(_drive_banner_fits_its_container(term_width, style=home_style))
 
 
+# ── modal lists must actually show their options ─────────────────────────────
+
+
+async def test_sessions_picker_shows_its_options():
+    """Regression: `max-height: 40%` resolved against the auto-height modal and
+    collapsed the picker's OptionList to zero content rows — /sessions opened a
+    bordered empty strip with Select/Cancel and no options at all."""
+    from textual.widgets import OptionList
+
+    app = _app()
+    async with app.run_test(size=(120, 40)) as pilot:
+        app.run_worker(app._run_session_import("/sessions"), exclusive=False)
+        screen = None
+        for _ in range(60):
+            await pilot.pause()
+            screen = app.screen
+            if type(screen).__name__ == "PickScreen" and screen.is_mounted:
+                break
+        assert type(screen).__name__ == "PickScreen"
+        ol = screen.query_one("#pick-list", OptionList)
+        for _ in range(20):
+            await pilot.pause()
+        assert ol.option_count == 2
+        # Every option row must have screen space, not just exist in the model.
+        assert ol.size.height >= ol.option_count, (
+            f"picker list is {ol.size.height} rows for {ol.option_count} options — "
+            "the options are in the model but get no screen space"
+        )
+
+
+async def test_saved_sessions_screen_shows_its_options(tmp_path):
+    from textual.widgets import OptionList
+
+    from novacode_cli.session.session_persistence import SessionManager
+    from novacode_cli.tui.screens import SessionsScreen
+
+    app = _app()
+    async with app.run_test(size=(120, 40)) as pilot:
+        sm = SessionManager(tmp_path / "sessions")
+        from langchain_core.messages import HumanMessage
+
+        sm.save_session(
+            session_id="picker-test1",
+            thread_id="picker-thread",
+            messages=[HumanMessage(content="hello")],
+            assistant_id="nova-agent",
+            current_task="picker regression",
+        )
+        await pilot.pause()
+        screen = SessionsScreen(sm, None)
+        app.push_screen(screen)
+        for _ in range(30):
+            await pilot.pause()
+            if screen.is_mounted:
+                break
+        ol = screen.query_one("#sessions", OptionList)
+        for _ in range(20):
+            await pilot.pause()
+        assert ol.option_count >= 1, "a saved session exists but the list is empty"
+        assert ol.size.height >= min(ol.option_count, 16)
+
+
 async def _drive_transcript_fills_screen():
     """The pane wrapper must be layout-transparent."""
     app = _app()

@@ -2163,9 +2163,15 @@ class NovaApp(App):
     #modal-body { padding: 0 0; }
     #modal-choices { dock: bottom; height: auto; }
     #modal-choices #modal-hint { height: auto; }
-    /* Long lists scroll inside the box instead of overflowing the screen. */
+    /* Long lists scroll inside the box instead of overflowing the screen.
+       The cap is ABSOLUTE on purpose: `max-height: 40%` resolves against this
+       auto-height modal, and an indefinite parent collapses an OptionList to
+       zero content rows — the modal rendered as an empty bordered strip with
+       no options at all (the "empty /sessions picker"). `height: auto` with a
+       definite cap sizes short lists to their content and still bounds long
+       ones with an internal scroll. */
     #sessions, #pick-list, #infolist, #mcp-configured, #mcp-presets, #plugins, #cplugins-list, #agents-list, #skills-list, #servers-list, #hooks-list, #wiki-pages-list, #wiki-inbox-list, #tasks-list {
-        height: auto; max-height: 40%;
+        height: auto; max-height: 16;
         padding: 0 2;
     }
     #wiki-tab-buttons {
