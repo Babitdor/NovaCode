@@ -534,11 +534,23 @@ class MatrixRain(Static):
         Early-returns (no work) when the widget is scrolled out of the visible
         viewport, so transcript messages push the rain off-screen cheaply.
         """
+        self._tick_count = getattr(self, "_tick_count", 0) + 1
         # Pause animation updates while TTS is playing to prevent audio stuttering
         # due to thread / GIL contention on the main loop.
         try:
             vp = getattr(self.app, "_voice_pipeline", None)
             if vp is not None and vp.tts_active:
+                return
+        except Exception:  # noqa: BLE001
+            pass
+
+        # A modal on top (the image preview, settings, …) is re-composited on
+        # every frame the rain marks damaged — with the preview's full-screen
+        # image in the blend that is the "preview stutters and glitches"
+        # report. Nothing on the modal needs the rain to move. The stack depth
+        # is true the moment a screen is pushed; app.screen can lag a frame.
+        try:
+            if len(self.app.screen_stack) > 1:
                 return
         except Exception:  # noqa: BLE001
             pass
@@ -567,6 +579,7 @@ class MatrixRain(Static):
         # screen DOM (up to ~400 transcript widgets) on every frame — the
         # single biggest source of TUI jank while the rain was visible. A
         # one-shot layout pass still runs after mount/reflow (size changes).
+        self._frame_count = getattr(self, "_frame_count", 0) + 1
         needs_layout = self._needs_layout
         self._needs_layout = False
         self._strips = self._build_strips()

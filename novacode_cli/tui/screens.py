@@ -6717,7 +6717,9 @@ class ImagePreviewScreen(ModalScreen[None]):
                 return
             except Exception:  # noqa: BLE001 — fall through to half-blocks
                 pass
-        body.update(self._half_blocks(pil))
+        # The half-block Text carries thousands of styled spans; building it on
+        # the UI loop stalled the frame budget right when the preview opened.
+        body.update(await asyncio.to_thread(self._half_blocks, pil))
 
     def _load_pil(self):
         """Decode the image off-loop and downscale it to preview size."""
