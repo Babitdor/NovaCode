@@ -44,6 +44,9 @@ if TYPE_CHECKING:
     from novacode_cli.file_ops import FileOpTracker
 
 MAX_ARGUMENT_CHARS = 100000
+#: Host-side cap for the eval sandbox's sleep(): a runaway poll stays inside
+#: the snippet's own wall budget.
+_SLEEP_CAP_MS = 10_000
 MAX_OUTPUT_CHARS = 12000
 MAX_CHECKPOINTS = 8
 MAX_CHECKPOINT_BYTES = 4096
@@ -137,6 +140,25 @@ def _side_effects_possible(outcomes: list[dict]) -> bool:
         for step in outcomes
         if step.get("dispatched")
     )
+
+
+async def _bounded_sleep(payload: dict) -> dict:
+    """A bounded wait for snippets that poll a started server.
+
+    It consumes the snippet's own wall budget, so the cap stays well under the
+    wall timeout.
+    """
+    ms = payload.get("ms") if isinstance(payload, dict) else None
+    wait = min(max(int(ms or 0), 0), _SLEEP_CAP_MS)
+    await asyncio.sleep(wait / 1000)
+    return {"slept_ms": wait}
+
+
+def _require_intermediate_size(encoded: str) -> str:
+    """Reject intermediate results that would flood the transcript."""
+    if len(encoded) > MAX_INTERMEDIATE_CHARS:
+        raise ValueError("Tool result exceeds 1000000 characters; request fewer records.")
+    return encoded
 
 
 def _recovery_hint(exc: Exception, outcomes: list[dict], *, omitted: bool) -> str:
@@ -671,6 +693,10 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
         except Exception as exc:
             return self._message(request, f"MCPCode failed: {type(exc).__name__}: {exc}"[:4000])
 
+    def _pop_state_warning(self) -> dict | None:
+        """Take this thread's pending state warning, if the runtime raised one."""
+        return self._state_warnings.pop(_resolve_thread_id(self._fallback_thread_id), None)
+
     async def _execute(  # noqa: PLR0915 -- guarded dispatch and bounded result reporting.
         self, request: ToolCallRequest, handler: Callable, code: str
     ) -> ToolMessage | Command:
@@ -712,10 +738,7 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
                         # A bounded wait for snippets that poll a started
                         # server. It consumes the snippet's own wall budget,
                         # so the cap stays well under the wall timeout.
-                        ms = payload.get("ms") if isinstance(payload, dict) else None
-                        wait = min(max(int(ms or 0), 0), 10_000)
-                        await asyncio.sleep(wait / 1000)
-                        value = {"slept_ms": wait}
+                        value = await _bounded_sleep(payload)
                     elif namespace == "task":
                         value = await self._task(request, handler, payload, updates, step)
                     elif namespace == "tools":
@@ -733,12 +756,9 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
                             value = await self._call(request, handler, params, step)
                     # The operation completed even if serialization subsequently fails.
                     step["status"] = "completed"
-                    encoded = json.dumps(value, ensure_ascii=False, allow_nan=False)
-                    if len(encoded) > MAX_INTERMEDIATE_CHARS:
-                        raise ValueError(
-                            "Tool result exceeds 1000000 characters; request fewer records."
-                        )
-                    return encoded
+                    return _require_intermediate_size(
+                        json.dumps(value, ensure_ascii=False, allow_nan=False)
+                    )
             except asyncio.CancelledError:
                 if step["status"] == "running":
                     step["status"] = "cancelled"
@@ -804,7 +824,7 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
                     "is unavailable; no recoverable file was saved. Inspect smaller slices of "
                     "surviving interpreter variables. Do not replay completed side effects."
                 )
-            warning = self._state_warnings.pop(_resolve_thread_id(self._fallback_thread_id), None)
+            warning = self._pop_state_warning()
             if warning is not None:
                 body["state_warning"] = warning
             message = self._message(request, json.dumps(body, ensure_ascii=False), error=False)
@@ -832,7 +852,7 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
             }
             if checkpoints:
                 body["checkpoints"] = checkpoints
-            warning = self._state_warnings.pop(_resolve_thread_id(self._fallback_thread_id), None)
+            warning = self._pop_state_warning()
             if warning is not None:
                 body["state_warning"] = warning
             message = self._message(
