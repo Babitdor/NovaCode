@@ -31,7 +31,7 @@ from novacode_cli.agents.tool_search_variants import SEARCH_VARIANTS
 from novacode_cli.config.nova_config import live_code_mode_enabled
 from novacode_cli.core.tool_results import MAX_INTERMEDIATE_CHARS, capture_file_read, data_text
 from novacode_cli.file_ops import WRITE_TOOLS, current_file_op_tracker
-from novacode_cli.mcp.generic import MCPInput, build_mcp_tool, resolve_target
+from novacode_cli.mcp.generic import MCPInput, build_mcp_tool
 from novacode_cli.security.policy import get_policy
 
 if TYPE_CHECKING:
@@ -153,7 +153,10 @@ def _recovery_hint(exc: Exception, outcomes: list[dict], *, omitted: bool) -> st
         "timeout_seconds" in step for step in outcomes
     )
     if timed_out:
-        hints.append("Use a smaller snippet or run long local commands as background jobs.")
+        hints.append(
+            "Use a smaller snippet. If an execute call timed out, retry it with "
+            "background=true and poll get_task_status instead of waiting synchronously."
+        )
     if any(step.get("task_id") for step in outcomes):
         hints.append("Check recorded task IDs with wait_for_task or tools.call for get_task_logs.")
     # A timeout can interrupt a call that never made it into the outcomes, and
@@ -847,9 +850,11 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
         if params.action == "describe" and params.tool_name == "task":
             target = next((t for t in request.runtime.tools if t.name == "task"), None)
         if target is None:
-            raise ValueError(
-                "Unknown or unsupported tool; use tools.list() or call the tool directly."
-            )
+            from novacode_cli.agents.arg_repair import _nearest
+
+            near = _nearest(params.tool_name, sorted(public)) if params.tool_name else None
+            hint = f"did you mean '{near}'?" if near else "use tools.list()"
+            raise ValueError(f"Unknown or unsupported tool '{params.tool_name}'; {hint}.")
         if params.action == "describe":
             from novacode_cli.agents.tool_contracts import native_returns
 
@@ -1032,9 +1037,20 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
     ) -> Any:
         if self._mcp is not None:
             await asyncio.shield(self._mcp.start_background_discovery())
-        target = resolve_target(self._mcp, params)
+        from novacode_cli.mcp.generic import mcp_route_hint, resolve_mcp_route
+
+        target, note = resolve_mcp_route(self._mcp, params)
+        if note:
+            # Surface the correction: the model double-prefixed the tool name.
+            step["resolved"] = note
+            logger.info("mcp_route_repaired:%s %s", params.server_name, note)
         if target is None:
-            raise ValueError("Unknown or disabled MCP tool; use mcp.list().")
+            hint = (
+                mcp_route_hint(self._mcp, params)
+                if self._mcp is not None
+                else "No MCP middleware is configured."
+            )
+            raise ValueError(f"Unknown or disabled MCP tool; {hint}")
         return await self._invoke(request, handler, target, params.arguments, step, mcp=True)
 
     @staticmethod

@@ -128,7 +128,9 @@ def export_markdown(
                 out += [f"> {line}" for line in reasoning.splitlines()]
                 out += ["", "</details>", ""]
         text = redact(node.text).strip()
-        if text:
+        # A ToolMessage node's body is written by the Result block below;
+        # writing the bare text too doubled every tool result in the export.
+        if text and not (kind == "tool" and msg.get("type") == "ToolMessage"):
             out += [text, ""]
         if include_tools:
             for call in msg.get("tool_calls") or []:
@@ -171,7 +173,11 @@ def export_json(
             "role": node.kind,
             "name": msg.get("name") or "",
             "ts": node.ts,
-            "text": redact(node.text),
+            # A ToolMessage node's body lives in tool_result below; writing the
+            # bare text too doubled every tool result in the export.
+            "text": ""
+            if node.kind == "tool" and msg.get("type") == "ToolMessage"
+            else redact(node.text),
         }
         if include_thinking and node.kind == "assistant":
             reasoning = _node_reasoning(msg)

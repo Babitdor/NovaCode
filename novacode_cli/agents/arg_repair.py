@@ -165,10 +165,36 @@ def _compact_issues(errors: list) -> str:
     parts = []
     for error in errors[:MAX_ISSUE_LINES]:
         path = ".".join(str(key) for key in error.absolute_path) or "(root)"
-        parts.append(f"- {path}: {error.message}")
+        message = error.message
+        if error.validator == "additionalProperties":
+            # Name the real properties instead of dumping the schema blob:
+            # the model hallucinated a parameter from another tool's dialect.
+            allowed = sorted((error.schema.get("properties") or {}).keys())
+            if allowed:
+                unexpected = re.findall(r"'([^']+)' was unexpected", message)
+                near = _nearest(unexpected[0], allowed) if unexpected else None
+                hint = f" (allowed: {', '.join(allowed[:8])})"
+                if near:
+                    hint = f" (did you mean '{near}'? allowed: {', '.join(allowed[:8])})"
+                message = f"{message.split(';')[0].strip()}{hint}"
+        parts.append(f"- {path}: {message}")
     if len(errors) > MAX_ISSUE_LINES:
         parts.append(f"(and {len(errors) - MAX_ISSUE_LINES} more issues)")
     return "\n".join(parts)
+
+
+def _nearest(name: str, candidates: list[str]) -> str | None:
+    """The closest candidate by token overlap or edit distance, if close enough."""
+    import difflib
+
+    match = difflib.get_close_matches(name, candidates, n=1, cutoff=0.4)
+    if match:
+        return match[0]
+    name_words = set(re.split(r"[_-]", name.lower()))
+    for candidate in sorted(candidates):
+        if name_words & set(re.split(r"[_-]", candidate.lower())):
+            return candidate
+    return None
 
 
 def _apply_relational_defaults(
@@ -215,16 +241,62 @@ def repair_invalid(
     fixed = copy.deepcopy(args)
     kinds: list[str] = []
     notes: list[str] = []
+
+    def node_at(path: list[Any]) -> Any:
+        node: Any = fixed
+        for key in path:
+            try:
+                node = node[key]
+            except (KeyError, IndexError, TypeError):
+                return None
+        return node
+
     for error in errors:
         path = list(error.absolute_path)
-        parent: Any = fixed
-        for key in path[:-1]:
-            try:
-                parent = parent[key]
-            except (KeyError, IndexError, TypeError):
-                parent = None
-                break
-        if not path or parent is None:
+        # Over-max numbers clamp to the schema maximum: the model asked for
+        # more than the tool gives (tools:list limit=60 with a cap of 50).
+        # Reading fewer records is recoverable; rejecting is not.
+        if error.validator == "maximum" and path:
+            node = node_at(path[:-1])
+            if isinstance(node, dict):
+                key = path[-1]
+                value = node.get(key)
+                if isinstance(value, (int, float)) and value > error.validator_value:
+                    node[key] = error.validator_value
+                    kinds.append("value-clamped")
+                    notes.append(f"{key} clamped to {error.validator_value}")
+            continue
+        # A required property the schema gives a default for: fill it. The
+        # server declared that default itself, so the fill matches what the
+        # server would have chosen (playwright's screenshot scale, …).
+        if error.validator == "required":
+            properties = error.schema.get("properties") or {}
+            node = node_at(path) if path else fixed
+            if isinstance(node, dict):
+                for key in error.validator_value if isinstance(error.validator_value, list) else []:
+                    if key in node:
+                        continue
+                    default = (properties.get(key) or {}).get("default", _NO_REPAIR)
+                    if default is not _NO_REPAIR:
+                        node[key] = default
+                        kinds.append("default-filled")
+                        notes.append(f"{key} filled with the schema default")
+            continue
+        # An enum/const violation where the schema declares a default: the
+        # model guessed a value from another dialect ('topic') and the tool's
+        # own default is the honest substitute.
+        if error.validator in {"enum", "const"} and path:
+            default = error.schema.get("default", _NO_REPAIR)
+            node = node_at(path[:-1])
+            if default is not _NO_REPAIR and isinstance(node, dict):
+                node[path[-1]] = default
+                kinds.append("default-filled")
+                notes.append(f"{path[-1]} reset to the schema default")
+            continue
+        if not path or node_at(path[:-1]) is None:
+            continue
+        parent = node_at(path[:-1])
+        if not isinstance(parent, dict):
             continue
         try:
             value = parent[path[-1]]

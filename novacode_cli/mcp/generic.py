@@ -26,22 +26,72 @@ class MCPInput(BaseModel):
 
 
 def resolve_target(middleware, params: MCPInput):
-    """Resolve by recorded server and raw name, never by an ambiguous prefix."""
-    from novacode_cli.agents.profiles import active_profile, profile_tool_allowed
+    """Resolve by recorded server and raw name, never by an ambiguous prefix.
 
-    for entry in middleware._tools_cache:
-        if entry["server"] == params.server_name and entry["skill_alias"] == params.tool_name:
-            return next(
-                (
-                    t
-                    for t in middleware.tools
-                    if t.name == entry["name"]
-                    and (t.metadata or {}).get("nova_mcp_server") == params.server_name
-                    and profile_tool_allowed(active_profile(), t.name, t.metadata)
-                ),
-                None,
-            )
-    return None
+    Falls back to stripping the server's own prefix off the tool name: models
+    double-prefix (`playwright_browser_navigate` for server `playwright`,
+    alias `browser_navigate`) and the route lookup alone rejects them.
+    """
+    target, _note = resolve_mcp_route(middleware, params)
+    return target
+
+
+def resolve_mcp_route(middleware, params: MCPInput):
+    """Resolve a route, falling back to a de-prefixed alias.
+
+    Returns ``(target, note)``: the note is ``None`` for an exact resolve and
+    describes the fallback when one was used, so the dispatch outcome can say
+    what was corrected.
+    """
+
+    def match(alias: str):
+        from novacode_cli.agents.profiles import active_profile, profile_tool_allowed
+
+        for entry in middleware._tools_cache:
+            if entry["server"] == params.server_name and entry["skill_alias"] == alias:
+                return next(
+                    (
+                        t
+                        for t in middleware.tools
+                        if t.name == entry["name"]
+                        and (t.metadata or {}).get("nova_mcp_server") == params.server_name
+                        and profile_tool_allowed(active_profile(), t.name, t.metadata)
+                    ),
+                    None,
+                )
+        return None
+
+    target = match(params.tool_name)
+    if target is not None:
+        return target, None
+    prefix = f"{params.server_name}_"
+    if params.tool_name.startswith(prefix):
+        alias = params.tool_name[len(prefix) :]
+        if alias:
+            stripped = match(alias)
+            if stripped is not None:
+                return stripped, (
+                    f"resolved '{params.tool_name}' as '{alias}' "
+                    "(the server name was already prefixed)"
+                )
+    return None, None
+
+
+def mcp_route_hint(middleware, params: MCPInput) -> str:
+    """A did-you-mean hint for an unresolvable MCP tool name."""
+    from novacode_cli.agents.arg_repair import _nearest
+
+    aliases = sorted(
+        entry["skill_alias"]
+        for entry in getattr(middleware, "_tools_cache", [])
+        if entry.get("server") == params.server_name
+    )
+    if not aliases:
+        return f"server '{params.server_name}' has no tools; use mcp.list()."
+    near = _nearest(params.tool_name, aliases)
+    if near:
+        return f"did you mean '{near}'? Known tools on '{params.server_name}': {', '.join(aliases[:10])}."
+    return f"known tools on '{params.server_name}': {', '.join(aliases[:10])}."
 
 
 def build_mcp_tool(middleware) -> StructuredTool:

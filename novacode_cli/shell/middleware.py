@@ -562,7 +562,9 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
             if timeout is not None:
                 if timeout > self._timeout:
                     raise ToolException(
-                        f"timeout exceeds the configured {self._timeout:g}s local limit"
+                        f"timeout exceeds the configured {self._timeout:g}s local limit; "
+                        "for long builds pass background=true and poll get_task_status "
+                        "instead of waiting synchronously"
                     )
                 engine._timeout = timeout
             prog = self._bash_prog if shell == "bash" else self._native_prog
