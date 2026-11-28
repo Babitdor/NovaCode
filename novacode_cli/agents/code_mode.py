@@ -693,7 +693,7 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
         except Exception as exc:
             return self._message(request, f"MCPCode failed: {type(exc).__name__}: {exc}"[:4000])
 
-    def _pop_state_warning(self) -> dict | None:
+    def _pop_state_warning(self) -> str | None:
         """Take this thread's pending state warning, if the runtime raised one."""
         return self._state_warnings.pop(_resolve_thread_id(self._fallback_thread_id), None)
 
@@ -731,6 +731,7 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
                 async with semaphore:
                     step["status"] = "running"
                     namespace = payload.get("namespace") if isinstance(payload, dict) else None
+                    value: Any
                     if namespace == "checkpoint":
                         checkpoint = CheckpointInput.model_validate(payload)
                         value = checkpoint.save(checkpoints)
