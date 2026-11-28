@@ -141,7 +141,21 @@ def _side_effects_possible(outcomes: list[dict]) -> bool:
 
 def _recovery_hint(exc: Exception, outcomes: list[dict], *, omitted: bool) -> str:
     """Tell the next attempt what it can safely resume."""
-    if not outcomes and "SyntaxError" in str(exc):
+    failure_text = str(exc)
+    if "redeclaration" in failure_text or "invalid redefinition" in failure_text:
+        return (
+            "Top-level `let`/`const` declarations persist between evals in this "
+            "session, so re-declaring the same name in a later eval fails. Wrap "
+            "the snippet in `{ ... }` to scope it, use fresh names, or assign to "
+            "`globalThis.x` explicitly."
+        )
+    if "is not defined" in failure_text and "ReferenceError" in failure_text:
+        return (
+            "The eval sandbox has no DOM timers or browser globals. Wait with "
+            "`await sleep(ms)` (bounded, host-side) instead of setTimeout, and "
+            "call host tools through `tools.call(...)` / `mcp.call(...)`."
+        )
+    if not outcomes and "SyntaxError" in failure_text:
         return (
             "JavaScript syntax error with no host tool calls. A snippet is a script: "
             "leave the value in its final expression instead of writing `return`. "
@@ -694,6 +708,14 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
                     if namespace == "checkpoint":
                         checkpoint = CheckpointInput.model_validate(payload)
                         value = checkpoint.save(checkpoints)
+                    elif namespace == "sleep":
+                        # A bounded wait for snippets that poll a started
+                        # server. It consumes the snippet's own wall budget,
+                        # so the cap stays well under the wall timeout.
+                        ms = payload.get("ms") if isinstance(payload, dict) else None
+                        wait = min(max(int(ms or 0), 0), 10_000)
+                        await asyncio.sleep(wait / 1000)
+                        value = {"slept_ms": wait}
                     elif namespace == "task":
                         value = await self._task(request, handler, payload, updates, step)
                     elif namespace == "tools":

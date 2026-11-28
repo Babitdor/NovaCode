@@ -56,6 +56,13 @@ globalThis.mcp = Object.freeze({
 globalThis.task = (options) => __nova_mcp({raw:JSON.stringify({
   ...options, namespace:'task'
 })}).then(JSON.parse);
+// The interpreter has no DOM timers. sleep() is a bounded host call on the
+// guarded dispatch (capped host-side), and setTimeout maps onto it so a
+// snippet that polls a started server gets an awaitable shim.
+globalThis.sleep = (ms) => __nova_mcp({raw:JSON.stringify({
+  namespace:'sleep', ms
+})}).then(JSON.parse);
+globalThis.setTimeout = (fn, ms = 0) => sleep(ms).then(fn);
 undefined;
 """
 
